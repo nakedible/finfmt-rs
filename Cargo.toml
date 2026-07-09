@@ -11,6 +11,7 @@ keywords = ["iso8583", "apacs", "financial", "ebcdic", "encoding"]
 categories = ["encoding", "parser-implementations"]
 include = [
     "/Cargo.toml",
+    "/CHANGELOG.md",
     "/LICENSE",
     "/README.md",
     "/src/**",
