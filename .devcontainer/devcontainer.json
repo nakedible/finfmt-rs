@@ -7,7 +7,7 @@
 	"features": {
 		"ghcr.io/devcontainers/features/aws-cli:1": {},
 		"ghcr.io/devcontainers/features/sshd:1": {},
-		"ghcr.io/devcontainers/features/node:1": {}
+		"ghcr.io/devcontainers/features/node:2": {}
 	}
 
 	// Use 'mounts' to make the cargo cache persistent in a Docker Volume.
