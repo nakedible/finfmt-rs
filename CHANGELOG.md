@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/nakedible/finfmt-rs/compare/v0.1.0...v0.1.1) - 2026-07-09
+
+### Changed
+
+- update dependency versions
+
+### Other
+
+- Fix clippy byte slice warnings
+
 ## [0.1.0] - 2026-07-09
 
 ### Added
