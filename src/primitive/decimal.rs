@@ -860,8 +860,8 @@ mod tests {
 
     #[test]
     fn test_sign_prefix_helpers() {
-        assert_eq!(encode::<1>(|out| encode_sign(out, false, b'C', b'D')), Ok([b'C']));
-        assert_eq!(encode::<1>(|out| encode_sign(out, true, b'C', b'D')), Ok([b'D']));
+        assert_eq!(encode::<1>(|out| encode_sign(out, false, b'C', b'D')), Ok(*b"C"));
+        assert_eq!(encode::<1>(|out| encode_sign(out, true, b'C', b'D')), Ok(*b"D"));
         assert_eq!(encode::<0>(|out| encode_sign(out, false, b'C', b'D')), Err(Error::BufferOverflow));
         let mut output = [0xAAu8; 1];
         let mut out_ptr = output.as_mut_slice();
@@ -872,7 +872,7 @@ mod tests {
         let mut out_ptr = output.as_mut_slice();
         assert_eq!(encode_negative_prefix(&mut out_ptr, true, b'-'), Ok(()));
         assert_eq!(out_ptr.len(), 0);
-        assert_eq!(output, [b'-']);
+        assert_eq!(output, *b"-");
         let mut input = &b"C123"[..];
         assert_eq!(decode_sign(&mut input, b'C', b'D'), Ok(false));
         assert_eq!(input, b"123");
