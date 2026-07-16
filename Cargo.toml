@@ -24,7 +24,7 @@ asm-inspect = []
 no-panic = ["dep:no-panic"]
 
 [dependencies]
-compact_str = { version = "0.9.1", features = ["serde"] }
+compact_str = { version = "0.10.0", features = ["serde"] }
 no-panic = { version = "0.1.36", optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 
