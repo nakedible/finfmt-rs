@@ -75,6 +75,21 @@ fn bench_bytes(suite: &mut Suite) {
             b.iter(|| black_box(all_bytes_eq_ebcdic_space(black_box(FILLED_8_SPACE))))
         });
 
+        group.bench("contains_byte_pipe", |b| {
+            b.iter(|| black_box(contains_byte_pipe(black_box(DELIMITED))))
+        });
+
+        group.bench("split_delimited_bytes_pipe", |b| {
+            b.iter(|| {
+                let mut input = black_box(DELIMITED);
+                black_box(split_delimited_bytes_pipe(&mut input))
+            })
+        });
+    });
+
+    suite.group("repeated_block", |group| {
+        quick(group);
+
         group.bench("fill_repeated_block_runtime", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 8];
@@ -92,15 +107,17 @@ fn bench_bytes(suite: &mut Suite) {
             })
         });
 
-        group.bench("contains_byte_pipe", |b| {
-            b.iter(|| black_box(contains_byte_pipe(black_box(DELIMITED))))
+        group.bench("fill_repeated_block_4", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 64];
+                let _ = fill_repeated_block_4(&mut buf, black_box(b"ABCD"));
+                black_box(buf)
+            })
         });
 
-        group.bench("split_delimited_bytes_pipe", |b| {
-            b.iter(|| {
-                let mut input = black_box(DELIMITED);
-                black_box(split_delimited_bytes_pipe(&mut input))
-            })
+        group.bench("validate_repeated_block_4", |b| {
+            let input = [0u8; 64];
+            b.iter(|| black_box(validate_repeated_block_4(black_box(&input), black_box(&[0; 4]))))
         });
     });
 }

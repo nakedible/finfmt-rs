@@ -63,3 +63,13 @@ pub fn contains_byte_pipe(input: &[u8]) -> bool {
 pub fn split_delimited_bytes_pipe<'a>(input: &mut &'a [u8]) -> Result<&'a [u8], Error> {
     split_delimited_bytes(input, b'|', true)
 }
+
+#[inline(never)]
+pub fn fill_repeated_block_4(output: &mut [u8], block: &[u8; 4]) -> Result<(), Error> {
+    fill_repeated_block(output, 0, block)
+}
+
+#[inline(never)]
+pub fn validate_repeated_block_4(input: &[u8], block: &[u8; 4]) -> Result<(), Error> {
+    validate_repeated_block(input, block)
+}

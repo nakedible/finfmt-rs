@@ -106,10 +106,8 @@ pub fn fill_repeated_block(output: &mut [u8], used_len: usize, block: &[u8]) -> 
         cold_path();
         return Err(Error::Internal);
     }
-    let mut offset = 0usize;
-    while offset < tail.len() {
-        tail[offset..offset + block.len()].copy_from_slice(block);
-        offset += block.len();
+    for chunk in tail.chunks_exact_mut(block.len()) {
+        chunk.copy_from_slice(block);
     }
     Ok(())
 }
@@ -125,13 +123,11 @@ pub fn validate_repeated_block(input: &[u8], block: &[u8]) -> Result<(), Error> 
         cold_path();
         return Err(Error::Invalid);
     }
-    let mut offset = 0usize;
-    while offset < input.len() {
-        if input[offset..offset + block.len()] != *block {
+    for chunk in input.chunks_exact(block.len()) {
+        if chunk != block {
             cold_path();
             return Err(Error::Invalid);
         }
-        offset += block.len();
     }
     Ok(())
 }
@@ -258,5 +254,60 @@ mod tests {
         assert_eq!(split_delimited(b"A|B", b'|', true), Ok((b"A".to_vec(), b"B".to_vec())));
         assert_eq!(split_delimited(b"AB", b'|', false), Ok((b"AB".to_vec(), vec![])));
         assert_eq!(split_delimited(b"AB", b'|', true), Err(Error::Invalid));
+    }
+    #[test]
+    fn test_repeated_block_boundaries() {
+        assert_eq!(fill_repeated_block(&mut [], 0, b""), Err(Error::Internal));
+        assert_eq!(fill_repeated_block(&mut [], 0, b"AB"), Ok(()));
+        assert_eq!(validate_repeated_block(b"", b""), Err(Error::Internal));
+        assert_eq!(validate_repeated_block(b"", b"AB"), Ok(()));
+        let mut output = [0x55; 5];
+        for (used, block, expected) in [
+            (2, b"AB".as_slice(), Err(Error::Internal)),
+            (usize::MAX, b"AB", Err(Error::Invalid)),
+            (usize::MAX, b"", Err(Error::Internal)),
+            (5, b"AB", Ok(())),
+        ] {
+            assert_eq!(fill_repeated_block(&mut output, used, block), expected);
+            assert_eq!(output, [0x55; 5]);
+        }
+        assert_eq!(fill_repeated_block(&mut output, 1, b"AB"), Ok(()));
+        assert_eq!(&output, b"UABAB");
+        assert_eq!(fill_repeated_block(&mut output, 3, &[0]), Ok(()));
+        assert_eq!(&output, b"UAB\0\0");
+        for input in [b"XBAB", b"AXAB", b"ABXB", b"ABAX"] {
+            assert_eq!(validate_repeated_block(input, b"AB"), Err(Error::Invalid));
+        }
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use proptest::prelude::*;
+
+    use super::{fill_repeated_block, validate_repeated_block};
+    use crate::Error;
+
+    proptest! {
+        #[test]
+        fn repeated_blocks_preserve_prefix_and_match_reference(
+            block in prop::collection::vec(any::<u8>(), 1..17),
+            prefix in prop::collection::vec(any::<u8>(), 0..32),
+            count in 0usize..32,
+            corrupt in any::<usize>(),
+        ) {
+            let mut output = prefix.clone();
+            output.resize(prefix.len() + block.len() * count, 0x55);
+            prop_assert_eq!(fill_repeated_block(&mut output, prefix.len(), &block), Ok(()));
+            prop_assert_eq!(&output[..prefix.len()], prefix.as_slice());
+            let tail = &mut output[prefix.len()..];
+            prop_assert_eq!(&*tail, block.repeat(count));
+            prop_assert_eq!(validate_repeated_block(tail, &block), Ok(()));
+            if !tail.is_empty() {
+                let index = corrupt % tail.len();
+                tail[index] ^= 1;
+                prop_assert_eq!(validate_repeated_block(tail, &block), Err(Error::Invalid));
+            }
+        }
     }
 }
