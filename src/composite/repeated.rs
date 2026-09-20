@@ -1,6 +1,6 @@
 use super::*;
 use crate::field::{Identity, LengthSpec};
-use crate::primitive::bytes::{contains_byte, fill_repeated_block, split_delimited_bytes, validate_repeating_block};
+use crate::primitive::bytes::{contains_byte, fill_repeated_block, split_delimited_bytes, validate_repeated_block};
 use crate::utils::take_scratch;
 
 impl ListCountPolicy for () {
@@ -241,7 +241,7 @@ where
             crate::utils::cold_path();
             return Err(Error::Internal.into());
         }
-        validate_repeating_block(input, absent)?;
+        validate_repeated_block(input, absent)?;
         Ok(())
     }
 }

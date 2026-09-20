@@ -53,9 +53,12 @@ pub fn reserve_filled_area<'a>(output: &mut &'a mut [u8], len: usize, fill: u8) 
     Ok(area)
 }
 
+/// Consume `total_len` bytes, check that the suffix after `used_len` contains only
+/// `fill`, and return the used prefix. The supplied `used_len` determines the
+/// boundary; fill bytes within the used prefix are preserved.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn decode_filled_prefix<'a>(input: &mut &'a [u8], total_len: usize, used_len: usize, fill: u8) -> Result<&'a [u8], Error> {
+pub fn decode_padded_bytes<'a>(input: &mut &'a [u8], total_len: usize, used_len: usize, fill: u8) -> Result<&'a [u8], Error> {
     if used_len > total_len {
         cold_path();
         return Err(Error::Invalid);
@@ -123,7 +126,7 @@ pub fn fill_repeated_block(output: &mut [u8], used_len: usize, block: &[u8]) -> 
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_repeating_block(input: &[u8], block: &[u8]) -> Result<(), Error> {
+pub fn validate_repeated_block(input: &[u8], block: &[u8]) -> Result<(), Error> {
     if block.is_empty() {
         cold_path();
         return Err(Error::Internal);
@@ -175,8 +178,8 @@ pub fn split_delimited_bytes<'a>(input: &mut &'a [u8], separator: u8, expect_sep
 #[cfg(test)]
 mod tests {
     use super::{
-        all_bytes_eq, contains_byte, copy_bytes, decode_exact_bytes, decode_filled_prefix, encode_exact_bytes, fill_repeated_block,
-        fill_tail, reserve_filled_area, split_delimited_bytes, validate_all_bytes, validate_exact_length, validate_repeating_block,
+        all_bytes_eq, contains_byte, copy_bytes, decode_exact_bytes, decode_padded_bytes, encode_exact_bytes, fill_repeated_block,
+        fill_tail, reserve_filled_area, split_delimited_bytes, validate_all_bytes, validate_exact_length, validate_repeated_block,
     };
     use crate::Error;
 
@@ -208,7 +211,7 @@ mod tests {
 
     fn decode_prefix(input: &[u8], total_len: usize, used_len: usize, fill: u8) -> Result<Vec<u8>, Error> {
         let mut input = input;
-        Ok(decode_filled_prefix(&mut input, total_len, used_len, fill)?.to_vec())
+        Ok(decode_padded_bytes(&mut input, total_len, used_len, fill)?.to_vec())
     }
 
     fn fill_tail_buf<const N: usize>(used_len: usize, fill: u8) -> Result<[u8; N], Error> {
@@ -242,6 +245,7 @@ mod tests {
         assert_eq!(decode(b"\x12", 2), Err(Error::UnexpectedEof));
         assert_eq!(reserve_filled::<3>(0x40), Ok([0x40, 0x40, 0x40]));
         assert_eq!(decode_prefix(b"\x12\x34\x40\x40", 4, 2, 0x40), Ok(vec![0x12, 0x34]));
+        assert_eq!(decode_prefix(b"A   ", 4, 2, b' '), Ok(b"A ".to_vec()));
         assert_eq!(decode_prefix(b"\x12\x34\x40\x41", 4, 2, 0x40), Err(Error::Invalid));
         assert_eq!(decode_prefix(b"\x12\x34", 4, 2, 0x40), Err(Error::UnexpectedEof));
         assert_eq!(decode_prefix(b"\x12\x34", 2, 3, 0x40), Err(Error::Invalid));
@@ -259,10 +263,10 @@ mod tests {
         );
         assert_eq!(fill_repeated_block_buf::<5>(2, b"\x12\x34"), Err(Error::Internal));
         assert_eq!(fill_repeated_block_buf::<5>(2, b""), Err(Error::Internal));
-        assert_eq!(validate_repeating_block(b"\x12\x34\x12\x34", b"\x12\x34"), Ok(()));
-        assert_eq!(validate_repeating_block(b"\x12\x34\x56\x78", b"\x12\x34"), Err(Error::Invalid));
-        assert_eq!(validate_repeating_block(b"\x12", b"\x12\x34"), Err(Error::Invalid));
-        assert_eq!(validate_repeating_block(b"\x12", b""), Err(Error::Internal));
+        assert_eq!(validate_repeated_block(b"\x12\x34\x12\x34", b"\x12\x34"), Ok(()));
+        assert_eq!(validate_repeated_block(b"\x12\x34\x56\x78", b"\x12\x34"), Err(Error::Invalid));
+        assert_eq!(validate_repeated_block(b"\x12", b"\x12\x34"), Err(Error::Invalid));
+        assert_eq!(validate_repeated_block(b"\x12", b""), Err(Error::Internal));
         assert_eq!(split_delimited(b"A|B", b'|', true), Ok((b"A".to_vec(), b"B".to_vec())));
         assert_eq!(split_delimited(b"AB", b'|', false), Ok((b"AB".to_vec(), vec![])));
         assert_eq!(split_delimited(b"AB", b'|', true), Err(Error::Invalid));

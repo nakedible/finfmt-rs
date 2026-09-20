@@ -1,7 +1,7 @@
 use crate::Error;
 use crate::primitive::bytes::{
-    all_bytes_eq, contains_byte, copy_bytes, decode_exact_bytes, decode_filled_prefix, encode_exact_bytes, fill_repeated_block, fill_tail,
-    reserve_filled_area, split_delimited_bytes, validate_all_bytes, validate_exact_length, validate_repeating_block,
+    all_bytes_eq, contains_byte, copy_bytes, decode_exact_bytes, decode_padded_bytes, encode_exact_bytes, fill_repeated_block, fill_tail,
+    reserve_filled_area, split_delimited_bytes, validate_all_bytes, validate_exact_length, validate_repeated_block,
 };
 
 #[inline(never)]
@@ -30,8 +30,8 @@ pub fn reserve_filled_area_8_ebcdic_space<'a>(output: &mut &'a mut [u8]) -> Resu
 }
 
 #[inline(never)]
-pub fn decode_filled_prefix_8_ebcdic_space<'a>(input: &mut &'a [u8], used_len: usize) -> Result<&'a [u8], Error> {
-    decode_filled_prefix(input, 8, used_len, 0x40)
+pub fn decode_padded_bytes_8_ebcdic_space<'a>(input: &mut &'a [u8], used_len: usize) -> Result<&'a [u8], Error> {
+    decode_padded_bytes(input, 8, used_len, 0x40)
 }
 
 #[inline(never)]
@@ -55,8 +55,8 @@ pub fn fill_repeated_block_runtime(output: &mut [u8], used_len: usize, block: &[
 }
 
 #[inline(never)]
-pub fn validate_repeating_block_runtime(input: &[u8], block: &[u8]) -> Result<(), Error> {
-    validate_repeating_block(input, block)
+pub fn validate_repeated_block_runtime(input: &[u8], block: &[u8]) -> Result<(), Error> {
+    validate_repeated_block(input, block)
 }
 
 #[inline(never)]

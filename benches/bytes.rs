@@ -55,11 +55,11 @@ fn bench_bytes(suite: &mut Suite) {
             })
         });
 
-        group.bench("decode_filled_prefix_8_ebcdic_space", |b| {
+        group.bench("decode_padded_bytes_8_ebcdic_space", |b| {
             let input = b"abcd\x40\x40\x40\x40";
             b.iter(|| {
                 let mut input = black_box(&input[..]);
-                black_box(decode_filled_prefix_8_ebcdic_space(&mut input, 4))
+                black_box(decode_padded_bytes_8_ebcdic_space(&mut input, 4))
             })
         });
 
@@ -87,9 +87,9 @@ fn bench_bytes(suite: &mut Suite) {
             })
         });
 
-        group.bench("validate_repeating_block_runtime", |b| {
+        group.bench("validate_repeated_block_runtime", |b| {
             b.iter(|| {
-                black_box(validate_repeating_block_runtime(
+                black_box(validate_repeated_block_runtime(
                     black_box(REPEATED_INPUT),
                     black_box(REPEATED_BLOCK),
                 ))

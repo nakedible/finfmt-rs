@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 
 use super::{Check, LengthSpec, Step};
-use crate::primitive::bytes::{decode_filled_prefix, reserve_filled_area};
+use crate::primitive::bytes::{decode_padded_bytes, reserve_filled_area};
 use crate::utils::{cold_path, take_scratch};
 use crate::{Error, ScalarFmt};
 
@@ -103,7 +103,7 @@ impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> S
             cold_path();
             return Err(Error::Invalid);
         }
-        let wire = decode_filled_prefix(input, PAD_TO, plan.wire_len, FILL)?;
+        let wire = decode_padded_bytes(input, PAD_TO, plan.wire_len, FILL)?;
         let output_buf = take_scratch(scratch, plan.output_cap)?;
         let mut output = output_buf;
         let semantic = S::decode(wire, &mut output, scratch, plan.exact_len)?;
