@@ -39,6 +39,19 @@ fn bench_encode_bytes(suite: &mut Suite) {
                 black_box(buf)
             })
         });
+        group.bench("encode_bytes_no_padding", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 16];
+                let _ = encode_bytes_pad_right_8_space(&mut buf.as_mut_slice(), black_box(b"123456789ABC"));
+                black_box(buf)
+            })
+        });
+        group.bench("truncate_bytes_left_8", |b| {
+            b.iter(|| black_box(truncate_bytes_left_8(black_box(b"123456789ABC"))))
+        });
+        group.bench("truncate_bytes_right_8", |b| {
+            b.iter(|| black_box(truncate_bytes_right_8(black_box(b"123456789ABC"))))
+        });
     });
 }
 

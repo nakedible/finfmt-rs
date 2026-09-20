@@ -60,7 +60,7 @@ impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadRigh
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-        encode_bytes(output, input, PAD_TO, usize::MAX, false, CHAR)
+        encode_bytes(output, input, PAD_TO, false, CHAR)
     }
 
     #[inline(always)]
@@ -90,7 +90,7 @@ impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadLeft
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-        encode_bytes(output, input, PAD_TO, usize::MAX, true, CHAR)
+        encode_bytes(output, input, PAD_TO, true, CHAR)
     }
 
     #[inline(always)]
@@ -120,7 +120,7 @@ impl<const CHAR: u8> Step for PadRightEven<CHAR> {
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-        encode_bytes(output, input, input.len() + input.len() % 2, usize::MAX, false, CHAR)
+        encode_bytes(output, input, input.len() + input.len() % 2, false, CHAR)
     }
 
     #[inline(always)]
@@ -150,7 +150,7 @@ impl<const CHAR: u8> Step for PadLeftEven<CHAR> {
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-        encode_bytes(output, input, input.len() + input.len() % 2, usize::MAX, true, CHAR)
+        encode_bytes(output, input, input.len() + input.len() % 2, true, CHAR)
     }
 
     #[inline(always)]
