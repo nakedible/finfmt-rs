@@ -1,6 +1,6 @@
 use crate::primitive::bytes::copy_bytes;
 use crate::primitive::ebcdic::{
-    ASCII_TO_EBCDIC_037, EBCDIC_037_TO_ASCII, ebcdic_1142_to_utf8, translate_bytes, translate_bytes_inplace, utf8_to_ebcdic_1142,
+    ASCII_TO_EBCDIC_037, EBCDIC_037_TO_ASCII, decode_ebcdic_1142, encode_ebcdic_1142, translate_bytes, translate_bytes_inplace,
 };
 use crate::utils::cold_path;
 use crate::{Error, Step};
@@ -72,7 +72,7 @@ impl Step for Ebcdic1142 {
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-        utf8_to_ebcdic_1142(output, input)
+        encode_ebcdic_1142(output, input)
     }
 
     #[inline(always)]
@@ -88,6 +88,6 @@ impl Step for Ebcdic1142 {
             cold_path();
             return Err(Error::Invalid);
         }
-        ebcdic_1142_to_utf8(output, input).map(|buf| &*buf)
+        decode_ebcdic_1142(output, input).map(|buf| &*buf)
     }
 }

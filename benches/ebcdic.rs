@@ -51,23 +51,42 @@ fn bench_translate(suite: &mut Suite) {
 fn bench_1142(suite: &mut Suite) {
     suite.group("ebcdic_1142", |group| {
         quick(group);
-        group.bench("encode_ebcdic_1142_char_lookup", |b| {
-            b.iter(|| black_box(encode_ebcdic_1142_char_lookup(black_box('Æ'))))
+        group.bench("encode_ebcdic_1142_char_euro", |b| {
+            b.iter(|| black_box(encode_ebcdic_1142_char_lookup(black_box('€'))))
         });
-        group.bench("utf8_to_ebcdic_1142_runtime", |b| {
+        group.bench("encode_ebcdic_1142_ascii", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 32];
                 let mut out = &mut buf[..];
-                let _ = utf8_to_ebcdic_1142_runtime(&mut out, black_box(UTF8_1142.as_bytes()));
+                let _ = encode_ebcdic_1142_runtime(&mut out, black_box(ASCII_INPUT));
                 black_box(buf)
             })
         });
-        group.bench("ebcdic_1142_to_utf8_runtime", |b| {
+        group.bench("decode_ebcdic_1142_ascii", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 32];
+                let mut out = &mut buf[..];
+                let _ = decode_ebcdic_1142_runtime(&mut out, black_box(b"\xC1\xC2\xC3\xF1\xF2\xF3"));
+                black_box(buf)
+            })
+        });
+        group.bench("encode_ebcdic_1142_char_lookup", |b| {
+            b.iter(|| black_box(encode_ebcdic_1142_char_lookup(black_box('Æ'))))
+        });
+        group.bench("encode_ebcdic_1142_runtime", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 32];
+                let mut out = &mut buf[..];
+                let _ = encode_ebcdic_1142_runtime(&mut out, black_box(UTF8_1142.as_bytes()));
+                black_box(buf)
+            })
+        });
+        group.bench("decode_ebcdic_1142_runtime", |b| {
             let input = b"\xC1\xC2\xC3\x7B\x7C\x5B\xC0\x6A\xD0";
             b.iter(|| {
                 let mut buf = [0u8; 32];
                 let mut out = &mut buf[..];
-                let _ = ebcdic_1142_to_utf8_runtime(&mut out, black_box(input));
+                let _ = decode_ebcdic_1142_runtime(&mut out, black_box(input));
                 black_box(buf)
             })
         });

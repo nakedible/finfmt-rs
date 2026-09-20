@@ -48,48 +48,38 @@ pub const EBCDIC_037_TO_ASCII: [u8; 256] = [
     0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x1A, 0x1A, 0x1A, 0x1A, 0x1A, 0x1A,
 ];
 
-/// ASCII to EBCDIC conversion table (IBM Code Page 1142).
-#[rustfmt::skip]
-pub const ASCII_TO_EBCDIC_1142: [u8; 256] = [
-    0x00, 0x01, 0x02, 0x03, 0x37, 0x2D, 0x2E, 0x2F, 0x16, 0x05, 0x25, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-    0x10, 0x11, 0x12, 0x13, 0x3C, 0x3D, 0x32, 0x26, 0x18, 0x19, 0x3F, 0x27, 0x1C, 0x1D, 0x1E, 0x1F,
-    0x40, 0x4F, 0x7F, 0x4A, 0x67, 0x6C, 0x50, 0x7D, 0x4D, 0x5D, 0x5C, 0x4E, 0x6B, 0x60, 0x4B, 0x61,
-    0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0x7A, 0x5E, 0x4C, 0x7E, 0x6E, 0x6F,
-    0x80, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6,
-    0xD7, 0xD8, 0xD9, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0x9E, 0xE0, 0x9F, 0x5F, 0x6D,
-    0x79, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96,
-    0x97, 0x98, 0x99, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0x9C, 0xBB, 0x47, 0xDC, 0x07,
-    0x20, 0x21, 0x22, 0x23, 0x24, 0x15, 0x06, 0x17, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x09, 0x0A, 0x1B,
-    0x30, 0x31, 0x1A, 0x33, 0x34, 0x35, 0x36, 0x08, 0x38, 0x39, 0x3A, 0x3B, 0x04, 0x14, 0x3E, 0xFF,
-    0x41, 0xAA, 0xB0, 0xB1, 0x6F, 0xB2, 0x70, 0xB5, 0xBD, 0xB4, 0x9A, 0x8A, 0xBA, 0xCA, 0xAF, 0xBC,
-    0x90, 0x8F, 0xEA, 0xFA, 0xBE, 0xA0, 0xB6, 0xB3, 0x9D, 0xDA, 0x9B, 0x8B, 0xB7, 0xB8, 0xB9, 0xAB,
-    0x64, 0x65, 0x62, 0x66, 0x63, 0x5B, 0x7B, 0x68, 0x74, 0x71, 0x72, 0x73, 0x78, 0x75, 0x76, 0x77,
-    0xAC, 0x69, 0xED, 0xEE, 0xEB, 0xEF, 0xEC, 0xBF, 0x7C, 0xFD, 0xFE, 0xFB, 0xFC, 0xAD, 0xAE, 0x59,
-    0x44, 0x45, 0x42, 0x46, 0x43, 0xD0, 0xC0, 0x48, 0x54, 0x51, 0x52, 0x53, 0x58, 0x55, 0x56, 0x57,
-    0x8C, 0x49, 0xCD, 0xCE, 0xCB, 0xCF, 0xCC, 0xE1, 0x6A, 0xDD, 0xDE, 0xDB, 0xA1, 0x8D, 0x8E, 0xDF,
-];
+/// Latin-1 byte to IBM1142 mapping. U+00A4 (currency sign), which IBM1142 cannot
+/// represent, maps to 0x6F (`?`). Use `encode_ebcdic_1142` for strict UTF-8 encoding.
+pub const LATIN1_TO_EBCDIC_1142: [u8; 256] = latin1_to_ebcdic_1142_table();
 
-/// ASCII fast-path decode table for IBM Code Page 1142.
-/// Non-ASCII code points map to 0x80 as a sentinel.
-#[rustfmt::skip]
-const EBCDIC_1142_TO_ASCII_SUBSET: [u8; 256] = [
-    0x00, 0x01, 0x02, 0x03, 0x80, 0x09, 0x80, 0x7F, 0x80, 0x80, 0x80, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-    0x10, 0x11, 0x12, 0x13, 0x80, 0x80, 0x08, 0x80, 0x18, 0x19, 0x80, 0x80, 0x1C, 0x1D, 0x1E, 0x1F,
-    0x80, 0x80, 0x80, 0x80, 0x80, 0x0A, 0x17, 0x1B, 0x80, 0x80, 0x80, 0x80, 0x80, 0x05, 0x06, 0x07,
-    0x80, 0x80, 0x16, 0x80, 0x80, 0x80, 0x80, 0x04, 0x80, 0x80, 0x80, 0x80, 0x14, 0x15, 0x80, 0x1A,
-    0x20, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x7D, 0x80, 0x80, 0x23, 0x2E, 0x3C, 0x28, 0x2B, 0x21,
-    0x26, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x2A, 0x29, 0x3B, 0x5E,
-    0x2D, 0x2F, 0x80, 0x80, 0x80, 0x80, 0x80, 0x24, 0x80, 0x80, 0x80, 0x2C, 0x25, 0x5F, 0x3E, 0x3F,
-    0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x60, 0x3A, 0x80, 0x80, 0x27, 0x3D, 0x22,
-    0x40, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-    0x80, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F, 0x70, 0x71, 0x72, 0x80, 0x80, 0x7B, 0x80, 0x5B, 0x5D,
-    0x80, 0x80, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-    0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x7C, 0x80, 0x80, 0x80, 0x80,
-    0x80, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-    0x80, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51, 0x52, 0x80, 0x80, 0x7E, 0x80, 0x80, 0x80,
-    0x5C, 0x80, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-];
+/// ASCII fast-path decode table; non-ASCII code points use the 0x80 sentinel.
+const EBCDIC_1142_TO_ASCII_SUBSET: [u8; 256] = ebcdic_1142_ascii_subset();
+
+const fn latin1_to_ebcdic_1142_table() -> [u8; 256] {
+    let mut table = [0x6F; 256];
+    let mut i = 0;
+    while i < EBCDIC_1142_TO_UNICODE.len() {
+        let code = EBCDIC_1142_TO_UNICODE[i] as usize;
+        if code < table.len() {
+            table[code] = i as u8;
+        }
+        i += 1;
+    }
+    table
+}
+
+const fn ebcdic_1142_ascii_subset() -> [u8; 256] {
+    let mut table = [0x80; 256];
+    let mut i = 0;
+    while i < EBCDIC_1142_TO_UNICODE.len() {
+        let code = EBCDIC_1142_TO_UNICODE[i];
+        if code < 128 {
+            table[i] = code as u8;
+        }
+        i += 1;
+    }
+    table
+}
 
 /// EBCDIC to Unicode conversion table (IBM Code Page 1142).
 #[rustfmt::skip]
@@ -141,42 +131,34 @@ pub fn translate_bytes_inplace(buf: &mut [u8], table: &[u8; 256]) {
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn encode_ebcdic_1142_char(ch: char) -> Option<u8> {
-    if ch.is_ascii() {
-        return Some(ASCII_TO_EBCDIC_1142[ch as usize]);
+    match u32::from(ch) {
+        0xA4 => None,
+        code @ 0..=0xFF => Some(LATIN1_TO_EBCDIC_1142[code as usize]),
+        0x20AC => Some(0x5A),
+        _ => None,
     }
-    let code = u32::from(ch);
-    if code > u16::MAX as u32 {
-        return None;
-    }
-    let code = code as u16;
-    let mut i = 0usize;
-    while i < EBCDIC_1142_TO_UNICODE.len() {
-        if EBCDIC_1142_TO_UNICODE[i] == code {
-            return Some(i as u8);
-        }
-        i += 1;
-    }
-    None
 }
 
+/// Encode UTF-8 bytes as IBM1142, rejecting invalid UTF-8 and unrepresentable characters.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn utf8_to_ebcdic_1142<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+pub fn encode_ebcdic_1142<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
     if input.is_ascii() {
         let buf = output.split_off_mut(..input.len()).ok_or_else(|| {
             cold_path();
             Error::BufferOverflow
         })?;
-        translate_bytes(buf, input, &ASCII_TO_EBCDIC_1142)?;
+        translate_bytes(buf, input, &LATIN1_TO_EBCDIC_1142)?;
         return Ok(buf);
     }
 
-    utf8_to_ebcdic_1142_slow(output, input)
+    encode_ebcdic_1142_slow(output, input)
 }
 
+/// Decode IBM1142 bytes into UTF-8.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn ebcdic_1142_to_utf8<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+pub fn decode_ebcdic_1142<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
     let mut all_ascii = true;
     for &byte in input {
         if EBCDIC_1142_TO_ASCII_SUBSET[byte as usize] == 0x80 {
@@ -195,12 +177,12 @@ pub fn ebcdic_1142_to_utf8<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Resul
         return Ok(buf);
     }
 
-    ebcdic_1142_to_utf8_slow(output, input)
+    decode_ebcdic_1142_slow(output, input)
 }
 
 #[cold]
 #[inline(never)]
-fn utf8_to_ebcdic_1142_slow<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+fn encode_ebcdic_1142_slow<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
     let text = core::str::from_utf8(input).map_err(|_| {
         cold_path();
         Error::Invalid
@@ -228,7 +210,7 @@ fn utf8_to_ebcdic_1142_slow<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Resu
 
 #[cold]
 #[inline(never)]
-fn ebcdic_1142_to_utf8_slow<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+fn decode_ebcdic_1142_slow<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
     let mut used = 0usize;
     let mut i = 0usize;
     while i < input.len() {
@@ -285,16 +267,16 @@ mod tests {
         buf
     }
 
-    fn utf8_to_1142(input: &str) -> Result<Vec<u8>, Error> {
+    pub(super) fn utf8_to_1142(input: &str) -> Result<Vec<u8>, Error> {
         let mut out = [0u8; 256];
         let mut out_ptr = out.as_mut_slice();
-        Ok(utf8_to_ebcdic_1142(&mut out_ptr, input.as_bytes())?.to_vec())
+        Ok(encode_ebcdic_1142(&mut out_ptr, input.as_bytes())?.to_vec())
     }
 
-    fn from_1142(input: &[u8]) -> Result<String, Error> {
+    pub(super) fn from_1142(input: &[u8]) -> Result<String, Error> {
         let mut out = [0u8; 768];
         let mut out_ptr = out.as_mut_slice();
-        let decoded = ebcdic_1142_to_utf8(&mut out_ptr, input)?;
+        let decoded = decode_ebcdic_1142(&mut out_ptr, input)?;
         core::str::from_utf8(decoded).map(str::to_owned).map_err(|_| Error::Invalid)
     }
 
@@ -393,12 +375,81 @@ mod tests {
         assert_eq!(translate_bytes(&mut out, "AB", &ASCII_TO_EBCDIC_037), Ok(()));
         assert_eq!(out, [0xC1, 0xC2, 0xA5, 0xA5]);
     }
+
+    #[test]
+    fn test_ibm1142_repertoire() {
+        for (wire, &code) in EBCDIC_1142_TO_UNICODE.iter().enumerate() {
+            let ch = char::from_u32(code as u32).unwrap();
+            assert_eq!(encode_ebcdic_1142_char(ch), Some(wire as u8));
+            assert_eq!(EBCDIC_1142_TO_ASCII_SUBSET[wire], if ch.is_ascii() { code as u8 } else { 0x80 });
+            if code < 256 {
+                assert_eq!(LATIN1_TO_EBCDIC_1142[code as usize], wire as u8);
+            }
+        }
+        assert_eq!(LATIN1_TO_EBCDIC_1142[0xA4], 0x6F);
+        for ch in ['¤', 'Ā', '₫', '₭', '\u{FFFF}', '\u{10FFFF}'] {
+            assert_eq!(encode_ebcdic_1142_char(ch), None);
+        }
+        assert_eq!(encode_ebcdic_1142_char('€'), Some(0x5A));
+        assert_eq!(utf8_to_1142("¤"), Err(Error::Invalid));
+    }
+
+    #[test]
+    fn test_ibm1142_encode_boundaries() {
+        for (input, capacity, expected) in [
+            (b"".as_slice(), 0, Ok(b"".as_slice())),
+            (b"AB", 1, Err(Error::BufferOverflow)),
+            (b"AB", 3, Ok(b"\xC1\xC2")),
+            ("€".as_bytes(), 0, Err(Error::BufferOverflow)),
+            ("€".as_bytes(), 1, Ok(b"\x5A")),
+            ("Æ€".as_bytes(), 3, Ok(b"\x7B\x5A")),
+            ("A¤".as_bytes(), 3, Err(Error::Invalid)),
+            (b"A\xFF", 3, Err(Error::Invalid)),
+        ] {
+            let mut storage = [0xA5; 8];
+            let mut output = &mut storage[..capacity];
+            assert_eq!(
+                encode_ebcdic_1142(&mut output, input).map(|b| b.to_vec()),
+                expected.map(|b| b.to_vec())
+            );
+            assert_eq!(output.len(), capacity - expected.map_or(0, |b| b.len()));
+            assert!(output.iter().all(|&b| b == 0xA5));
+            assert!(storage[capacity..].iter().all(|&b| b == 0xA5));
+        }
+    }
+
+    #[test]
+    fn test_ibm1142_decode_boundaries() {
+        for (input, capacity, expected, remaining) in [
+            (b"".as_slice(), 0, Ok(b"".as_slice()), 0),
+            (b"\xC1\xC2", 1, Err(Error::BufferOverflow), 1),
+            (b"\xC1\xC2", 3, Ok(b"AB"), 1),
+            (b"\x5A", 2, Err(Error::BufferOverflow), 2),
+            (b"\x5A", 3, Ok("€".as_bytes()), 0),
+            (b"\x7B", 2, Ok("Æ".as_bytes()), 0),
+            (b"\xC1\x5A", 4, Ok("A€".as_bytes()), 0),
+            (b"\xC1\x5A", 3, Err(Error::BufferOverflow), 3),
+        ] {
+            let mut storage = [0xA5; 8];
+            let mut output = &mut storage[..capacity];
+            assert_eq!(
+                decode_ebcdic_1142(&mut output, input).map(|b| b.to_vec()),
+                expected.map(|b| b.to_vec())
+            );
+            assert_eq!(output.len(), remaining);
+            if expected.is_ok() {
+                assert!(output.iter().all(|&b| b == 0xA5));
+            }
+            assert!(storage[capacity..].iter().all(|&b| b == 0xA5));
+        }
+    }
 }
 
 #[cfg(test)]
 mod proptests {
     use proptest::prelude::*;
 
+    use super::tests::{from_1142, utf8_to_1142};
     use super::*;
 
     proptest! {
@@ -430,11 +481,17 @@ mod proptests {
         #[test]
         fn ibm1142_ascii_roundtrips(input in proptest::collection::vec(0x20u8..=0x7E, 0..50)) {
             let mut ebcdic = vec![0u8; input.len()];
-            translate_bytes(&mut ebcdic, &input, &ASCII_TO_EBCDIC_1142).unwrap();
+            translate_bytes(&mut ebcdic, &input, &LATIN1_TO_EBCDIC_1142).unwrap();
             let mut out = vec![0u8; input.len() * 3];
             let mut out_ptr = out.as_mut_slice();
-            let decoded = ebcdic_1142_to_utf8(&mut out_ptr, &ebcdic).unwrap();
+            let decoded = decode_ebcdic_1142(&mut out_ptr, &ebcdic).unwrap();
             prop_assert_eq!(decoded, input.as_slice());
         }
+        #[test]
+        fn ibm1142_all_bytes_roundtrip(input in prop::collection::vec(any::<u8>(), 0..64)) {
+            let decoded = from_1142(&input).unwrap();
+            prop_assert_eq!(utf8_to_1142(&decoded).unwrap(), input);
+        }
+
     }
 }
