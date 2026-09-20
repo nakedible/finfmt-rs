@@ -10,7 +10,7 @@ fn quick(group: &mut BenchGroup) {
 const ASCII_INPUT: &[u8] = b"Hello, World 1234567890!";
 const EBCDIC_INPUT: &[u8] = &[
     0xC8, 0x85, 0x93, 0x93, 0x96, 0x6B, 0x40, 0xE6, 0x96, 0x99, 0x93, 0x84, 0x40, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9,
-    0xF0, 0x4F,
+    0xF0, 0x5A,
 ];
 const UTF8_1142: &str = "ABCÆØÅæøå";
 
@@ -40,7 +40,7 @@ fn bench_translate(suite: &mut Suite) {
         });
         group.bench("translate_bytes_inplace_037_to_ascii", |b| {
             b.iter(|| {
-                let mut buf = *b"\xC8\x85\x93\x93\x96\x6B\x40\xE6\x96\x99\x93\x84\x40\xF1\xF2\xF3\xF4\xF5\xF6\xF7\xF8\xF9\xF0\x4F";
+                let mut buf = *b"\xC8\x85\x93\x93\x96\x6B\x40\xE6\x96\x99\x93\x84\x40\xF1\xF2\xF3\xF4\xF5\xF6\xF7\xF8\xF9\xF0\x5A";
                 translate_bytes_inplace_037_to_ascii(black_box(&mut buf));
                 black_box(buf)
             })
