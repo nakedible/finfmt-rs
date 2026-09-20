@@ -45,7 +45,7 @@ impl Step for Ebcdic037 {
             cold_path();
             Error::BufferOverflow
         })?;
-        translate_bytes(buf, input, &EBCDIC_037_TO_ASCII);
+        translate_bytes(buf, input, &EBCDIC_037_TO_ASCII)?;
         Ok(buf)
     }
 

@@ -113,13 +113,20 @@ pub const EBCDIC_1142_TO_UNICODE: [u16; 256] = [
 ];
 
 /// Translates bytes through a 256-entry lookup table, writing to `output`.
-/// Translates `min(output.len(), input.len())` bytes.
+/// A short output returns `BufferOverflow` without writing. Any output suffix
+/// beyond the input length is left unchanged.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn translate_bytes(output: &mut [u8], input: impl AsRef<[u8]>, table: &[u8; 256]) {
-    for (o, i) in output.iter_mut().zip(input.as_ref()) {
+pub fn translate_bytes(output: &mut [u8], input: impl AsRef<[u8]>, table: &[u8; 256]) -> Result<(), Error> {
+    let input = input.as_ref();
+    let output = output.get_mut(..input.len()).ok_or_else(|| {
+        cold_path();
+        Error::BufferOverflow
+    })?;
+    for (o, i) in output.iter_mut().zip(input) {
         *o = table[*i as usize];
     }
+    Ok(())
 }
 
 /// Translates bytes through a 256-entry lookup table in place.
@@ -160,7 +167,7 @@ pub fn utf8_to_ebcdic_1142<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Resul
             cold_path();
             Error::BufferOverflow
         })?;
-        translate_bytes(buf, input, &ASCII_TO_EBCDIC_1142);
+        translate_bytes(buf, input, &ASCII_TO_EBCDIC_1142)?;
         return Ok(buf);
     }
 
@@ -256,13 +263,13 @@ mod tests {
 
     fn a2e(input: &[u8]) -> Vec<u8> {
         let mut out = vec![0u8; input.len()];
-        translate_bytes(&mut out, input, &ASCII_TO_EBCDIC_037);
+        translate_bytes(&mut out, input, &ASCII_TO_EBCDIC_037).unwrap();
         out
     }
 
     fn e2a(input: &[u8]) -> Vec<u8> {
         let mut out = vec![0u8; input.len()];
-        translate_bytes(&mut out, input, &EBCDIC_037_TO_ASCII);
+        translate_bytes(&mut out, input, &EBCDIC_037_TO_ASCII).unwrap();
         out
     }
 
@@ -324,18 +331,6 @@ mod tests {
     }
 
     #[test]
-    fn test_buffer_truncation() {
-        // Output shorter than input: truncates
-        let mut out = [0u8; 3];
-        translate_bytes(&mut out, b"ABCDEFGH", &ASCII_TO_EBCDIC_037);
-        assert_eq!(&out, b"\xC1\xC2\xC3");
-        // Output longer than input: rest unchanged
-        let mut out = [0xFFu8; 4];
-        translate_bytes(&mut out, b"AB", &ASCII_TO_EBCDIC_037);
-        assert_eq!(&out, b"\xC1\xC2\xFF\xFF");
-    }
-
-    #[test]
     fn test_ibm1142_codec() {
         let decoded = from_1142(&(0u8..=255).collect::<Vec<_>>()).unwrap();
         assert_eq!(decoded.chars().count(), 256);
@@ -383,6 +378,21 @@ mod tests {
         }
         assert_eq!(EBCDIC_037_TO_ASCII, decoded);
     }
+
+    #[test]
+    fn test_translation_boundaries() {
+        let mut out = [0xA5; 4];
+        assert_eq!(translate_bytes(&mut out, "", &ASCII_TO_EBCDIC_037), Ok(()));
+        assert_eq!(out, [0xA5; 4]);
+        assert_eq!(translate_bytes(&mut [], "A", &ASCII_TO_EBCDIC_037), Err(Error::BufferOverflow));
+        assert_eq!(
+            translate_bytes(&mut out[..1], "AB", &ASCII_TO_EBCDIC_037),
+            Err(Error::BufferOverflow)
+        );
+        assert_eq!(out, [0xA5; 4]);
+        assert_eq!(translate_bytes(&mut out, "AB", &ASCII_TO_EBCDIC_037), Ok(()));
+        assert_eq!(out, [0xC1, 0xC2, 0xA5, 0xA5]);
+    }
 }
 
 #[cfg(test)]
@@ -395,9 +405,9 @@ mod proptests {
         #[test]
         fn printable_roundtrips(input in proptest::collection::vec(0x20u8..=0x7E, 0..50)) {
             let mut ebcdic = vec![0u8; input.len()];
-            translate_bytes(&mut ebcdic, &input, &ASCII_TO_EBCDIC_037);
+            translate_bytes(&mut ebcdic, &input, &ASCII_TO_EBCDIC_037).unwrap();
             let mut back = vec![0u8; input.len()];
-            translate_bytes(&mut back, &ebcdic, &EBCDIC_037_TO_ASCII);
+            translate_bytes(&mut back, &ebcdic, &EBCDIC_037_TO_ASCII).unwrap();
             prop_assert_eq!(back, input);
         }
 
@@ -406,13 +416,13 @@ mod proptests {
             // ASCII to EBCDIC
             let mut inplace = input.clone();
             let mut copy = vec![0u8; input.len()];
-            translate_bytes(&mut copy, &input, &ASCII_TO_EBCDIC_037);
+            translate_bytes(&mut copy, &input, &ASCII_TO_EBCDIC_037).unwrap();
             translate_bytes_inplace(&mut inplace, &ASCII_TO_EBCDIC_037);
             prop_assert_eq!(&inplace, &copy);
             // EBCDIC to ASCII
             let mut inplace = input.clone();
             let mut copy = vec![0u8; input.len()];
-            translate_bytes(&mut copy, &input, &EBCDIC_037_TO_ASCII);
+            translate_bytes(&mut copy, &input, &EBCDIC_037_TO_ASCII).unwrap();
             translate_bytes_inplace(&mut inplace, &EBCDIC_037_TO_ASCII);
             prop_assert_eq!(&inplace, &copy);
         }
@@ -420,7 +430,7 @@ mod proptests {
         #[test]
         fn ibm1142_ascii_roundtrips(input in proptest::collection::vec(0x20u8..=0x7E, 0..50)) {
             let mut ebcdic = vec![0u8; input.len()];
-            translate_bytes(&mut ebcdic, &input, &ASCII_TO_EBCDIC_1142);
+            translate_bytes(&mut ebcdic, &input, &ASCII_TO_EBCDIC_1142).unwrap();
             let mut out = vec![0u8; input.len() * 3];
             let mut out_ptr = out.as_mut_slice();
             let decoded = ebcdic_1142_to_utf8(&mut out_ptr, &ebcdic).unwrap();

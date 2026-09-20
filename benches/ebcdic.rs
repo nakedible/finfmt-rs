@@ -20,14 +20,14 @@ fn bench_translate(suite: &mut Suite) {
         group.bench("translate_bytes_ascii_to_037", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 24];
-                translate_bytes_ascii_to_037(&mut buf, black_box(ASCII_INPUT));
+                let _ = translate_bytes_ascii_to_037(&mut buf, black_box(ASCII_INPUT));
                 black_box(buf)
             })
         });
         group.bench("translate_bytes_037_to_ascii", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 24];
-                translate_bytes_037_to_ascii(&mut buf, black_box(EBCDIC_INPUT));
+                let _ = translate_bytes_037_to_ascii(&mut buf, black_box(EBCDIC_INPUT));
                 black_box(buf)
             })
         });

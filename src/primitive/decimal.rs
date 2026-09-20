@@ -535,7 +535,7 @@ pub fn decode_decimal_ebcdic_fixed(input: &mut &[u8], len: usize) -> Result<usiz
         return Err(Error::Invalid);
     }
     let mut ascii = [0u8; MAX_DECIMAL_LEN];
-    translate_bytes(&mut ascii[..digits.len()], digits, &EBCDIC_037_TO_ASCII);
+    translate_bytes(&mut ascii[..digits.len()], digits, &EBCDIC_037_TO_ASCII)?;
     validate_numeric(&ascii[..digits.len()], digits.len(), digits.len())?;
     parse_usize(&ascii[..digits.len()])
 }
@@ -587,7 +587,7 @@ pub fn decode_decimal_ebcdic_signed_fixed<'a>(input: &mut &[u8], output: &mut &'
     let (negative, last_digit) = decode_overpunch_digit(input[len - 1])?;
     let out = usize::from(negative);
     if body_len != 0 {
-        translate_bytes(&mut buf[out..out + body_len], &input[..body_len], &EBCDIC_037_TO_ASCII);
+        translate_bytes(&mut buf[out..out + body_len], &input[..body_len], &EBCDIC_037_TO_ASCII)?;
         validate_numeric(&buf[out..out + body_len], body_len, body_len)?;
     }
     let first_nonzero = buf[out..out + body_len].iter().position(|&byte| byte != b'0');

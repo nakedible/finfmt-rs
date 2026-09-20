@@ -5,12 +5,12 @@ use crate::primitive::ebcdic::{
 };
 
 #[inline(never)]
-pub fn translate_bytes_ascii_to_037(output: &mut [u8], input: &[u8]) {
+pub fn translate_bytes_ascii_to_037(output: &mut [u8], input: &[u8]) -> Result<(), Error> {
     translate_bytes(output, input, &ASCII_TO_EBCDIC_037)
 }
 
 #[inline(never)]
-pub fn translate_bytes_037_to_ascii(output: &mut [u8], input: &[u8]) {
+pub fn translate_bytes_037_to_ascii(output: &mut [u8], input: &[u8]) -> Result<(), Error> {
     translate_bytes(output, input, &EBCDIC_037_TO_ASCII)
 }
 
