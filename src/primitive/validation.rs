@@ -1,5 +1,6 @@
 //! Content validators. Functions taking `minlen` and `maxlen` require
 //! `minlen <= maxlen`; debug builds assert this caller invariant.
+//! With valid bounds, content errors take precedence over length errors.
 
 use std::ops::RangeBounds;
 
@@ -46,12 +47,12 @@ fn validate_chars(input: &str, minlen: usize, maxlen: usize, pred: impl Fn(char)
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 fn validate_even_bytes(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize, pred: impl Fn(&u8) -> bool) -> Result<usize, Error> {
-    let input = input.as_ref();
-    if !input.len().is_multiple_of(2) {
+    let len = validate_bytes(input, minlen, maxlen, pred)?;
+    if !len.is_multiple_of(2) {
         cold_path();
         return Err(Error::InvalidValueLength);
     }
-    validate_bytes(input, minlen, maxlen, pred)
+    Ok(len)
 }
 
 /// Validate ASCII decimal digits, returning their byte count.
@@ -592,6 +593,32 @@ mod tests {
         assert_eq!(validate_range('{', 'a'..'{'), Err(Error::Invalid));
     }
     #[test]
+    fn test_even_hex_content_precedes_length() {
+        assert_eq!(validate_hex_upper_even("a", 0, 10), Err(Error::Invalid));
+        assert_eq!(validate_hex_lower_even("A", 0, 10), Err(Error::Invalid));
+        type Validator = fn(&[u8], usize, usize) -> Result<usize, Error>;
+        let validators: [Validator; 3] = [
+            |s, min, max| validate_hex_even(s, min, max),
+            |s, min, max| validate_hex_upper_even(s, min, max),
+            |s, min, max| validate_hex_lower_even(s, min, max),
+        ];
+        for validate in validators {
+            for bad in [b"G".as_slice(), b"0G1", b"GG", b"\xFF"] {
+                for (min, max) in [(0, 0), (0, 10), (10, 10)] {
+                    assert_eq!(validate(bad, min, max), Err(Error::Invalid));
+                }
+            }
+            for valid_odd in [b"0".as_slice(), b"001"] {
+                assert_eq!(validate(valid_odd, 0, 10), Err(Error::InvalidValueLength));
+            }
+            assert_eq!(validate(b"01", 2, 2), Ok(2));
+            assert_eq!(validate(b"01", 3, 4), Err(Error::InvalidValueLength));
+            assert_eq!(validate(b"01", 0, 1), Err(Error::InvalidValueLength));
+            assert_eq!(validate(b"", 0, 0), Ok(0));
+        }
+    }
+
+    #[test]
     fn test_input_representations_and_length_units() {
         assert_eq!(validate_byte_length("é", 2, 2), Ok(2));
         assert_eq!(validate_byte_length("é".as_bytes(), 2, 2), Ok(2));
@@ -730,5 +757,16 @@ mod proptests {
             let expected = val >= lo && val < hi;
             prop_assert_eq!(validate_range(val, lo..hi).is_ok(), expected);
         }
+        #[test]
+        fn even_hex_errors_match_content_and_length(input in prop::collection::vec(any::<u8>(), 0..64), lo in 0usize..64, hi in 0usize..64) {
+            let (min, max) = (lo.min(hi), lo.max(hi));
+            let expected = if !input.iter().all(u8::is_ascii_hexdigit) {
+                Err(Error::Invalid)
+            } else if input.len() < min || input.len() > max || !input.len().is_multiple_of(2) {
+                Err(Error::InvalidValueLength)
+            } else { Ok(input.len()) };
+            prop_assert_eq!(validate_hex_even(&input, min, max), expected);
+        }
+
     }
 }
