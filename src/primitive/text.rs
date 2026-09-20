@@ -98,6 +98,7 @@ pub fn encode_ascii<'a>(
 /// Removed padding may use any byte value. Release performs only the UTF-8
 /// conversion required for &str, returning `Invalid` for malformed UTF-8.
 #[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_ascii(input: &[u8], min_len: usize, align_right: bool, padding: u8) -> Result<&str, Error> {
     let field = decode_bytes(input, min_len, align_right, padding);
     debug_assert!(field.is_ascii(), "retained text must be ASCII");
@@ -253,6 +254,26 @@ mod tests {
     fn assumption(f: impl FnOnce()) {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
         assert_eq!(result.is_err(), cfg!(debug_assertions));
+    }
+
+    #[test]
+    fn test_ascii_assumptions_and_byte_padding() {
+        for right in [false, true] {
+            let mut storage = [0xA5; 8];
+            assumption(|| {
+                let _ = encode_ascii(&mut storage.as_mut_slice(), "é", 0, right, 0);
+            });
+            for input in ["é".as_bytes(), b"\xFF", b"A\xFF", "€".as_bytes()] {
+                assumption(|| {
+                    let _ = decode_ascii(input, 0, right, b' ');
+                });
+            }
+            let encoded = encode_ascii(&mut storage.as_mut_slice(), "A\0\x7F", 5, right, 0xFF).unwrap();
+            assert_eq!(decode_ascii(encoded, 3, right, 0xFF), Ok("A\0\x7F"));
+            assumption(|| {
+                let _ = decode_ascii(encoded, 5, right, 0xFF);
+            });
+        }
     }
 }
 
