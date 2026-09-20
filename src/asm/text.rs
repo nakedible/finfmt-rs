@@ -17,13 +17,13 @@ pub fn encode_bytes_fixed_8_space<'a>(output: &mut &'a mut [u8], input: &[u8]) -
 }
 
 #[inline(never)]
-pub fn decode_bytes_strip_right_8_space<'a>(input: &mut &'a [u8]) -> Result<&'a [u8], Error> {
-    decode_bytes(input, 0, 8, false, b' ')
+pub fn decode_bytes_strip_right_8_space(input: &[u8; 8]) -> Result<&[u8], Error> {
+    Ok(decode_bytes(input, 0, false, b' '))
 }
 
 #[inline(never)]
-pub fn decode_bytes_strip_left_8_space<'a>(input: &mut &'a [u8]) -> Result<&'a [u8], Error> {
-    decode_bytes(input, 0, 8, true, b' ')
+pub fn decode_bytes_strip_left_8_space(input: &[u8; 8]) -> Result<&[u8], Error> {
+    Ok(decode_bytes(input, 0, true, b' '))
 }
 
 #[inline(never)]
@@ -37,13 +37,13 @@ pub fn encode_ascii_pad_left_8_space<'a>(output: &mut &'a mut [u8], input: &str)
 }
 
 #[inline(never)]
-pub fn decode_ascii_strip_right_8_space<'a>(input: &mut &'a [u8]) -> Result<&'a str, Error> {
-    decode_ascii(input, 0, 8, false, b' ')
+pub fn decode_ascii_strip_right_8_space(input: &[u8; 8]) -> Result<&str, Error> {
+    decode_ascii(input, 0, false, b' ')
 }
 
 #[inline(never)]
-pub fn decode_ascii_strip_left_8_space<'a>(input: &mut &'a [u8]) -> Result<&'a str, Error> {
-    decode_ascii(input, 0, 8, true, b' ')
+pub fn decode_ascii_strip_left_8_space(input: &[u8; 8]) -> Result<&str, Error> {
+    decode_ascii(input, 0, true, b' ')
 }
 
 #[inline(never)]
@@ -54,4 +54,9 @@ pub fn truncate_bytes_left_8(input: &[u8]) -> &[u8] {
 #[inline(never)]
 pub fn truncate_bytes_right_8(input: &[u8]) -> &[u8] {
     truncate_bytes(input, 8, true)
+}
+
+#[inline(never)]
+pub fn decode_bytes_protected_6(input: &[u8; 8]) -> Result<&[u8], Error> {
+    Ok(decode_bytes(input, 6, false, b' '))
 }

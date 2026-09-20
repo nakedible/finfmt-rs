@@ -41,54 +41,30 @@ pub fn encode_bytes<'a>(
     Ok(buf)
 }
 
-/// Decode a padded field from `input` into bytes.
-///
-/// Reads exactly `len` bytes from `input`, then removes leading or trailing
-/// `padding` bytes so the result is at least `minlen` bytes long. If
-/// `align_right` is `true`, padding is assumed on the left; otherwise on the
-/// right. No padding is removed when `minlen == len`.
-///
-/// The returned slice is a view into the consumed portion of `input`.
-///
-/// Works with any single-byte encoding (ASCII, EBCDIC, ISO-8859-1, etc.).
-/// Use the appropriate padding byte for your encoding.
-///
-/// Errors:
-/// - `Error::UnexpectedEof` if fewer than `len` bytes are available.
-///
-/// Panics:
-/// - In debug builds if `minlen > len`.
+/// Remove padding from an already framed byte slice, preserving at least
+/// `min_len` bytes. Right alignment strips the left edge; otherwise the right.
+/// Debug builds assert `min_len <= input.len()`; release stays bounded if violated.
+/// Padding bytes within the protected minimum or at the other edge are retained.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn decode_bytes<'a>(input: &mut &'a [u8], minlen: usize, len: usize, align_right: bool, padding: u8) -> Result<&'a [u8], Error> {
-    debug_assert!(minlen <= len, "minlen must be less than or equal to len");
-    let mut field = input.split_off(..len).ok_or_else(|| {
-        cold_path();
-        Error::UnexpectedEof
-    })?;
-    if minlen < len {
-        if align_right {
-            let padding_len = field
-                .iter()
-                .position(|&b| b != padding)
-                .unwrap_or(field.len())
-                .min(field.len().saturating_sub(minlen));
-            let skip = padding_len.min(field.len());
-            let (_, remaining) = field.split_at(skip);
-            field = remaining;
-        } else {
-            let data_len = field
-                .iter()
-                .rposition(|&b| b != padding)
-                .map(|pos| pos + 1)
-                .unwrap_or(0)
-                .max(minlen);
-            let keep = data_len.min(field.len());
-            let (kept, _) = field.split_at(keep);
-            field = kept;
+pub fn decode_bytes(mut input: &[u8], min_len: usize, align_right: bool, padding: u8) -> &[u8] {
+    debug_assert!(min_len <= input.len(), "minimum exceeds field length");
+    if align_right {
+        while input.len() > min_len {
+            match input {
+                [byte, rest @ ..] if *byte == padding => input = rest,
+                _ => break,
+            }
+        }
+    } else {
+        while input.len() > min_len {
+            match input {
+                [rest @ .., byte] if *byte == padding => input = rest,
+                _ => break,
+            }
         }
     }
-    Ok(field)
+    input
 }
 
 /// Retain at most `max_len` bytes from the left, or from the right when
@@ -117,24 +93,14 @@ pub fn encode_ascii<'a>(
     encode_bytes(output, input.as_bytes(), pad_to, align_right, padding)
 }
 
-/// Decode a padded ASCII field from `input` into `&str`.
-///
-/// This is a convenience wrapper around [`decode_bytes`] that asserts the
-/// result is ASCII in debug builds and converts to `&str`.
-///
-/// Errors:
-/// - `Error::UnexpectedEof` if fewer than `len` bytes are available.
-/// - `Error::Invalid` if the bytes are not valid UTF-8.
-///
-/// Panics:
-/// - In debug builds if `minlen > len`.
-/// - In debug builds if the field contains non-ASCII bytes.
+/// Strip byte padding from a framed field and return its ASCII semantic text.
+/// Debug builds assert the minimum-length and retained-ASCII preconditions.
+/// Removed padding may use any byte value. Release performs only the UTF-8
+/// conversion required for &str, returning `Invalid` for malformed UTF-8.
 #[inline(always)]
-// `#[no_panic]` is disabled here because the Rust standard library's
-// `str::from_utf8` path cannot currently be proven panic-free by `no-panic`.
-pub fn decode_ascii<'a>(input: &mut &'a [u8], minlen: usize, len: usize, align_right: bool, padding: u8) -> Result<&'a str, Error> {
-    let field = decode_bytes(input, minlen, len, align_right, padding)?;
-    debug_assert!(field.is_ascii(), "Field must be ASCII");
+pub fn decode_ascii(input: &[u8], min_len: usize, align_right: bool, padding: u8) -> Result<&str, Error> {
+    let field = decode_bytes(input, min_len, align_right, padding);
+    debug_assert!(field.is_ascii(), "retained text must be ASCII");
     str::from_utf8(field).map_err(|_| {
         cold_path();
         Error::Invalid
@@ -144,129 +110,98 @@ pub fn decode_ascii<'a>(input: &mut &'a [u8], minlen: usize, len: usize, align_r
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::primitive::bytes::decode_exact_bytes;
 
-    fn enc(input: &[u8], minlen: usize, maxlen: usize, align_right: bool, padding: u8) -> Vec<u8> {
+    fn enc(input: &[u8], pad_to: usize, align_right: bool, padding: u8) -> Vec<u8> {
         let mut output = [0u8; 64];
-        let initial_len = output.len();
-        let mut outptr = &mut output[..];
-        let result = encode_bytes(
-            &mut outptr,
-            truncate_bytes(input, maxlen, align_right),
-            minlen,
-            align_right,
-            padding,
-        )
-        .unwrap();
-        assert_eq!(outptr.len(), initial_len - result.len(), "cursor advancement");
+        let mut out = output.as_mut_slice();
+        let result = encode_bytes(&mut out, input, pad_to, align_right, padding).unwrap();
+        assert_eq!(out.len(), 64 - result.len(), "cursor advancement");
         result.to_vec()
     }
 
-    fn dec(input: &[u8], minlen: usize, len: usize, align_right: bool, padding: u8) -> Vec<u8> {
-        let mut inptr = input;
-        let initial_len = inptr.len();
-        let result = decode_bytes(&mut inptr, minlen, len, align_right, padding).unwrap();
-        assert_eq!(inptr.len(), initial_len - len, "cursor advancement");
-        result.to_vec()
+    fn dec(input: &[u8], min_len: usize, align_right: bool, padding: u8) -> Vec<u8> {
+        decode_bytes(input, min_len, align_right, padding).to_vec()
     }
 
-    fn enc_err(input: &[u8], buf_len: usize, minlen: usize, maxlen: usize) -> Result<(), Error> {
-        let mut output = [0u8; 64];
-        let mut outptr = &mut output[..buf_len];
-        encode_bytes(&mut outptr, truncate_bytes(input, maxlen, false), minlen, false, b' ').map(|_| ())
-    }
-
-    fn dec_err(input: &[u8], len: usize) -> Result<(), Error> {
-        let mut inptr = input;
-        decode_bytes(&mut inptr, 0, len, true, b' ').map(|_| ())
-    }
-
-    fn roundtrip(input: &[u8], minlen: usize, maxlen: usize, align_right: bool, padding: u8) -> Vec<u8> {
-        let mut output = [0u8; 64];
-        let mut outptr = &mut output[..];
-        let encoded = encode_bytes(
-            &mut outptr,
-            truncate_bytes(input, maxlen, align_right),
-            minlen,
-            align_right,
-            padding,
-        )
-        .unwrap();
-        let mut encoded_ref: &[u8] = encoded;
-        decode_bytes(&mut encoded_ref, 0, encoded.len(), align_right, padding)
-            .unwrap()
-            .to_vec()
+    fn roundtrip(input: &[u8], pad_to: usize, align_right: bool, padding: u8) -> Vec<u8> {
+        let encoded = enc(input, pad_to, align_right, padding);
+        dec(&encoded, 0, align_right, padding)
     }
 
     #[test]
     fn test_encode() {
         // Empty input
-        assert_eq!(enc(b"", 0, 0, false, b' '), b"");
-        assert_eq!(enc(b"", 5, 5, false, b' '), b"     ");
+        assert_eq!(enc(b"", 0, false, b' '), b"");
+        assert_eq!(enc(b"", 5, false, b' '), b"     ");
         // Padding: left-aligned (pad right), right-aligned (pad left)
-        assert_eq!(enc(b"Hi", 5, 10, false, b' '), b"Hi   ");
-        assert_eq!(enc(b"Hi", 5, 10, true, b' '), b"   Hi");
+        assert_eq!(enc(b"Hi", 5, false, b' '), b"Hi   ");
+        assert_eq!(enc(b"Hi", 5, true, b' '), b"   Hi");
         // No padding needed
-        assert_eq!(enc(b"Hello", 5, 10, false, b' '), b"Hello");
+        assert_eq!(enc(b"Hello", 5, false, b' '), b"Hello");
         // Truncation: left-aligned (keep left), right-aligned (keep right)
-        assert_eq!(enc(b"HelloWorld", 5, 5, false, b' '), b"Hello");
-        assert_eq!(enc(b"HelloWorld", 5, 5, true, b' '), b"World");
+        assert_eq!(enc(truncate_bytes(b"HelloWorld", 5, false), 5, false, b' '), b"Hello");
+        assert_eq!(enc(truncate_bytes(b"HelloWorld", 5, true), 5, true, b' '), b"World");
         // Different padding bytes
-        assert_eq!(enc(b"X", 5, 5, true, b'0'), b"0000X");
-        assert_eq!(enc(b"X", 5, 5, true, 0x00), b"\x00\x00\x00\x00X");
-        assert_eq!(enc(b"X", 5, 5, true, 0xFF), b"\xFF\xFF\xFF\xFFX");
-        assert_eq!(enc(b"X", 5, 5, true, 0x40), b"\x40\x40\x40\x40X"); // EBCDIC
+        assert_eq!(enc(b"X", 5, true, b'0'), b"0000X");
+        assert_eq!(enc(b"X", 5, true, 0x00), b"\x00\x00\x00\x00X");
+        assert_eq!(enc(b"X", 5, true, 0xFF), b"\xFF\xFF\xFF\xFFX");
+        assert_eq!(enc(b"X", 5, true, 0x40), b"\x40\x40\x40\x40X"); // EBCDIC
         // High bytes in input
-        assert_eq!(enc(b"\x80\x90\xA0", 5, 5, true, b' '), b"  \x80\x90\xA0");
-        assert_eq!(enc(b"\x80\x81\x82\x83\x84\x85", 3, 3, true, b' '), b"\x83\x84\x85");
+        assert_eq!(enc(b"\x80\x90\xA0", 5, true, b' '), b"  \x80\x90\xA0");
+        assert_eq!(
+            enc(truncate_bytes(b"\x80\x81\x82\x83\x84\x85", 3, true), 3, true, b' '),
+            b"\x83\x84\x85"
+        );
     }
 
     #[test]
     fn test_decode() {
         // Empty
-        assert_eq!(dec(b"", 0, 0, false, b' '), b"");
+        assert_eq!(dec(b"", 0, false, b' '), b"");
         // Strip leading (right-aligned) / trailing (left-aligned)
-        assert_eq!(dec(b"   Hi", 0, 5, true, b' '), b"Hi");
-        assert_eq!(dec(b"Hi   ", 0, 5, false, b' '), b"Hi");
+        assert_eq!(dec(b"   Hi", 0, true, b' '), b"Hi");
+        assert_eq!(dec(b"Hi   ", 0, false, b' '), b"Hi");
         // All padding
-        assert_eq!(dec(b"     ", 0, 5, true, b' '), b"");
-        assert_eq!(dec(b"     ", 0, 5, false, b' '), b"");
+        assert_eq!(dec(b"     ", 0, true, b' '), b"");
+        assert_eq!(dec(b"     ", 0, false, b' '), b"");
         // No padding to strip
-        assert_eq!(dec(b"Hello", 0, 5, false, b' '), b"Hello");
+        assert_eq!(dec(b"Hello", 0, false, b' '), b"Hello");
         // minlen prevents over-stripping
-        assert_eq!(dec(b"     ", 3, 5, true, b' '), b"   ");
-        assert_eq!(dec(b"  Hi", 3, 4, true, b' '), b" Hi");
+        assert_eq!(dec(b"     ", 3, true, b' '), b"   ");
+        assert_eq!(dec(b"  Hi", 3, true, b' '), b" Hi");
         // minlen == len (no stripping)
-        assert_eq!(dec(b"   Hi", 5, 5, true, b' '), b"   Hi");
+        assert_eq!(dec(b"   Hi", 5, true, b' '), b"   Hi");
         // Padding in middle - not stripped
-        assert_eq!(dec(b"A B C", 0, 5, false, b' '), b"A B C");
+        assert_eq!(dec(b"A B C", 0, false, b' '), b"A B C");
         // Padding at wrong end - not stripped
-        assert_eq!(dec(b"Hi   ", 0, 5, true, b' '), b"Hi   ");
-        assert_eq!(dec(b"   Hi", 0, 5, false, b' '), b"   Hi");
+        assert_eq!(dec(b"Hi   ", 0, true, b' '), b"Hi   ");
+        assert_eq!(dec(b"   Hi", 0, false, b' '), b"   Hi");
         // Different padding bytes
-        assert_eq!(dec(b"\x00\x00AB", 0, 4, true, 0x00), b"AB");
-        assert_eq!(dec(b"\x40\x40Hi", 0, 4, true, 0x40), b"Hi"); // EBCDIC
+        assert_eq!(dec(b"\x00\x00AB", 0, true, 0x00), b"AB");
+        assert_eq!(dec(b"\x40\x40Hi", 0, true, 0x40), b"Hi"); // EBCDIC
         // High bytes
-        assert_eq!(dec(b"  \xFF\xFE", 0, 4, true, b' '), b"\xFF\xFE");
-        assert_eq!(dec(b"\xFF\xFF\xAB", 0, 3, true, 0xFF), b"\xAB");
+        assert_eq!(dec(b"  \xFF\xFE", 0, true, b' '), b"\xFF\xFE");
+        assert_eq!(dec(b"\xFF\xFF\xAB", 0, true, 0xFF), b"\xAB");
     }
 
     #[test]
-    fn test_errors() {
-        // BufferOverflow: buffer too small, zero buffer
-        assert_eq!(enc_err(b"Test", 3, 5, 5), Err(Error::BufferOverflow));
-        assert_eq!(enc_err(b"X", 0, 1, 1), Err(Error::BufferOverflow));
-        // UnexpectedEof
-        assert_eq!(dec_err(b"ABC", 5), Err(Error::UnexpectedEof));
-        assert_eq!(dec_err(b"", 1), Err(Error::UnexpectedEof));
+    fn test_explicit_framing() {
+        let mut input = b"Hi   tail".as_slice();
+        let field = decode_exact_bytes(&mut input, 5).unwrap();
+        assert_eq!(decode_bytes(field, 0, false, b' '), b"Hi");
+        assert_eq!(input, b"tail");
+        assert_eq!(decode_exact_bytes(&mut input, 5), Err(Error::UnexpectedEof));
+        assert_eq!(input, b"tail");
     }
 
     #[test]
     fn test_roundtrip() {
-        assert_eq!(roundtrip(b"Hello", 8, 8, true, b' '), b"Hello");
-        assert_eq!(roundtrip(b"Hello", 8, 8, false, b' '), b"Hello");
-        assert_eq!(roundtrip(b"Test", 4, 10, true, b'0'), b"Test");
-        assert_eq!(roundtrip(b"", 5, 5, true, b' '), b"");
-        assert_eq!(roundtrip(b"\x80\x90\xA0", 5, 5, true, 0x40), b"\x80\x90\xA0");
+        assert_eq!(roundtrip(b"Hello", 8, true, b' '), b"Hello");
+        assert_eq!(roundtrip(b"Hello", 8, false, b' '), b"Hello");
+        assert_eq!(roundtrip(b"Test", 4, true, b'0'), b"Test");
+        assert_eq!(roundtrip(b"", 5, true, b' '), b"");
+        assert_eq!(roundtrip(b"\x80\x90\xA0", 5, true, 0x40), b"\x80\x90\xA0");
     }
 
     #[test]
@@ -276,15 +211,15 @@ mod tests {
         let mut p = &mut out[..];
         assert_eq!(encode_ascii(&mut p, "Hello", 8, true, b' ').unwrap(), b"   Hello");
         // decode_ascii
-        let mut inp: &[u8] = b"   Hello";
-        assert_eq!(decode_ascii(&mut inp, 0, 8, true, b' ').unwrap(), "Hello");
+        let inp: &[u8] = b"   Hello";
+        assert_eq!(decode_ascii(inp, 0, true, b' ').unwrap(), "Hello");
     }
 
     #[test]
     #[cfg(not(debug_assertions))]
     fn test_decode_ascii_invalid_utf8() {
-        let mut inp: &[u8] = b"\xFF\xFE";
-        assert_eq!(decode_ascii(&mut inp, 0, 2, true, b' '), Err(Error::Invalid));
+        let inp: &[u8] = b"\xFF\xFE";
+        assert_eq!(decode_ascii(inp, 0, true, b' '), Err(Error::Invalid));
     }
     #[test]
     fn test_padding_and_truncation_boundaries() {
@@ -299,6 +234,12 @@ mod tests {
                 assert_eq!(encode_bytes(&mut out, input, pad_to, right, 0), Err(Error::BufferOverflow));
                 assert_eq!(out, before);
             }
+            assumption(|| {
+                decode_bytes(b"ABC", 4, right, 0);
+            });
+            assumption(|| {
+                decode_bytes(b"", usize::MAX, right, 0);
+            });
             for (max_len, expected_len) in [(0, 0), (2, 2), (3, 3), (4, 3), (usize::MAX, 3)] {
                 let input = b"ABC";
                 let got = truncate_bytes(input, max_len, right);
@@ -307,6 +248,11 @@ mod tests {
             }
             assert!(core::str::from_utf8(truncate_bytes("é".as_bytes(), 1, right)).is_err());
         }
+    }
+
+    fn assumption(f: impl FnOnce()) {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+        assert_eq!(result.is_err(), cfg!(debug_assertions));
     }
 }
 
@@ -341,8 +287,7 @@ mod proptests {
             let mut output = [0u8; 64];
             let mut outptr = &mut output[..];
             let encoded = encode_bytes(&mut outptr, &input, minlen, align_right, padding).unwrap();
-            let mut encoded_ref: &[u8] = encoded;
-            let decoded = decode_bytes(&mut encoded_ref, 0, encoded.len(), align_right, padding).unwrap();
+            let decoded = decode_bytes(encoded, 0, align_right, padding);
             prop_assert_eq!(decoded, input.as_slice());
         }
 
@@ -365,8 +310,7 @@ mod proptests {
                 v.extend(vec![padding; padding_count]);
                 v
             };
-            let mut inptr: &[u8] = &input;
-            let decoded = decode_bytes(&mut inptr, minlen, total_len, align_right, padding).unwrap();
+            let decoded = decode_bytes(&input, minlen, align_right, padding);
             prop_assert!(decoded.len() >= minlen);
             if align_right {
                 prop_assert!(decoded.ends_with(&data));
@@ -374,6 +318,23 @@ mod proptests {
                 prop_assert!(decoded.starts_with(&data));
             }
         }
+        #[test]
+        fn protected_padding_roundtrips_any_bytes(
+            input in prop::collection::vec(any::<u8>(), 0..64),
+            extra in 0usize..32,
+            right in any::<bool>(),
+            padding in any::<u8>(),
+        ) {
+            let mut storage = [0xA5; 96];
+            let mut output = storage.as_mut_slice();
+            let encoded = encode_bytes(&mut output, &input, input.len() + extra, right, padding).unwrap();
+            prop_assert_eq!(encoded.len(), input.len() + extra);
+            prop_assert!(output.iter().all(|&b| b == 0xA5));
+            let decoded = decode_bytes(encoded, input.len(), right, padding);
+            prop_assert_eq!(decoded, input.as_slice());
+            prop_assert_eq!(decoded.as_ptr(), encoded[if right { extra } else { 0 }..].as_ptr());
+        }
+
         #[test]
         fn truncation_matches_selected_edge(input in prop::collection::vec(any::<u8>(), 0..64), limit in any::<usize>(), right in any::<bool>()) {
             let mut expected: Vec<_> = if right {

@@ -9,8 +9,8 @@ fn quick(group: &mut BenchGroup) {
 
 const SHORT_BYTES: &[u8] = b"Hi";
 const SHORT_STR: &str = "Hi";
-const PADDED_RIGHT: &[u8] = b"Hi      ";
-const PADDED_LEFT: &[u8] = b"      Hi";
+const PADDED_RIGHT: &[u8; 8] = b"Hi      ";
+const PADDED_LEFT: &[u8; 8] = b"      Hi";
 
 fn bench_encode_bytes(suite: &mut Suite) {
     suite.group("encode_bytes", |group| {
@@ -60,15 +60,18 @@ fn bench_decode_bytes(suite: &mut Suite) {
         quick(group);
         group.bench("decode_bytes_strip_right_8_space", |b| {
             b.iter(|| {
-                let mut input = black_box(PADDED_RIGHT);
-                black_box(decode_bytes_strip_right_8_space(&mut input))
+                let input = black_box(PADDED_RIGHT);
+                black_box(decode_bytes_strip_right_8_space(input))
             })
         });
         group.bench("decode_bytes_strip_left_8_space", |b| {
             b.iter(|| {
-                let mut input = black_box(PADDED_LEFT);
-                black_box(decode_bytes_strip_left_8_space(&mut input))
+                let input = black_box(PADDED_LEFT);
+                black_box(decode_bytes_strip_left_8_space(input))
             })
+        });
+        group.bench("decode_bytes_protected_6", |b| {
+            b.iter(|| black_box(decode_bytes_protected_6(black_box(b"        "))))
         });
     });
 }
@@ -100,14 +103,14 @@ fn bench_decode_ascii(suite: &mut Suite) {
         quick(group);
         group.bench("decode_ascii_strip_right_8_space", |b| {
             b.iter(|| {
-                let mut input = black_box(PADDED_RIGHT);
-                black_box(decode_ascii_strip_right_8_space(&mut input))
+                let input = black_box(PADDED_RIGHT);
+                black_box(decode_ascii_strip_right_8_space(input))
             })
         });
         group.bench("decode_ascii_strip_left_8_space", |b| {
             b.iter(|| {
-                let mut input = black_box(PADDED_LEFT);
-                black_box(decode_ascii_strip_left_8_space(&mut input))
+                let input = black_box(PADDED_LEFT);
+                black_box(decode_ascii_strip_left_8_space(input))
             })
         });
     });

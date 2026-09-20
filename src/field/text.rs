@@ -70,8 +70,7 @@ impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadRigh
         _scratch: &mut &'a mut [u8],
         output_len: Option<usize>,
     ) -> Result<&'a [u8], Error> {
-        let mut input_ref = input;
-        decode_bytes(&mut input_ref, output_len.unwrap_or(MIN_LEN).max(MIN_LEN), input.len(), false, CHAR)
+        Ok(decode_bytes(input, output_len.unwrap_or(MIN_LEN).max(MIN_LEN), false, CHAR))
     }
 }
 
@@ -100,8 +99,7 @@ impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadLeft
         _scratch: &mut &'a mut [u8],
         output_len: Option<usize>,
     ) -> Result<&'a [u8], Error> {
-        let mut input_ref = input;
-        decode_bytes(&mut input_ref, output_len.unwrap_or(MIN_LEN).max(MIN_LEN), input.len(), true, CHAR)
+        Ok(decode_bytes(input, output_len.unwrap_or(MIN_LEN).max(MIN_LEN), true, CHAR))
     }
 }
 
@@ -130,8 +128,7 @@ impl<const CHAR: u8> Step for PadRightEven<CHAR> {
         _scratch: &mut &'a mut [u8],
         output_len: Option<usize>,
     ) -> Result<&'a [u8], Error> {
-        let mut input_ref = input;
-        decode_bytes(&mut input_ref, output_len.unwrap_or(0), input.len(), false, CHAR)
+        Ok(decode_bytes(input, output_len.unwrap_or(0), false, CHAR))
     }
 }
 
@@ -160,7 +157,6 @@ impl<const CHAR: u8> Step for PadLeftEven<CHAR> {
         _scratch: &mut &'a mut [u8],
         output_len: Option<usize>,
     ) -> Result<&'a [u8], Error> {
-        let mut input_ref = input;
-        decode_bytes(&mut input_ref, output_len.unwrap_or(0), input.len(), true, CHAR)
+        Ok(decode_bytes(input, output_len.unwrap_or(0), true, CHAR))
     }
 }
