@@ -4,7 +4,7 @@ use no_panic::no_panic;
 use crate::Error;
 use crate::utils::cold_path;
 
-const fn table_from_nibble_digits(digits: &[u8]) -> [u8; 256] {
+const fn nibbles_from_digits(digits: &[u8; 16]) -> [u8; 256] {
     let mut table = [0xFF; 256];
     let mut i = 0;
     while i < digits.len() {
@@ -14,43 +14,40 @@ const fn table_from_nibble_digits(digits: &[u8]) -> [u8; 256] {
     table
 }
 
-/// Trait for nibble encoding formats.
+/// A nibble alphabet with sixteen distinct canonical byte representations.
 ///
-/// Provides both the forward mapping (nibble value to character) in `DIGITS`
-/// and the reverse mapping (character to nibble value) in `TABLE`.
-pub trait NibbleFormat {
-    /// Characters representing nibble values 0-15.
+/// Each canonical digit must map back to its index: `NIBBLES[DIGITS[n]] == n`.
+/// A custom reverse table may accept additional aliases; unpacking always emits
+/// the canonical `DIGITS`, so aliases do not round-trip byte-for-byte.
+pub trait NibbleAlphabet {
+    /// Canonical bytes representing nibble values 0-15.
     const DIGITS: [u8; 16];
-    /// Lookup table mapping characters to nibble values (0xFF for invalid).
-    const TABLE: [u8; 256];
+    /// Byte-to-nibble mapping. Entries above 0x0F are invalid; the default uses 0xFF.
+    const NIBBLES: [u8; 256] = nibbles_from_digits(&Self::DIGITS);
 }
 
 /// BCD with zone nibbles: 0-9 to '0'-'9', A-F to ':'-'?'.
 pub struct Bcdz;
-impl NibbleFormat for Bcdz {
+impl NibbleAlphabet for Bcdz {
     const DIGITS: [u8; 16] = *b"0123456789:;<=>?";
-    const TABLE: [u8; 256] = table_from_nibble_digits(&Self::DIGITS);
 }
 
 /// Uppercase hexadecimal: 0-9 to '0'-'9', A-F to 'A'-'F'.
 pub struct HexUpper;
-impl NibbleFormat for HexUpper {
+impl NibbleAlphabet for HexUpper {
     const DIGITS: [u8; 16] = *b"0123456789ABCDEF";
-    const TABLE: [u8; 256] = table_from_nibble_digits(&Self::DIGITS);
 }
 
 /// Lowercase hexadecimal: 0-9 to '0'-'9', A-F to 'a'-'f'.
 pub struct HexLower;
-impl NibbleFormat for HexLower {
+impl NibbleAlphabet for HexLower {
     const DIGITS: [u8; 16] = *b"0123456789abcdef";
-    const TABLE: [u8; 256] = table_from_nibble_digits(&Self::DIGITS);
 }
 
 /// EBCDIC hexadecimal: 0-9 to F0-F9, A-F to C1-C6.
 pub struct HexEbcdic;
-impl NibbleFormat for HexEbcdic {
+impl NibbleAlphabet for HexEbcdic {
     const DIGITS: [u8; 16] = *b"\xF0\xF1\xF2\xF3\xF4\xF5\xF6\xF7\xF8\xF9\xC1\xC2\xC3\xC4\xC5\xC6";
-    const TABLE: [u8; 256] = table_from_nibble_digits(&Self::DIGITS);
 }
 
 #[inline(always)]
@@ -119,7 +116,7 @@ pub fn pack_nibbles<'a>(
 /// Validates that every byte in `input` maps to a valid nibble under `digit_table`.
 ///
 /// A byte is valid when `digit_table[byte] <= 0x0F` (i.e., the top nibble of the
-/// table entry is zero). `table_from_nibble_digits` stores `0xFF` for invalid
+/// table entry is zero). `nibbles_from_digits` stores `0xFF` for invalid
 /// bytes, so the check collapses to `OR`-ing the high nibble across the input.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
@@ -236,7 +233,7 @@ mod tests {
     fn pack_err(input: &[u8], buf_len: usize) -> Result<(), Error> {
         let mut output = [0u8; 64];
         let mut outptr = &mut output[..buf_len];
-        pack_nibbles(&mut outptr, input, true, 0, &Bcdz::TABLE).map(|_| ())
+        pack_nibbles(&mut outptr, input, true, 0, &Bcdz::NIBBLES).map(|_| ())
     }
 
     fn unpack_err(input: &[u8], buf_len: usize) -> Result<(), Error> {
@@ -260,21 +257,21 @@ mod tests {
     #[test]
     fn test_pack() {
         // Empty, single digit (odd), even length
-        assert_eq!(pack(b"", true, 0, &Bcdz::TABLE), b"");
-        assert_eq!(pack(b"5", true, 0, &Bcdz::TABLE), b"\x05");
-        assert_eq!(pack(b"5", false, 0, &Bcdz::TABLE), b"\x50");
-        assert_eq!(pack(b"1234", true, 0, &Bcdz::TABLE), b"\x12\x34");
-        assert_eq!(pack(b"1234", false, 0, &Bcdz::TABLE), b"\x12\x34");
+        assert_eq!(pack(b"", true, 0, &Bcdz::NIBBLES), b"");
+        assert_eq!(pack(b"5", true, 0, &Bcdz::NIBBLES), b"\x05");
+        assert_eq!(pack(b"5", false, 0, &Bcdz::NIBBLES), b"\x50");
+        assert_eq!(pack(b"1234", true, 0, &Bcdz::NIBBLES), b"\x12\x34");
+        assert_eq!(pack(b"1234", false, 0, &Bcdz::NIBBLES), b"\x12\x34");
         // Odd length > 1: alignment and padding
-        assert_eq!(pack(b"123", true, 0, &Bcdz::TABLE), b"\x01\x23");
-        assert_eq!(pack(b"123", false, 0, &Bcdz::TABLE), b"\x12\x30");
-        assert_eq!(pack(b"123", true, 0xF, &Bcdz::TABLE), b"\xF1\x23");
-        assert_eq!(pack(b"F", true, 0xF, &HexUpper::TABLE), b"\xFF");
+        assert_eq!(pack(b"123", true, 0, &Bcdz::NIBBLES), b"\x01\x23");
+        assert_eq!(pack(b"123", false, 0, &Bcdz::NIBBLES), b"\x12\x30");
+        assert_eq!(pack(b"123", true, 0xF, &Bcdz::NIBBLES), b"\xF1\x23");
+        assert_eq!(pack(b"F", true, 0xF, &HexUpper::NIBBLES), b"\xFF");
         // All tables
-        assert_eq!(pack(b"ABCDEF", true, 0, &HexUpper::TABLE), b"\xAB\xCD\xEF");
-        assert_eq!(pack(b"abcdef", true, 0, &HexLower::TABLE), b"\xab\xcd\xef");
-        assert_eq!(pack(b"\xF1\xF2\xF3\xF4", true, 0, &HexEbcdic::TABLE), b"\x12\x34");
-        assert_eq!(pack(b":;<=>?", true, 0, &Bcdz::TABLE), b"\xAB\xCD\xEF");
+        assert_eq!(pack(b"ABCDEF", true, 0, &HexUpper::NIBBLES), b"\xAB\xCD\xEF");
+        assert_eq!(pack(b"abcdef", true, 0, &HexLower::NIBBLES), b"\xab\xcd\xef");
+        assert_eq!(pack(b"\xF1\xF2\xF3\xF4", true, 0, &HexEbcdic::NIBBLES), b"\x12\x34");
+        assert_eq!(pack(b":;<=>?", true, 0, &Bcdz::NIBBLES), b"\xAB\xCD\xEF");
     }
 
     #[test]
@@ -320,12 +317,12 @@ mod tests {
 
     #[test]
     fn test_pack_expanded() {
-        assert_eq!(pack_expanded(b"", &HexUpper::TABLE), Ok(b"".to_vec()));
-        assert_eq!(pack_expanded(b"12", &HexUpper::TABLE), Ok(b"\x12".to_vec()));
-        assert_eq!(pack_expanded(b"1234", &HexUpper::TABLE), Ok(b"\x12\x34".to_vec()));
-        assert_eq!(pack_expanded(b"1", &HexUpper::TABLE), Err(Error::Invalid));
-        assert_eq!(pack_expanded(b"1G", &HexUpper::TABLE), Err(Error::Invalid));
-        assert_eq!(pack_expanded(b"\xF1\xF2", &HexEbcdic::TABLE), Ok(b"\x12".to_vec()));
+        assert_eq!(pack_expanded(b"", &HexUpper::NIBBLES), Ok(b"".to_vec()));
+        assert_eq!(pack_expanded(b"12", &HexUpper::NIBBLES), Ok(b"\x12".to_vec()));
+        assert_eq!(pack_expanded(b"1234", &HexUpper::NIBBLES), Ok(b"\x12\x34".to_vec()));
+        assert_eq!(pack_expanded(b"1", &HexUpper::NIBBLES), Err(Error::Invalid));
+        assert_eq!(pack_expanded(b"1G", &HexUpper::NIBBLES), Err(Error::Invalid));
+        assert_eq!(pack_expanded(b"\xF1\xF2", &HexEbcdic::NIBBLES), Ok(b"\x12".to_vec()));
     }
 
     #[test]
@@ -333,7 +330,7 @@ mod tests {
         // Pack: buffer too small, zero buffer
         assert_eq!(pack_err(b"123", 1), Err(Error::BufferOverflow)); // needs 2
         assert_eq!(pack_err(b"1", 0), Err(Error::BufferOverflow)); // needs 1
-        assert_eq!(pack_expanded_err(b"12", 0, &HexUpper::TABLE), Err(Error::BufferOverflow)); // needs 1
+        assert_eq!(pack_expanded_err(b"12", 0, &HexUpper::NIBBLES), Err(Error::BufferOverflow)); // needs 1
         // Unpack: buffer too small, zero buffer
         assert_eq!(unpack_err(b"\x12\x34", 3), Err(Error::BufferOverflow)); // needs 4
         assert_eq!(unpack_err(b"\x12", 0), Err(Error::BufferOverflow)); // needs 2
@@ -342,9 +339,14 @@ mod tests {
     #[test]
     fn test_lookup_tables() {
         // Verify each table is inverse of its digit array
-        fn check<F: NibbleFormat>() {
-            for (i, &digit) in F::DIGITS.iter().enumerate() {
-                assert_eq!(F::TABLE[digit as usize], i as u8);
+        fn check<F: NibbleAlphabet>() {
+            for byte in 0u8..=255 {
+                let expected = F::DIGITS.iter().position(|&digit| digit == byte).map_or(0xFF, |n| n as u8);
+                assert_eq!(F::NIBBLES[byte as usize], expected);
+                assert_eq!(
+                    validate_nibbles(&[byte], &F::NIBBLES),
+                    if expected < 16 { Ok(()) } else { Err(Error::Invalid) }
+                );
             }
         }
         check::<Bcdz>();
@@ -352,9 +354,35 @@ mod tests {
         check::<HexLower>();
         check::<HexEbcdic>();
         // Invalid chars return 0xFF
-        assert_eq!(Bcdz::TABLE[b'A' as usize], 0xFF);
-        assert_eq!(HexUpper::TABLE[b'a' as usize], 0xFF);
-        assert_eq!(HexLower::TABLE[b'A' as usize], 0xFF);
+        assert_eq!(Bcdz::NIBBLES[b'A' as usize], 0xFF);
+        assert_eq!(HexUpper::NIBBLES[b'a' as usize], 0xFF);
+        assert_eq!(HexLower::NIBBLES[b'A' as usize], 0xFF);
+    }
+    #[test]
+    fn test_custom_alphabet_defaults_and_aliases() {
+        struct Letters;
+        impl NibbleAlphabet for Letters {
+            const DIGITS: [u8; 16] = *b"ABCDEFGHIJKLMNOP";
+        }
+        struct MixedHex;
+        impl NibbleAlphabet for MixedHex {
+            const DIGITS: [u8; 16] = HexUpper::DIGITS;
+            const NIBBLES: [u8; 256] = {
+                let mut table = HexUpper::NIBBLES;
+                let mut i = 0;
+                while i < 6 {
+                    table[b'a' as usize + i] = 10 + i as u8;
+                    i += 1;
+                }
+                table
+            };
+        }
+        for (n, digit) in Letters::DIGITS.iter().enumerate() {
+            assert_eq!(Letters::NIBBLES[*digit as usize], n as u8);
+        }
+        assert_eq!(Letters::NIBBLES[b'0' as usize], 0xFF);
+        assert_eq!(pack_expanded(b"aB", &MixedHex::NIBBLES), Ok(vec![0xAB]));
+        assert_eq!(unpack(&[0xAB], &MixedHex::DIGITS), b"AB");
     }
 }
 
@@ -384,7 +412,7 @@ mod proptests {
         fn pack_output_length(input in proptest::collection::vec(b'0'..=b'9', 0..100)) {
             let mut output = [0u8; 64];
             let mut outptr = &mut output[..];
-            let result = pack_nibbles(&mut outptr, &input, true, 0, &Bcdz::TABLE).unwrap();
+            let result = pack_nibbles(&mut outptr, &input, true, 0, &Bcdz::NIBBLES).unwrap();
             prop_assert_eq!(result.len(), input.len().div_ceil(2));
         }
 
@@ -398,17 +426,17 @@ mod proptests {
 
         #[test]
         fn roundtrip_bcdz(input in "[0-9]{0,50}") {
-            assert_roundtrip(&input, &Bcdz::TABLE, &Bcdz::DIGITS);
+            assert_roundtrip(&input, &Bcdz::NIBBLES, &Bcdz::DIGITS);
         }
 
         #[test]
         fn roundtrip_hex_upper(input in "[0-9A-F]{0,50}") {
-            assert_roundtrip(&input, &HexUpper::TABLE, &HexUpper::DIGITS);
+            assert_roundtrip(&input, &HexUpper::NIBBLES, &HexUpper::DIGITS);
         }
 
         #[test]
         fn roundtrip_hex_lower(input in "[0-9a-f]{0,50}") {
-            assert_roundtrip(&input, &HexLower::TABLE, &HexLower::DIGITS);
+            assert_roundtrip(&input, &HexLower::NIBBLES, &HexLower::DIGITS);
         }
 
         #[test]
@@ -418,7 +446,7 @@ mod proptests {
             let unpacked_result = unpack_nibbles(&mut unpack_ptr, &input, &HexUpper::DIGITS).unwrap();
             let mut repacked = [0u8; 64];
             let mut repack_ptr = &mut repacked[..];
-            let repacked_result = pack_nibbles(&mut repack_ptr, unpacked_result, true, 0, &HexUpper::TABLE).unwrap();
+            let repacked_result = pack_nibbles(&mut repack_ptr, unpacked_result, true, 0, &HexUpper::NIBBLES).unwrap();
             prop_assert_eq!(repacked_result, input.as_slice());
         }
 
@@ -428,12 +456,12 @@ mod proptests {
             // Right align: padding in high nibble of first byte
             let mut out = [0u8; 64];
             let mut ptr = &mut out[..];
-            let result = pack_nibbles(&mut ptr, odd.as_bytes(), true, padding, &Bcdz::TABLE).unwrap();
+            let result = pack_nibbles(&mut ptr, odd.as_bytes(), true, padding, &Bcdz::NIBBLES).unwrap();
             prop_assert_eq!(result[0] >> 4, padding);
             // Left align: padding in low nibble of last byte
             let mut out = [0u8; 64];
             let mut ptr = &mut out[..];
-            let result = pack_nibbles(&mut ptr, odd.as_bytes(), false, padding, &Bcdz::TABLE).unwrap();
+            let result = pack_nibbles(&mut ptr, odd.as_bytes(), false, padding, &Bcdz::NIBBLES).unwrap();
             prop_assert_eq!(result[result.len()-1] & 0x0F, padding);
         }
     }

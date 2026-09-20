@@ -5,7 +5,7 @@ use no_panic::no_panic;
 
 use crate::Error;
 use crate::primitive::bytes::{all_bytes_eq, validate_exact_length};
-use crate::primitive::nibble::{NibbleFormat, pack_nibbles, unpack_padded_nibbles, validate_nibbles};
+use crate::primitive::nibble::{NibbleAlphabet, pack_nibbles, unpack_padded_nibbles, validate_nibbles};
 use crate::utils::cold_path;
 
 #[inline(always)]
@@ -49,14 +49,14 @@ pub fn extend_be_bytes<const N: usize>(input: &mut &[u8], len: usize, fill: u8) 
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_nibble_int_fixed<F: NibbleFormat>(input: &[u8], len: usize) -> Result<(), Error> {
+pub fn validate_nibble_int_fixed<F: NibbleAlphabet>(input: &[u8], len: usize) -> Result<(), Error> {
     validate_exact_length(input, len)?;
-    validate_nibbles(input, &F::TABLE)
+    validate_nibbles(input, &F::NIBBLES)
 }
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn encode_nibble_int_fixed<F: NibbleFormat>(output: &mut &mut [u8], value: u64, len: usize) -> Result<(), Error> {
+pub fn encode_nibble_int_fixed<F: NibbleAlphabet>(output: &mut &mut [u8], value: u64, len: usize) -> Result<(), Error> {
     const WORD_BYTES: usize = size_of::<u64>();
     const WORD_DIGITS: usize = WORD_BYTES * 2;
 
@@ -80,7 +80,7 @@ pub fn encode_nibble_int_fixed<F: NibbleFormat>(output: &mut &mut [u8], value: u
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn decode_nibble_int_fixed<F: NibbleFormat>(input: &mut &[u8], len: usize) -> Result<u64, Error> {
+pub fn decode_nibble_int_fixed<F: NibbleAlphabet>(input: &mut &[u8], len: usize) -> Result<u64, Error> {
     const WORD_BYTES: usize = size_of::<u64>();
     const WORD_DIGITS: usize = WORD_BYTES * 2;
 
@@ -98,7 +98,7 @@ pub fn decode_nibble_int_fixed<F: NibbleFormat>(input: &mut &[u8], len: usize) -
     let packed_len = tail.len().div_ceil(2);
     let mut packed = [0u8; WORD_BYTES];
     let mut packed_ptr = &mut packed[..packed_len];
-    let _ = pack_nibbles(&mut packed_ptr, tail, true, 0, &F::TABLE)?;
+    let _ = pack_nibbles(&mut packed_ptr, tail, true, 0, &F::NIBBLES)?;
     let mut packed_input = &packed[..packed_len];
     decode_binary_u64_be_fixed(&mut packed_input, packed_len)
 }
@@ -201,7 +201,7 @@ mod tests {
         decode_binary_u64_be_fixed(&mut input, N)
     }
 
-    fn decode_hex<F: crate::primitive::nibble::NibbleFormat, const N: usize>(input: &[u8]) -> Result<u64, Error> {
+    fn decode_hex<F: crate::primitive::nibble::NibbleAlphabet, const N: usize>(input: &[u8]) -> Result<u64, Error> {
         let mut input = input;
         decode_nibble_int_fixed::<F>(&mut input, N)
     }

@@ -13,7 +13,7 @@ use crate::primitive::int::{
     encode_binary_i64_be_fixed, encode_binary_u64_be_fixed, encode_nibble_int_fixed, validate_binary_i64_be_fixed,
     validate_nibble_int_fixed,
 };
-use crate::primitive::nibble::NibbleFormat;
+use crate::primitive::nibble::NibbleAlphabet;
 use crate::primitive::validation::{parse_signed_decimal, split_signed_input, validate_decimal_implied, validate_numeric};
 use crate::utils::{cold_path, take_scratch};
 use crate::{Error, ScalarFmt};
@@ -150,7 +150,7 @@ impl<F: ScalarFmt, const NEG: u8> ScalarFmt for MinusPrefix<F, NEG> {
     }
 }
 
-impl<F: NibbleFormat, const N: usize> ScalarFmt for FixedNibbleInt<F, N> {
+impl<F: NibbleAlphabet, const N: usize> ScalarFmt for FixedNibbleInt<F, N> {
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
         validate_nibble_int_fixed::<F>(input, N)?;

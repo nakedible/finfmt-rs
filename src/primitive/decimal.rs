@@ -5,7 +5,7 @@ use crate::Error;
 use crate::primitive::bytes::all_bytes_eq;
 use crate::primitive::ebcdic::{ASCII_TO_EBCDIC_037, EBCDIC_037_TO_ASCII, translate_bytes, translate_bytes_inplace};
 use crate::primitive::int::decode_signed_magnitude_i64;
-use crate::primitive::nibble::{Bcdz, NibbleFormat, pack_nibbles, unpack_nibbles};
+use crate::primitive::nibble::{Bcdz, NibbleAlphabet, pack_nibbles, unpack_nibbles};
 use crate::primitive::validation::{parse_scaled_decimal, parse_signed_decimal, split_signed_input, validate_numeric};
 use crate::utils::cold_path;
 
@@ -405,10 +405,10 @@ fn encode_decimal_packed_digits(output: &mut [u8], digits: &[u8], negative: bool
         let tail = &mut output[prefix_bytes..];
         tail[0] = first.wrapping_sub(b'0');
         let mut rest_out = &mut tail[1..];
-        let _ = pack_nibbles(&mut rest_out, rest, false, sign, &Bcdz::TABLE)?;
+        let _ = pack_nibbles(&mut rest_out, rest, false, sign, &Bcdz::NIBBLES)?;
     } else {
         let mut tail = &mut output[prefix_bytes..];
-        let _ = pack_nibbles(&mut tail, digits, false, sign, &Bcdz::TABLE)?;
+        let _ = pack_nibbles(&mut tail, digits, false, sign, &Bcdz::NIBBLES)?;
     }
     Ok(())
 }

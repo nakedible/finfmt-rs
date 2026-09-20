@@ -1,15 +1,15 @@
 use core::marker::PhantomData;
 
-use crate::primitive::nibble::{NibbleFormat, pack_expanded_nibbles, pack_nibbles, unpack_nibbles, unpack_padded_nibbles};
+use crate::primitive::nibble::{NibbleAlphabet, pack_expanded_nibbles, pack_nibbles, unpack_nibbles, unpack_padded_nibbles};
 use crate::utils::cold_path;
 use crate::{Error, Step};
 
-pub struct PackNibbles<F: NibbleFormat, const ALIGN_RIGHT: bool = false, const PADDING: u8 = 0>(PhantomData<F>);
+pub struct PackNibbles<F: NibbleAlphabet, const ALIGN_RIGHT: bool = false, const PADDING: u8 = 0>(PhantomData<F>);
 
 pub type PackNibblesRight<F, const PADDING: u8 = 0> = PackNibbles<F, true, PADDING>;
 pub type PackNibblesLeft<F, const PADDING: u8 = 0> = PackNibbles<F, false, PADDING>;
 
-impl<F: NibbleFormat, const ALIGN_RIGHT: bool, const PADDING: u8> Step for PackNibbles<F, ALIGN_RIGHT, PADDING> {
+impl<F: NibbleAlphabet, const ALIGN_RIGHT: bool, const PADDING: u8> Step for PackNibbles<F, ALIGN_RIGHT, PADDING> {
     #[inline(always)]
     fn encoded_len(input_len: usize) -> Result<usize, Error> {
         Ok(input_len.div_ceil(2))
@@ -25,7 +25,7 @@ impl<F: NibbleFormat, const ALIGN_RIGHT: bool, const PADDING: u8> Step for PackN
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-        pack_nibbles(output, input, ALIGN_RIGHT, PADDING, &F::TABLE)
+        pack_nibbles(output, input, ALIGN_RIGHT, PADDING, &F::NIBBLES)
     }
 
     #[inline(always)]
@@ -42,9 +42,9 @@ impl<F: NibbleFormat, const ALIGN_RIGHT: bool, const PADDING: u8> Step for PackN
     }
 }
 
-pub struct UnpackNibbles<F: NibbleFormat>(PhantomData<F>);
+pub struct UnpackNibbles<F: NibbleAlphabet>(PhantomData<F>);
 
-impl<F: NibbleFormat> Step for UnpackNibbles<F> {
+impl<F: NibbleAlphabet> Step for UnpackNibbles<F> {
     #[inline(always)]
     fn encoded_len(input_len: usize) -> Result<usize, Error> {
         input_len.checked_mul(2).ok_or_else(|| {
@@ -79,6 +79,6 @@ impl<F: NibbleFormat> Step for UnpackNibbles<F> {
             cold_path();
             return Err(Error::Invalid);
         }
-        pack_expanded_nibbles(output, input, &F::TABLE).map(|buf| &*buf)
+        pack_expanded_nibbles(output, input, &F::NIBBLES).map(|buf| &*buf)
     }
 }

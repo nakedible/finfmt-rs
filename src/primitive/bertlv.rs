@@ -3,7 +3,7 @@ use no_panic::no_panic;
 
 use crate::Error;
 use crate::primitive::bytes::copy_bytes;
-use crate::primitive::nibble::{HexUpper, NibbleFormat, pack_expanded_nibbles, unpack_nibbles};
+use crate::primitive::nibble::{HexUpper, NibbleAlphabet, pack_expanded_nibbles, unpack_nibbles};
 use crate::utils::{cold_path, take_scratch};
 
 /// Encodes a BER tag by copying `input` into the `output` cursor.
@@ -153,7 +153,7 @@ pub fn parse_hex_tag(tag: &str) -> Result<([u8; 4], usize), Error> {
     }
     let mut out = [0u8; 4];
     let mut packed = &mut out[..];
-    pack_expanded_nibbles(&mut packed, bytes, &HexUpper::TABLE).map_err(|_| {
+    pack_expanded_nibbles(&mut packed, bytes, &HexUpper::NIBBLES).map_err(|_| {
         cold_path();
         Error::Internal
     })?;
@@ -275,7 +275,7 @@ pub(crate) fn encode_unknown_tlv_from_tag(output: &mut &mut [u8], tag: &[u8], va
     encode_bertag(&mut head, tag)?;
     encode_berlen(&mut head, used)?;
     let mut body = body_buf;
-    pack_expanded_nibbles(&mut body, value.as_bytes(), &<HexUpper as NibbleFormat>::TABLE)?;
+    pack_expanded_nibbles(&mut body, value.as_bytes(), &<HexUpper as NibbleAlphabet>::NIBBLES)?;
     Ok(())
 }
 
