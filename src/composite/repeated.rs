@@ -1,6 +1,6 @@
 use super::*;
 use crate::field::{Identity, LengthSpec};
-use crate::primitive::bytes::{contains_byte, fill_repeated_block, split_delimited_bytes, validate_repeated_block};
+use crate::primitive::bytes::{fill_repeated_block, split_delimited_bytes, validate_repeated_block};
 use crate::utils::take_scratch;
 
 impl ListCountPolicy for () {
@@ -98,7 +98,7 @@ where
                     return Err(Error::Invalid.into());
                 }
                 for index in 0..count {
-                    let mut segment = split_delimited_bytes(input, separator, index + 1 != count)?;
+                    let mut segment = decode_delimited_field(input, separator, index + 1 != count)?;
                     let value = Item::decode_cursor(&mut segment, scratch)?;
                     if !segment.is_empty() {
                         crate::utils::cold_path();
@@ -113,8 +113,7 @@ where
                         crate::utils::cold_path();
                         return Err(Error::Invalid.into());
                     }
-                    let is_last = !contains_byte(input, separator);
-                    let mut segment = split_delimited_bytes(input, separator, !is_last)?;
+                    let (mut segment, _) = split_delimited_bytes(input, separator);
                     let value = Item::decode_cursor(&mut segment, scratch)?;
                     if !segment.is_empty() {
                         crate::utils::cold_path();

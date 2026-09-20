@@ -60,8 +60,8 @@ pub fn contains_byte_pipe(input: &[u8]) -> bool {
 }
 
 #[inline(never)]
-pub fn split_delimited_bytes_pipe<'a>(input: &mut &'a [u8]) -> Result<&'a [u8], Error> {
-    split_delimited_bytes(input, b'|', true)
+pub fn split_delimited_bytes_pipe<'a>(input: &mut &'a [u8]) -> (&'a [u8], bool) {
+    split_delimited_bytes(input, b'|')
 }
 
 #[inline(never)]

@@ -138,27 +138,18 @@ pub fn contains_byte(input: &[u8], byte: u8) -> bool {
     input.contains(&byte)
 }
 
+/// Consume through the first separator, returning the preceding bytes and whether
+/// a separator was found. If absent, consume the remainder and return it with `false`.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn split_delimited_bytes<'a>(input: &mut &'a [u8], separator: u8, expect_separator: bool) -> Result<&'a [u8], Error> {
-    if !expect_separator {
-        let segment = *input;
-        *input = &[];
-        return Ok(segment);
+pub fn split_delimited_bytes<'a>(input: &mut &'a [u8], separator: u8) -> (&'a [u8], bool) {
+    let mut parts = input.splitn(2, |&byte| byte == separator);
+    if let (Some(segment), Some(rest)) = (parts.next(), parts.next()) {
+        *input = rest;
+        (segment, true)
+    } else {
+        (core::mem::take(input), false)
     }
-    let split_at = input.iter().position(|&byte| byte == separator).ok_or_else(|| {
-        cold_path();
-        Error::Invalid
-    })?;
-    let segment = input.split_off(..split_at).ok_or_else(|| {
-        cold_path();
-        Error::Invalid
-    })?;
-    *input = input.split_off(1..).ok_or_else(|| {
-        cold_path();
-        Error::Invalid
-    })?;
-    Ok(segment)
 }
 
 #[cfg(test)]
@@ -212,12 +203,6 @@ mod tests {
         Ok(output)
     }
 
-    fn split_delimited(input: &[u8], separator: u8, expect_separator: bool) -> Result<(Vec<u8>, Vec<u8>), Error> {
-        let mut input = input;
-        let segment = split_delimited_bytes(&mut input, separator, expect_separator)?;
-        Ok((segment.to_vec(), input.to_vec()))
-    }
-
     #[test]
     fn test_fixed_bytes_helpers() {
         assert_eq!(validate_exact_length(b"\x12\x34", 2), Ok(()));
@@ -251,10 +236,8 @@ mod tests {
         assert_eq!(validate_repeated_block(b"\x12\x34\x56\x78", b"\x12\x34"), Err(Error::Invalid));
         assert_eq!(validate_repeated_block(b"\x12", b"\x12\x34"), Err(Error::Invalid));
         assert_eq!(validate_repeated_block(b"\x12", b""), Err(Error::Internal));
-        assert_eq!(split_delimited(b"A|B", b'|', true), Ok((b"A".to_vec(), b"B".to_vec())));
-        assert_eq!(split_delimited(b"AB", b'|', false), Ok((b"AB".to_vec(), vec![])));
-        assert_eq!(split_delimited(b"AB", b'|', true), Err(Error::Invalid));
     }
+
     #[test]
     fn test_repeated_block_boundaries() {
         assert_eq!(fill_repeated_block(&mut [], 0, b""), Err(Error::Internal));
@@ -279,13 +262,31 @@ mod tests {
             assert_eq!(validate_repeated_block(input, b"AB"), Err(Error::Invalid));
         }
     }
+
+    #[test]
+    fn test_delimited_byte_boundaries() {
+        for (wire, separator, segment, rest, terminated) in [
+            (b"".as_slice(), b'|', b"".as_slice(), b"".as_slice(), false),
+            (b"AB", b'|', b"AB", b"", false),
+            (b"A|B", b'|', b"A", b"B", true),
+            (b"|B", b'|', b"", b"B", true),
+            (b"A|", b'|', b"A", b"", true),
+            (b"|", b'|', b"", b"", true),
+            (b"A||B", b'|', b"A", b"|B", true),
+            (b"\0A\0B", 0, b"", b"A\0B", true),
+        ] {
+            let mut input = wire;
+            assert_eq!(split_delimited_bytes(&mut input, separator), (segment, terminated));
+            assert_eq!(input, rest);
+        }
+    }
 }
 
 #[cfg(test)]
 mod proptests {
     use proptest::prelude::*;
 
-    use super::{fill_repeated_block, validate_repeated_block};
+    use super::{fill_repeated_block, split_delimited_bytes, validate_repeated_block};
     use crate::Error;
 
     proptest! {
@@ -308,6 +309,17 @@ mod proptests {
                 tail[index] ^= 1;
                 prop_assert_eq!(validate_repeated_block(tail, &block), Err(Error::Invalid));
             }
+        }
+
+        #[test]
+        fn delimited_bytes_match_first_separator(bytes in prop::collection::vec(any::<u8>(), 0..128), separator in any::<u8>()) {
+            let mut input = bytes.as_slice();
+            let (segment, terminated) = split_delimited_bytes(&mut input, separator);
+            let boundary = bytes.iter().position(|&byte| byte == separator);
+            let length = boundary.unwrap_or(bytes.len());
+            prop_assert_eq!(segment, &bytes[..length]);
+            prop_assert_eq!(terminated, boundary.is_some());
+            prop_assert_eq!(input, &bytes[length + usize::from(terminated)..]);
         }
     }
 }

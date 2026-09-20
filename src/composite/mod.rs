@@ -17,7 +17,7 @@
 
 use core::marker::PhantomData;
 
-use crate::primitive::bytes::{contains_byte, copy_bytes};
+use crate::primitive::bytes::{contains_byte, copy_bytes, split_delimited_bytes};
 use crate::utils::take_scratch;
 use crate::{Error, ScalarFmt, StructError};
 
@@ -905,6 +905,23 @@ mod tests {
             error_kind(CountedAsciiListFmt::decode(&mut invalid, scratch.as_mut_slice())),
             Err(Error::Invalid)
         );
+    }
+
+    #[test]
+    fn test_delimited_field_boundaries() {
+        for (wire, required, expected, rest) in [
+            (b"".as_slice(), true, Err(Error::Invalid), b"".as_slice()),
+            (b"AB", true, Err(Error::Invalid), b"AB"),
+            (b"A|B", true, Ok(b"A".as_slice()), b"B"),
+            (b"|B", true, Ok(b""), b"B"),
+            (b"A|", true, Ok(b"A"), b""),
+            (b"A|B", false, Ok(b"A|B"), b""),
+            (b"", false, Ok(b""), b""),
+        ] {
+            let mut input = wire;
+            assert_eq!(decode_delimited_field(&mut input, b'|', required), expected);
+            assert_eq!(input, rest);
+        }
     }
 
     #[test]
@@ -2205,12 +2222,7 @@ pub fn advance_input(input: &mut &[u8], consumed: usize) -> Result<(), Error> {
 
 #[inline]
 pub fn encode_delimiter(output: &mut &mut [u8], byte: u8) -> Result<(), Error> {
-    let out = output.split_off_mut(..1).ok_or_else(|| {
-        crate::utils::cold_path();
-        Error::BufferOverflow
-    })?;
-    out[0] = byte;
-    Ok(())
+    copy_bytes(output, &[byte]).map(|_| ())
 }
 
 #[inline(always)]
@@ -2362,6 +2374,22 @@ where
     encode_delimited_segment(output, scratch, separator, |segment_out, nested_scratch| {
         encode_serde_scalar::<T, F>(value, segment_out, nested_scratch).map_err(StructError::from)
     })
+}
+
+#[inline(always)]
+#[doc(hidden)]
+pub fn decode_delimited_field<'a>(input: &mut &'a [u8], separator: u8, expect_separator: bool) -> Result<&'a [u8], Error> {
+    if !expect_separator {
+        return Ok(core::mem::take(input));
+    }
+    let mut trial = *input;
+    let (segment, terminated) = split_delimited_bytes(&mut trial, separator);
+    if !terminated {
+        crate::utils::cold_path();
+        return Err(Error::Invalid);
+    }
+    *input = trial;
+    Ok(segment)
 }
 
 #[inline]

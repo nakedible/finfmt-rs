@@ -154,14 +154,14 @@ macro_rules! __finfmt_delimited_decode_build {
     };
     ($input:expr, $scratch:expr, $separator:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; _: $fmt:ty = $bytes:expr $(, $($rest:tt)*)?) => {{
         let segment =
-            $crate::primitive::bytes::split_delimited_bytes($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
+            $crate::composite::decode_delimited_field($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
         let expected: &[u8] = $bytes;
         $crate::composite::decode_delimited_literal::<$fmt>(segment, $scratch, expected)?;
         $crate::__finfmt_delimited_decode_build!($input, $scratch, $separator, $result_ty, $ctor; [$($built)*]; $($($rest)*)?)
     }};
     ($input:expr, $scratch:expr, $separator:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : Option<Composite<$fmt:ty>> $(, $($rest:tt)*)?) => {{
         let segment =
-            $crate::primitive::bytes::split_delimited_bytes($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
+            $crate::composite::decode_delimited_field($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
         let $field = if segment.is_empty() {
             None
         } else {
@@ -174,7 +174,7 @@ macro_rules! __finfmt_delimited_decode_build {
     }};
     ($input:expr, $scratch:expr, $separator:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : Option<Composite<$fmt:ty> > $(, $($rest:tt)*)?) => {{
         let segment =
-            $crate::primitive::bytes::split_delimited_bytes($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
+            $crate::composite::decode_delimited_field($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
         let $field = if segment.is_empty() {
             None
         } else {
@@ -187,7 +187,7 @@ macro_rules! __finfmt_delimited_decode_build {
     }};
     ($input:expr, $scratch:expr, $separator:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : Option<DirectScalar<$fmt:ty>> $(, $($rest:tt)*)?) => {{
         let segment =
-            $crate::primitive::bytes::split_delimited_bytes($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
+            $crate::composite::decode_delimited_field($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
         let $field = if segment.is_empty() {
             None
         } else {
@@ -200,7 +200,7 @@ macro_rules! __finfmt_delimited_decode_build {
     }};
     ($input:expr, $scratch:expr, $separator:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : Option<DirectScalar<$fmt:ty> > $(, $($rest:tt)*)?) => {{
         let segment =
-            $crate::primitive::bytes::split_delimited_bytes($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
+            $crate::composite::decode_delimited_field($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
         let $field = if segment.is_empty() {
             None
         } else {
@@ -213,7 +213,7 @@ macro_rules! __finfmt_delimited_decode_build {
     }};
     ($input:expr, $scratch:expr, $separator:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : Option<$fmt:ty> $(, $($rest:tt)*)?) => {{
         let segment =
-            $crate::primitive::bytes::split_delimited_bytes($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
+            $crate::composite::decode_delimited_field($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
         let $field = if segment.is_empty() {
             None
         } else {
@@ -226,28 +226,28 @@ macro_rules! __finfmt_delimited_decode_build {
     }};
     ($input:expr, $scratch:expr, $separator:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : Composite<$fmt:ty>::with($context:ident) $(, $($rest:tt)*)?) => {{
         let segment =
-            $crate::primitive::bytes::split_delimited_bytes($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
+            $crate::composite::decode_delimited_field($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
         let $field = $crate::composite::decode_delimited_context::<_, _, $fmt>(segment, $scratch, &$context)
             .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))?;
         $crate::__finfmt_delimited_decode_build!($input, $scratch, $separator, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
     ($input:expr, $scratch:expr, $separator:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : Composite<$fmt:ty> $(, $($rest:tt)*)?) => {{
         let segment =
-            $crate::primitive::bytes::split_delimited_bytes($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
+            $crate::composite::decode_delimited_field($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
         let $field = $crate::composite::decode_delimited_value::<_, $crate::composite::Composite<$fmt>>(segment, $scratch)
             .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))?;
         $crate::__finfmt_delimited_decode_build!($input, $scratch, $separator, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
     ($input:expr, $scratch:expr, $separator:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : DirectScalar<$fmt:ty> $(, $($rest:tt)*)?) => {{
         let segment =
-            $crate::primitive::bytes::split_delimited_bytes($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
+            $crate::composite::decode_delimited_field($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
         let $field = $crate::composite::decode_delimited_value::<_, $crate::composite::DirectScalar<$fmt>>(segment, $scratch)
             .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))?;
         $crate::__finfmt_delimited_decode_build!($input, $scratch, $separator, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
     ($input:expr, $scratch:expr, $separator:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : $fmt:ty $(, $($rest:tt)*)?) => {{
         let segment =
-            $crate::primitive::bytes::split_delimited_bytes($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
+            $crate::composite::decode_delimited_field($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
         let $field = $crate::composite::decode_delimited_serde_value::<_, $fmt>(segment, $scratch)
             .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))?;
         $crate::__finfmt_delimited_decode_build!($input, $scratch, $separator, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
