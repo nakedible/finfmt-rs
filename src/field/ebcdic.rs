@@ -1,7 +1,8 @@
+use crate::primitive::bytes::copy_bytes;
 use crate::primitive::ebcdic::{
     ASCII_TO_EBCDIC_037, EBCDIC_037_TO_ASCII, ebcdic_1142_to_utf8, translate_bytes, translate_bytes_inplace, utf8_to_ebcdic_1142,
 };
-use crate::utils::{cold_path, copy_into};
+use crate::utils::cold_path;
 use crate::{Error, Step};
 
 pub struct Ebcdic037;
@@ -22,7 +23,7 @@ impl Step for Ebcdic037 {
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-        let buf = copy_into(output, input)?;
+        let buf = copy_bytes(output, input)?;
         translate_bytes_inplace(buf, &ASCII_TO_EBCDIC_037);
         Ok(buf)
     }

@@ -1,5 +1,6 @@
+use crate::primitive::bytes::copy_bytes;
 use crate::primitive::text::{decode_bytes, encode_bytes};
-use crate::utils::{cold_path, copy_into};
+use crate::utils::cold_path;
 use crate::{Error, Step};
 
 pub struct Identity;
@@ -19,7 +20,7 @@ impl Step for Identity {
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-        copy_into(output, input)
+        copy_bytes(output, input)
     }
 
     #[inline(always)]
