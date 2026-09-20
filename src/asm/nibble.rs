@@ -37,3 +37,23 @@ pub fn unpack_padded_nibbles_bcdz_left<'a>(output: &mut &'a mut [u8], input: &[u
 pub fn validate_nibbles_hex_upper(input: &[u8]) -> Result<(), Error> {
     validate_nibbles(input, &HexUpper::NIBBLES)
 }
+
+#[inline(never)]
+pub fn pack_nibbles_bcdz_left_15<'a>(output: &mut &'a mut [u8], input: &[u8; 15]) -> Result<&'a mut [u8], Error> {
+    pack_nibbles(output, input, false, 0x0F, &Bcdz::NIBBLES)
+}
+
+#[inline(never)]
+pub fn unpack_padded_nibbles_bcdz_left_15<'a>(output: &mut &'a mut [u8], input: &[u8; 8]) -> Result<&'a mut [u8], Error> {
+    unpack_padded_nibbles(output, input, 15, false, 0x0F, &Bcdz::DIGITS)
+}
+
+#[inline(never)]
+pub fn pack_nibbles_bcdz_right_15<'a>(output: &mut &'a mut [u8], input: &[u8; 15]) -> Result<&'a mut [u8], Error> {
+    pack_nibbles(output, input, true, 0, &Bcdz::NIBBLES)
+}
+
+#[inline(never)]
+pub fn unpack_padded_nibbles_bcdz_right_15<'a>(output: &mut &'a mut [u8], input: &[u8; 8]) -> Result<&'a mut [u8], Error> {
+    unpack_padded_nibbles(output, input, 15, true, 0, &Bcdz::DIGITS)
+}

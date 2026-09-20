@@ -52,9 +52,9 @@ impl NibbleAlphabet for HexEbcdic {
 
 #[inline(always)]
 fn pack_nibbles_exact(dst: &mut [u8], src: &[u8], lut: &[u8; 256]) {
-    for (chunk, out) in src.chunks_exact(2).zip(dst.iter_mut()) {
-        let hi = lut[chunk[0] as usize];
-        let lo = lut[chunk[1] as usize];
+    for (&[hi, lo], out) in src.as_chunks::<2>().0.iter().zip(dst) {
+        let hi = lut[hi as usize];
+        let lo = lut[lo as usize];
         debug_assert!(hi < 16 && lo < 16, "Invalid nibble value");
         *out = (hi << 4) | lo;
     }
@@ -62,9 +62,9 @@ fn pack_nibbles_exact(dst: &mut [u8], src: &[u8], lut: &[u8; 256]) {
 
 #[inline(always)]
 fn unpack_nibbles_exact(dst: &mut [u8], src: &[u8], digits: &[u8; 16]) {
-    for (byte, out) in src.iter().zip(dst.chunks_exact_mut(2)) {
-        out[0] = digits[(*byte >> 4) as usize];
-        out[1] = digits[(*byte & 0x0F) as usize];
+    for (&byte, [hi, lo]) in src.iter().zip(dst.as_chunks_mut::<2>().0) {
+        *hi = digits[(byte >> 4) as usize];
+        *lo = digits[(byte & 0x0F) as usize];
     }
 }
 
@@ -74,6 +74,9 @@ pub(crate) fn unpack_single_nibble(output: &mut u8, input: u8, high: bool, digit
     *output = digits[if high { (input >> 4) as usize } else { (input & 0x0F) as usize }];
 }
 
+/// Pack prevalidated digit bytes, padding an odd digit at the selected end.
+/// Every input byte must map to 0-15 and `padding` must be below 16. Debug builds
+/// assert these preconditions; release builds do not validate them.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn pack_nibbles<'a>(
@@ -132,6 +135,8 @@ pub fn validate_nibbles(input: &[u8], digit_table: &[u8; 256]) -> Result<(), Err
     Ok(())
 }
 
+/// Validate and pack an even number of expanded nibble digits.
+/// Odd length or invalid digits return `Invalid` before reserving output.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn pack_expanded_nibbles<'a>(
@@ -160,6 +165,8 @@ pub fn unpack_nibbles<'a>(output: &mut &'a mut [u8], input: impl AsRef<[u8]>, di
     Ok(buf)
 }
 
+/// Unpack exactly `output_len` digits, checking the padding nibble when odd.
+/// The caller must supply `padding` below 16; debug builds assert this precondition.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn unpack_padded_nibbles<'a>(
@@ -384,6 +391,46 @@ mod tests {
         assert_eq!(pack_expanded(b"aB", &MixedHex::NIBBLES), Ok(vec![0xAB]));
         assert_eq!(unpack(&[0xAB], &MixedHex::DIGITS), b"AB");
     }
+
+    #[test]
+    fn test_unpack_padded_boundaries() {
+        for (input, len, right, pad, cap, expected, remaining) in [
+            (b"".as_slice(), 0, false, 0, 0, Ok(b"".as_slice()), 0),
+            (b"\x12", 0, false, 0, 8, Err(Error::Invalid), 8),
+            (b"", 1, true, 0, 8, Err(Error::Invalid), 8),
+            (b"", usize::MAX, true, 0, 8, Err(Error::Invalid), 8),
+            (b"\x12", 2, true, 0, 1, Err(Error::BufferOverflow), 1),
+            (b"\xF1", 1, true, 0, 8, Err(Error::Invalid), 7),
+            (b"\x1F", 1, false, 0, 8, Err(Error::Invalid), 7),
+            (b"\xF1", 1, true, 15, 2, Ok(b"1"), 1),
+            (b"\x1F", 1, false, 15, 2, Ok(b"1"), 1),
+        ] {
+            let mut storage = [0xA5; 8];
+            let mut output = &mut storage[..cap];
+            let actual = unpack_padded_nibbles(&mut output, input, len, right, pad, &Bcdz::DIGITS).map(|b| b.to_vec());
+            assert_eq!(actual, expected.map(|b| b.to_vec()));
+            assert_eq!(output.len(), remaining);
+            assert!(output.iter().all(|&b| b == 0xA5));
+            assert!(storage[cap..].iter().all(|&b| b == 0xA5));
+        }
+    }
+
+    #[test]
+    fn test_checked_packing_validation_and_string_inputs() {
+        assert_eq!(pack_expanded_err(b"G0", 0, &HexUpper::NIBBLES), Err(Error::Invalid));
+        assert_eq!(pack_expanded_err(b"1", 0, &HexUpper::NIBBLES), Err(Error::Invalid));
+        let mut storage = [0xA5; 3];
+        let mut output = storage.as_mut_slice();
+        assert_eq!(pack_expanded_nibbles(&mut output, "aB", &HexUpper::NIBBLES), Err(Error::Invalid));
+        assert_eq!(output, [0xA5; 3]);
+        assert_eq!(pack_expanded_nibbles(&mut output, "AB", &HexUpper::NIBBLES).unwrap(), [0xAB]);
+        assert_eq!(pack_nibbles(&mut output, "123", true, 0, &Bcdz::NIBBLES).unwrap(), [0x01, 0x23]);
+        assert!(output.is_empty());
+        let mut table = [0x10; 256];
+        assert_eq!(validate_nibbles(b"A", &table), Err(Error::Invalid));
+        table[b'A' as usize] = 15;
+        assert_eq!(validate_nibbles(b"A", &table), Ok(()));
+    }
 }
 
 #[cfg(test)]
@@ -464,5 +511,27 @@ mod proptests {
             let result = pack_nibbles(&mut ptr, odd.as_bytes(), false, padding, &Bcdz::NIBBLES).unwrap();
             prop_assert_eq!(result[result.len()-1] & 0x0F, padding);
         }
+        #[test]
+        fn padded_roundtrip_all_alphabets(values in prop::collection::vec(0u8..16, 0..64), right in any::<bool>(), pad in 0u8..16) {
+            for (table, digits) in [
+                (&Bcdz::NIBBLES, &Bcdz::DIGITS),
+                (&HexUpper::NIBBLES, &HexUpper::DIGITS),
+                (&HexLower::NIBBLES, &HexLower::DIGITS),
+                (&HexEbcdic::NIBBLES, &HexEbcdic::DIGITS),
+            ] {
+                let input: Vec<u8> = values.iter().map(|&n| digits[n as usize]).collect();
+                let mut packed = [0xA5; 33];
+                let mut output = packed.as_mut_slice();
+                let wire = pack_nibbles(&mut output, &input, right, pad, table).unwrap();
+                prop_assert_eq!(wire.len(), input.len().div_ceil(2));
+                prop_assert!(output.iter().all(|&b| b == 0xA5));
+                let mut unpacked = [0xA5; 65];
+                let mut output = unpacked.as_mut_slice();
+                prop_assert_eq!(unpack_padded_nibbles(&mut output, wire, input.len(), right, pad, digits).unwrap(), input.as_slice());
+                prop_assert_eq!(output.len(), 65 - input.len());
+                prop_assert!(output.iter().all(|&b| b == 0xA5));
+            }
+        }
+
     }
 }
