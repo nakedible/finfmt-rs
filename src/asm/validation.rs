@@ -1,10 +1,10 @@
 use crate::Error;
 use crate::primitive::validation::{
     parse_signed_decimal, split_signed_input, validate_alpha, validate_alphanum, validate_ascii, validate_ascii_printable,
-    validate_bcd_bytes, validate_bcdz, validate_binary, validate_decimal_implied, validate_ebcdic_1142_text, validate_ebcdic_printable,
-    validate_hex, validate_hex_even, validate_hex_lower, validate_hex_lower_even, validate_hex_upper, validate_hex_upper_even,
-    validate_iso8859_1_str, validate_numeric, validate_track2, validate_upper_alpha, validate_upper_alphanum,
-    validate_upper_ascii_printable,
+    validate_bcd_bytes, validate_bcdz, validate_byte_length, validate_decimal_implied, validate_ebcdic_1142_text,
+    validate_ebcdic_printable, validate_hex, validate_hex_even, validate_hex_lower, validate_hex_lower_even, validate_hex_upper,
+    validate_hex_upper_even, validate_iso8859_1_str, validate_numeric, validate_range, validate_track2_chars, validate_upper_alpha,
+    validate_upper_alphanum, validate_upper_ascii_printable,
 };
 
 #[inline(never)]
@@ -83,8 +83,8 @@ pub fn validate_bcdz_1_99(input: &[u8]) -> Result<usize, Error> {
 }
 
 #[inline(never)]
-pub fn validate_track2_1_37(input: &[u8]) -> Result<usize, Error> {
-    validate_track2(input, 1, 37)
+pub fn validate_track2_chars_1_37(input: &[u8]) -> Result<usize, Error> {
+    validate_track2_chars(input, 1, 37)
 }
 
 #[inline(never)]
@@ -93,8 +93,8 @@ pub fn validate_bcd_bytes_1_10(input: &[u8]) -> Result<usize, Error> {
 }
 
 #[inline(never)]
-pub fn validate_binary_1_99(input: &[u8]) -> Result<usize, Error> {
-    validate_binary(input, 1, 99)
+pub fn validate_byte_length_1_99(input: &[u8]) -> Result<usize, Error> {
+    validate_byte_length(input, 1, 99)
 }
 
 #[inline(never)]
@@ -125,4 +125,9 @@ pub fn parse_signed_decimal_19(input: &[u8]) -> Result<(bool, &[u8]), Error> {
 #[inline(never)]
 pub fn validate_decimal_implied_scale2_signed(input: &[u8]) -> Result<usize, Error> {
     validate_decimal_implied(input, 2, 12, true)
+}
+
+#[inline(never)]
+pub fn validate_range_i64_0_9999(value: i64) -> Result<(), Error> {
+    validate_range(value, 0..=9999)
 }

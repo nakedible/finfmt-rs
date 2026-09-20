@@ -1,3 +1,6 @@
+//! Content validators. Functions taking `minlen` and `maxlen` require
+//! `minlen <= maxlen`; debug builds assert this caller invariant.
+
 use std::ops::RangeBounds;
 
 #[cfg(all(not(debug_assertions), feature = "no-panic"))]
@@ -51,6 +54,7 @@ fn validate_even_bytes(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize, pr
     validate_bytes(input, minlen, maxlen, pred)
 }
 
+/// Validate ASCII decimal digits, returning their byte count.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn validate_numeric(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
@@ -235,39 +239,51 @@ pub fn validate_hex_lower_even(input: impl AsRef<[u8]>, minlen: usize, maxlen: u
     validate_even_bytes(input, minlen, maxlen, |b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+/// Validate expanded BCD-Z bytes (`0` through `?`), returning the byte count.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn validate_bcdz(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, |b| matches!(b, b'0'..=b'?'))
 }
 
+/// Validate ASCII digits and `=` only, returning the byte count.
+/// This checks the character set, not Track 2 separator placement or structure.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_track2(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_track2_chars(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, |b| matches!(b, b'0'..=b'9' | b'='))
 }
 
+/// Validate packed decimal nibbles, returning the byte count. Input is already
+/// encoded bytes; a string argument is inspected as UTF-8 bytes without conversion.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_bcd_bytes(input: &[u8], minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_bcd_bytes(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, |b| (b >> 4) <= 9 && (b & 0x0F) <= 9)
 }
 
+/// Validate the semantic byte length without restricting byte values.
+/// Out-of-range lengths return `InvalidValueLength`.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_binary(input: &[u8], minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_byte_length(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, |_| true)
 }
 
+/// Validate Unicode characters representable in Latin-1, returning the character
+/// count. The input is a Rust string; the `Iso88591` field instead accepts raw bytes.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn validate_iso8859_1_str(input: &str, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_chars(input, minlen, maxlen, |c| (c as u32) <= 0xFF)
 }
 
+/// Validate UTF-8 text representable in IBM1142, returning its Unicode character
+/// count. Invalid UTF-8 or unrepresentable characters return `Invalid`.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_ebcdic_1142_text(input: &[u8], minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_ebcdic_1142_text(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
+    let input = input.as_ref();
     debug_assert!(minlen <= maxlen, "minlen must be <= maxlen");
     if input.is_ascii() {
         let len = input.len();
@@ -281,24 +297,15 @@ pub fn validate_ebcdic_1142_text(input: &[u8], minlen: usize, maxlen: usize) -> 
         cold_path();
         Error::Invalid
     })?;
-    let mut count = 0usize;
-    for ch in text.chars() {
-        if encode_ebcdic_1142_char(ch).is_none() {
-            cold_path();
-            return Err(Error::Invalid);
-        }
-        count += 1;
-    }
-    if count < minlen || count > maxlen {
-        cold_path();
-        return Err(Error::InvalidValueLength);
-    }
-    Ok(count)
+    validate_chars(text, minlen, maxlen, |ch| encode_ebcdic_1142_char(ch).is_some())
 }
 
+/// Validate the EBCDIC byte range 0x40..=0xFE, returning the byte count. For
+/// CP037 and IBM1142 this is the non-control repertoire, including space,
+/// non-breaking space and soft hyphen; it does not imply ASCII representability.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_ebcdic_printable(input: &[u8], minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_ebcdic_printable(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, |b| (0x40..=0xFE).contains(b))
 }
 
@@ -496,11 +503,11 @@ mod tests {
 
     #[test]
     fn test_validate_track2() {
-        assert_eq!(validate_track2("1234567890=", 0, 99), Ok(11));
-        assert_eq!(validate_track2("", 0, 99), Ok(0));
-        assert_eq!(validate_track2("1234D", 0, 99), Err(Error::Invalid));
-        assert_eq!(validate_track2("12?", 0, 99), Err(Error::Invalid));
-        assert_eq!(validate_track2("123", 4, 5), Err(Error::InvalidValueLength));
+        assert_eq!(validate_track2_chars("1234567890=", 0, 99), Ok(11));
+        assert_eq!(validate_track2_chars("", 0, 99), Ok(0));
+        assert_eq!(validate_track2_chars("1234D", 0, 99), Err(Error::Invalid));
+        assert_eq!(validate_track2_chars("12?", 0, 99), Err(Error::Invalid));
+        assert_eq!(validate_track2_chars("123", 4, 5), Err(Error::InvalidValueLength));
     }
 
     #[test]
@@ -519,9 +526,9 @@ mod tests {
 
     #[test]
     fn test_validate_binary() {
-        assert_eq!(validate_binary(b"\x00\xFF\x80\x7F", 0, 99), Ok(4)); // all bytes valid
-        assert_eq!(validate_binary(b"", 0, 99), Ok(0));
-        assert_eq!(validate_binary(b"hello", 10, 20), Err(Error::InvalidValueLength));
+        assert_eq!(validate_byte_length(b"\x00\xFF\x80\x7F", 0, 99), Ok(4)); // all bytes valid
+        assert_eq!(validate_byte_length(b"", 0, 99), Ok(0));
+        assert_eq!(validate_byte_length(b"hello", 10, 20), Err(Error::InvalidValueLength));
     }
 
     #[test]
@@ -543,14 +550,14 @@ mod tests {
             Err(Error::InvalidValueLength)
         );
         assert_eq!(validate_ebcdic_1142_text("emoji: 😀".as_bytes(), 0, 99), Err(Error::Invalid));
-        assert_eq!(validate_ebcdic_1142_text(&[0xFF], 0, 99), Err(Error::Invalid));
+        assert_eq!(validate_ebcdic_1142_text([0xFF], 0, 99), Err(Error::Invalid));
     }
 
     #[test]
     fn test_validate_binary_alias_for_iso8859_1_bytes() {
-        assert_eq!(validate_binary(b"\x00\x7F\x80\xFF", 0, 99), Ok(4));
-        assert_eq!(validate_binary(b"", 0, 99), Ok(0));
-        assert_eq!(validate_binary(b"hello", 10, 20), Err(Error::InvalidValueLength));
+        assert_eq!(validate_byte_length(b"\x00\x7F\x80\xFF", 0, 99), Ok(4));
+        assert_eq!(validate_byte_length(b"", 0, 99), Ok(0));
+        assert_eq!(validate_byte_length(b"hello", 10, 20), Err(Error::InvalidValueLength));
     }
 
     #[test]
@@ -583,6 +590,27 @@ mod tests {
         // Char ranges
         assert_eq!(validate_range('c', 'a'..'{'), Ok(()));
         assert_eq!(validate_range('{', 'a'..'{'), Err(Error::Invalid));
+    }
+    #[test]
+    fn test_input_representations_and_length_units() {
+        assert_eq!(validate_byte_length("é", 2, 2), Ok(2));
+        assert_eq!(validate_byte_length("é".as_bytes(), 2, 2), Ok(2));
+        assert_eq!(validate_iso8859_1_str("é", 1, 1), Ok(1));
+        assert_eq!(validate_iso8859_1_str("Ā", 10, 10), Err(Error::Invalid));
+        assert_eq!(validate_bcd_bytes("\x12", 1, 1), Ok(1));
+        assert_eq!(validate_bcd_bytes(b"\x12", 1, 1), Ok(1));
+        assert_eq!(validate_ebcdic_printable("A", 1, 1), Ok(1));
+        assert_eq!(validate_ebcdic_printable(b"\x41\xCA", 2, 2), Ok(2));
+        assert_eq!(validate_ebcdic_1142_text("A€", 2, 2), Ok(2));
+        assert_eq!(validate_ebcdic_1142_text("A€".as_bytes(), 2, 2), Ok(2));
+        for invalid in ["¤".as_bytes(), "😀".as_bytes(), b"\x80"] {
+            for (min, max) in [(0, 0), (0, 10), (10, 10)] {
+                assert_eq!(validate_ebcdic_1142_text(invalid, min, max), Err(Error::Invalid));
+            }
+        }
+        assert_eq!(validate_ebcdic_1142_text("A€", 0, 1), Err(Error::InvalidValueLength));
+        assert_eq!(validate_ebcdic_1142_text("A€", 3, 3), Err(Error::InvalidValueLength));
+        assert_eq!(validate_ebcdic_1142_text("", 0, 0), Ok(0));
     }
 }
 
@@ -670,14 +698,14 @@ mod proptests {
         #[test]
         fn track2_validation(v in proptest::collection::vec(any::<u8>(), 0..50)) {
             let valid = v.iter().all(|&b| b.is_ascii_digit() || b == b'=');
-            let result = validate_track2(&v, 0, usize::MAX);
+            let result = validate_track2_chars(&v, 0, usize::MAX);
             prop_assert_eq!(result.is_ok(), valid);
         }
 
         // Binary accepts everything
         #[test]
         fn binary_accepts_all(v in proptest::collection::vec(any::<u8>(), 0..100)) {
-            prop_assert_eq!(validate_binary(&v, 0, usize::MAX), Ok(v.len()));
+            prop_assert_eq!(validate_byte_length(&v, 0, usize::MAX), Ok(v.len()));
         }
 
         // ISO-8859-1 str: char count vs byte count

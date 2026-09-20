@@ -82,20 +82,26 @@ fn bench_specialty(suite: &mut Suite) {
     suite.group("specialty", |group| {
         quick(group);
         group.bench("validate_bcdz_1_99", |b| b.iter(|| black_box(validate_bcdz_1_99(black_box(BCDZ)))));
-        group.bench("validate_track2_1_37", |b| {
-            b.iter(|| black_box(validate_track2_1_37(black_box(TRACK2))))
+        group.bench("validate_track2_chars_1_37", |b| {
+            b.iter(|| black_box(validate_track2_chars_1_37(black_box(TRACK2))))
         });
         group.bench("validate_bcd_bytes_1_10", |b| {
             b.iter(|| black_box(validate_bcd_bytes_1_10(black_box(BCD_BYTES))))
         });
-        group.bench("validate_binary_1_99", |b| {
-            b.iter(|| black_box(validate_binary_1_99(black_box(BINARY))))
+        group.bench("validate_byte_length_1_99", |b| {
+            b.iter(|| black_box(validate_byte_length_1_99(black_box(BINARY))))
         });
         group.bench("validate_iso8859_1_str_1_99", |b| {
             b.iter(|| black_box(validate_iso8859_1_str_1_99(black_box(ISO_8859_1_STR))))
         });
-        group.bench("validate_ebcdic_1142_text_1_99", |b| {
-            b.iter(|| black_box(validate_ebcdic_1142_text_1_99(black_box(EBCDIC_PRINT))))
+        group.bench("validate_ebcdic_1142_text_ascii", |b| {
+            b.iter(|| black_box(validate_ebcdic_1142_text_1_99(black_box(ASCII_PRINT))))
+        });
+        group.bench("validate_ebcdic_1142_text_mixed", |b| {
+            b.iter(|| black_box(validate_ebcdic_1142_text_1_99(black_box("ABCÆØÅ€".as_bytes()))))
+        });
+        group.bench("validate_range_i64_0_9999", |b| {
+            b.iter(|| black_box(validate_range_i64_0_9999(black_box(1234))))
         });
         group.bench("validate_ebcdic_printable_1_99", |b| {
             b.iter(|| black_box(validate_ebcdic_printable_1_99(black_box(EBCDIC_PRINT))))

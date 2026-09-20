@@ -1,8 +1,8 @@
 use crate::Error;
 use crate::primitive::validation::{
-    validate_alpha, validate_alphanum, validate_ascii, validate_ascii_printable, validate_bcd_bytes, validate_bcdz, validate_binary,
+    validate_alpha, validate_alphanum, validate_ascii, validate_ascii_printable, validate_bcd_bytes, validate_bcdz, validate_byte_length,
     validate_ebcdic_1142_text, validate_ebcdic_printable, validate_hex, validate_hex_even, validate_hex_lower, validate_hex_lower_even,
-    validate_hex_upper, validate_hex_upper_even, validate_numeric, validate_track2, validate_upper_alpha, validate_upper_alphanum,
+    validate_hex_upper, validate_hex_upper_even, validate_numeric, validate_track2_chars, validate_upper_alpha, validate_upper_alphanum,
     validate_upper_ascii_printable,
 };
 
@@ -142,7 +142,7 @@ pub struct Track2<const MIN: usize, const MAX: usize>;
 impl<const MIN: usize, const MAX: usize> Check for Track2<MIN, MAX> {
     #[inline(always)]
     fn validate(input: &[u8]) -> Result<usize, Error> {
-        validate_track2(input, MIN, MAX)
+        validate_track2_chars(input, MIN, MAX)
     }
 }
 
@@ -158,7 +158,7 @@ pub struct Binary<const MIN: usize, const MAX: usize>;
 impl<const MIN: usize, const MAX: usize> Check for Binary<MIN, MAX> {
     #[inline(always)]
     fn validate(input: &[u8]) -> Result<usize, Error> {
-        validate_binary(input, MIN, MAX)
+        validate_byte_length(input, MIN, MAX)
     }
 }
 
@@ -166,7 +166,7 @@ pub struct Iso88591<const MIN: usize, const MAX: usize>;
 impl<const MIN: usize, const MAX: usize> Check for Iso88591<MIN, MAX> {
     #[inline(always)]
     fn validate(input: &[u8]) -> Result<usize, Error> {
-        validate_binary(input, MIN, MAX)
+        validate_byte_length(input, MIN, MAX)
     }
 }
 
