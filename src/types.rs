@@ -38,14 +38,15 @@ impl std::error::Error for Error {}
 /// Composite encode/decode error with field path context.
 ///
 /// The underlying failure kind is kept in [`Error`], while the composite layer
-/// records up to four nested field names from outermost to innermost.
+/// records up to four nested field names from outermost to innermost. For deeper
+/// paths, it retains the three outermost names and the innermost name.
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd, Hash)]
 pub struct StructError {
     /// Underlying error kind.
     pub kind: Error,
     path_len: u8,
     path: [&'static str; 4],
-    /// Whether deeper path entries were dropped because the fixed path buffer filled up.
+    /// Whether intermediate path entries were dropped because the fixed path buffer filled up.
     pub truncated: bool,
 }
 
@@ -65,7 +66,7 @@ impl StructError {
     #[inline(always)]
     pub fn with_field(mut self, field: &'static str) -> Self {
         let len = self.path_len as usize;
-        let keep = len.min(Self::MAX_DEPTH.saturating_sub(1));
+        let keep = if len < Self::MAX_DEPTH { len } else { Self::MAX_DEPTH - 2 };
         let mut idx = keep;
         while idx > 0 {
             self.path[idx] = self.path[idx - 1];
@@ -80,6 +81,7 @@ impl StructError {
         self
     }
 
+    /// Stored field names; when truncated, omitted names precede the last entry.
     #[inline(always)]
     pub fn path(&self) -> &[&'static str] {
         &self.path[..self.path_len as usize]
@@ -102,14 +104,13 @@ impl core::fmt::Display for StructError {
         let mut idx = 0usize;
         while idx < self.path_len as usize {
             if idx != 0 {
+                if self.truncated && idx + 1 == self.path_len as usize {
+                    f.write_str(".<truncated>")?;
+                }
                 f.write_str(".")?;
             }
             f.write_str(self.path[idx])?;
             idx += 1;
-        }
-
-        if self.truncated {
-            f.write_str(".<truncated>")?;
         }
 
         f.write_str(": ")?;
@@ -137,12 +138,26 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_error_display_messages() {
-        assert_eq!(StructError::from(Error::Invalid).to_string(), "invalid data");
-        assert_eq!(
-            StructError::from(Error::Invalid).with_field("field").to_string(),
-            "field: invalid data"
-        );
+    fn test_struct_error_paths() {
+        let fields = ["a", "b", "c", "d", "e", "f"];
+        let cases: &[(usize, &[&str], &str)] = &[
+            (0, &[], "invalid data"),
+            (1, &["a"], "a: invalid data"),
+            (2, &["a", "b"], "a.b: invalid data"),
+            (3, &["a", "b", "c"], "a.b.c: invalid data"),
+            (4, &["a", "b", "c", "d"], "a.b.c.d: invalid data"),
+            (5, &["a", "b", "c", "e"], "a.b.c.<truncated>.e: invalid data"),
+            (6, &["a", "b", "c", "f"], "a.b.c.<truncated>.f: invalid data"),
+        ];
+        for &(depth, path, display) in cases {
+            let error = fields[..depth]
+                .iter()
+                .rev()
+                .fold(StructError::from(Error::Invalid), |error, field| error.with_field(field));
+            assert_eq!(error.path(), path);
+            assert_eq!(error.truncated, depth > StructError::MAX_DEPTH);
+            assert_eq!(error.to_string(), display);
+        }
         assert_eq!(
             StructError::from(Error::InvalidValueLength)
                 .with_field("inner")
@@ -150,14 +165,34 @@ mod tests {
                 .to_string(),
             "outer.inner: semantic value length out of bounds"
         );
+    }
+}
 
-        let err = StructError::from(Error::Invalid);
-        let err = err
-            .with_field("fifth")
-            .with_field("fourth")
-            .with_field("third")
-            .with_field("second")
-            .with_field("first");
-        assert_eq!(err.to_string(), "first.second.third.fourth.<truncated>: invalid data");
+#[cfg(test)]
+mod proptests {
+    use proptest::prelude::*;
+
+    use super::{Error, StructError};
+
+    proptest! {
+        #[test]
+        fn error_path_preserves_outer_context_and_leaf(
+            fields in prop::collection::vec(prop::sample::select(vec!["outer", "inner", "leaf", "", "a.b"]), 0..65),
+        ) {
+            let error = fields.iter().rev().fold(StructError::new(Error::Invalid), |error, field| error.with_field(field));
+            let mut expected = fields.clone();
+            if fields.len() > StructError::MAX_DEPTH {
+                expected = fields[..3].iter().copied().chain(fields.last().copied()).collect();
+            }
+            prop_assert_eq!(error.path(), expected.as_slice());
+            prop_assert_eq!(error.truncated, fields.len() > StructError::MAX_DEPTH);
+            prop_assert_eq!(error.kind, Error::Invalid);
+            let mut display = expected;
+            if error.truncated {
+                display.insert(3, "<truncated>");
+            }
+            let prefix = if display.is_empty() { String::new() } else { format!("{}: ", display.join(".")) };
+            prop_assert_eq!(error.to_string(), format!("{prefix}invalid data"));
+        }
     }
 }
