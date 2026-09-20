@@ -93,16 +93,6 @@ pub fn all_bytes_eq(input: &[u8], fill: u8) -> bool {
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_all_bytes(input: &[u8], fill: u8) -> Result<(), Error> {
-    if !all_bytes_eq(input, fill) {
-        cold_path();
-        return Err(Error::Invalid);
-    }
-    Ok(())
-}
-
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn fill_repeated_block(output: &mut [u8], used_len: usize, block: &[u8]) -> Result<(), Error> {
     if block.is_empty() {
         cold_path();
@@ -179,7 +169,7 @@ pub fn split_delimited_bytes<'a>(input: &mut &'a [u8], separator: u8, expect_sep
 mod tests {
     use super::{
         all_bytes_eq, contains_byte, copy_bytes, decode_exact_bytes, decode_padded_bytes, encode_exact_bytes, fill_repeated_block,
-        fill_tail, reserve_filled_area, split_delimited_bytes, validate_all_bytes, validate_exact_length, validate_repeated_block,
+        fill_tail, reserve_filled_area, split_delimited_bytes, validate_exact_length, validate_repeated_block,
     };
     use crate::Error;
 
@@ -255,8 +245,6 @@ mod tests {
         assert!(!all_bytes_eq(b"\x40\x41", 0x40));
         assert!(contains_byte(b"\x12\x34", 0x34));
         assert!(!contains_byte(b"\x12\x34", 0x56));
-        assert_eq!(validate_all_bytes(b"\x40\x40", 0x40), Ok(()));
-        assert_eq!(validate_all_bytes(b"\x40\x41", 0x40), Err(Error::Invalid));
         assert_eq!(
             fill_repeated_block_buf::<6>(2, b"\x12\x34"),
             Ok([0x00, 0x00, 0x12, 0x34, 0x12, 0x34])

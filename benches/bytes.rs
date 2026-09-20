@@ -75,10 +75,6 @@ fn bench_bytes(suite: &mut Suite) {
             b.iter(|| black_box(all_bytes_eq_ebcdic_space(black_box(FILLED_8_SPACE))))
         });
 
-        group.bench("validate_all_bytes_ebcdic_space", |b| {
-            b.iter(|| black_box(validate_all_bytes_ebcdic_space(black_box(FILLED_8_SPACE))))
-        });
-
         group.bench("fill_repeated_block_runtime", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 8];

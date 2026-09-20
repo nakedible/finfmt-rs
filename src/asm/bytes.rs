@@ -1,7 +1,7 @@
 use crate::Error;
 use crate::primitive::bytes::{
     all_bytes_eq, contains_byte, copy_bytes, decode_exact_bytes, decode_padded_bytes, encode_exact_bytes, fill_repeated_block, fill_tail,
-    reserve_filled_area, split_delimited_bytes, validate_all_bytes, validate_exact_length, validate_repeated_block,
+    reserve_filled_area, split_delimited_bytes, validate_exact_length, validate_repeated_block,
 };
 
 #[inline(never)]
@@ -42,11 +42,6 @@ pub fn fill_tail_ebcdic_space(output: &mut [u8], used_len: usize) -> Result<(), 
 #[inline(never)]
 pub fn all_bytes_eq_ebcdic_space(input: &[u8]) -> bool {
     all_bytes_eq(input, 0x40)
-}
-
-#[inline(never)]
-pub fn validate_all_bytes_ebcdic_space(input: &[u8]) -> Result<(), Error> {
-    validate_all_bytes(input, 0x40)
 }
 
 #[inline(never)]
