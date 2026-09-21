@@ -126,28 +126,33 @@ pub fn encode_negative_prefix(output: &mut &mut [u8], negative: bool, neg: u8) -
     Ok(())
 }
 
+/// Consume a leading negative marker if present, returning whether it was found.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn decode_negative_prefix(input: &mut &[u8], neg: u8) -> Result<bool, Error> {
-    if !matches!(input.first(), Some(&sign) if sign == neg) {
-        return Ok(false);
+pub fn decode_negative_prefix(input: &mut &[u8], neg: u8) -> bool {
+    match *input {
+        [first, rest @ ..] if *first == neg => {
+            *input = rest;
+            true
+        }
+        _ => false,
     }
-    let _ = input.split_off(..1).ok_or_else(|| {
-        cold_path();
-        Error::UnexpectedEof
-    })?;
-    Ok(true)
 }
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn prepend_minus<'a>(output: &mut &'a mut [u8], digits: &[u8]) -> Result<&'a mut [u8], Error> {
-    let buf = output.split_off_mut(..digits.len() + 1).ok_or_else(|| {
+    let len = digits.len().checked_add(1).ok_or_else(|| {
         cold_path();
         Error::BufferOverflow
     })?;
-    buf[0] = b'-';
-    buf[1..].copy_from_slice(digits);
+    let buf = output.split_off_mut(..len).ok_or_else(|| {
+        cold_path();
+        Error::BufferOverflow
+    })?;
+    let (sign, out) = buf.split_at_mut(1);
+    sign[0] = b'-';
+    out.copy_from_slice(digits);
     Ok(buf)
 }
 
@@ -321,12 +326,16 @@ pub fn decode_decimal_implied<'a>(output: &mut &'a mut [u8], input: &[u8], scale
     Ok(&mut buf[..out])
 }
 
+/// Encode a prevalidated decimal digit (0-9) with its EBCDIC sign zone.
+/// Debug builds assert the digit domain; release does not validate it.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn encode_overpunch_digit(negative: bool, digit: u8) -> u8 {
-    (if negative { 0xD0 } else { 0xC0 }) + digit
+    debug_assert!(digit <= 9, "overpunch requires a decimal digit");
+    (encode_packed_sign(negative, true) << 4) | digit
 }
 
+/// Encode D for negative values, otherwise C for signed or F for unsigned values.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn encode_packed_sign(negative: bool, signed: bool) -> u8 {
@@ -342,14 +351,8 @@ pub fn encode_packed_sign(negative: bool, signed: bool) -> u8 {
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_overpunch_digit(input: u8) -> Result<(bool, u8), Error> {
-    let (negative, digit) = match input >> 4 {
-        0xA | 0xC | 0xE | 0xF => (false, input & 0x0F),
-        0xB | 0xD => (true, input & 0x0F),
-        _ => {
-            cold_path();
-            return Err(Error::Invalid);
-        }
-    };
+    let negative = decode_packed_sign(input >> 4)?;
+    let digit = input & 0x0F;
     if digit > 9 {
         cold_path();
         return Err(Error::Invalid);
@@ -357,6 +360,8 @@ pub fn decode_overpunch_digit(input: u8) -> Result<(bool, u8), Error> {
     Ok((negative, digit))
 }
 
+/// Decode a packed-decimal sign or EBCDIC overpunch zone: A/C/E/F are
+/// positive and B/D are negative.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_packed_sign(input: u8) -> Result<bool, Error> {
@@ -801,6 +806,36 @@ mod tests {
     }
 
     #[test]
+    fn test_decimal_signs_and_digits() {
+        use super::{decode_overpunch_digit, decode_packed_sign, encode_overpunch_digit, encode_packed_sign};
+        for byte in 0u8..=255 {
+            let sign = match byte >> 4 {
+                0xA | 0xC | 0xE | 0xF => Ok(false),
+                0xB | 0xD => Ok(true),
+                _ => Err(Error::Invalid),
+            };
+            assert_eq!(decode_packed_sign(byte >> 4), sign);
+            let expected = if byte & 0xF <= 9 {
+                sign.map(|negative| (negative, byte & 0xF))
+            } else {
+                Err(Error::Invalid)
+            };
+            assert_eq!(decode_overpunch_digit(byte), expected);
+        }
+        for digit in 0..=9 {
+            for negative in [false, true] {
+                assert_eq!(
+                    decode_overpunch_digit(encode_overpunch_digit(negative, digit)),
+                    Ok((negative, digit))
+                );
+            }
+        }
+        assert_eq!(encode_packed_sign(false, true), 0xC);
+        assert_eq!(encode_packed_sign(true, true), 0xD);
+        assert_eq!(encode_packed_sign(false, false), 0xF);
+    }
+
+    #[test]
     fn test_format_decimal() {
         let mut buf = [0u8; MAX_INTEGER_TEXT_LEN];
         for &(value, expected) in &[
@@ -904,10 +939,10 @@ mod tests {
         assert_eq!(decode_sign(&mut input, b'C', b'D'), Ok(false));
         assert_eq!(input, b"123");
         let mut input = &b"-123"[..];
-        assert_eq!(decode_negative_prefix(&mut input, b'-'), Ok(true));
+        assert!(decode_negative_prefix(&mut input, b'-'));
         assert_eq!(input, b"123");
         let mut input = &b"123"[..];
-        assert_eq!(decode_negative_prefix(&mut input, b'-'), Ok(false));
+        assert!(!decode_negative_prefix(&mut input, b'-'));
         assert_eq!(input, b"123");
     }
 

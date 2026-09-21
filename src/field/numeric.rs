@@ -119,7 +119,7 @@ impl<F: ScalarFmt, const NEG: u8> ScalarFmt for MinusPrefix<F, NEG> {
 
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
         let mut output = take_scratch(scratch, MAX_INTEGER_TEXT_LEN)?;
-        let negative = decode_negative_prefix(input, NEG)?;
+        let negative = decode_negative_prefix(input, NEG);
         let digits = F::decode(input, scratch)?;
         if !negative {
             return Ok(digits);
@@ -144,7 +144,7 @@ impl<F: ScalarFmt, const NEG: u8> ScalarFmt for MinusPrefix<F, NEG> {
 
     #[inline(always)]
     fn decode_i64<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<i64, Error> {
-        let negative = decode_negative_prefix(input, NEG)?;
+        let negative = decode_negative_prefix(input, NEG);
         let magnitude = F::decode_u64(input, scratch)?;
         decode_signed_magnitude_i64(negative, magnitude)
     }

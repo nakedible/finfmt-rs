@@ -49,7 +49,7 @@ pub fn encode_negative_prefix_minus(output: &mut &mut [u8], negative: bool) -> R
 }
 
 #[inline(never)]
-pub fn decode_negative_prefix_minus(input: &mut &[u8]) -> Result<bool, Error> {
+pub fn decode_negative_prefix_minus(input: &mut &[u8]) -> bool {
     decode_negative_prefix(input, b'-')
 }
 
