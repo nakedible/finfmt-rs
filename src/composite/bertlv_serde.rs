@@ -1205,14 +1205,14 @@ where
     type Decoded<'de> = T;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), StructError> {
+    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), CompositeError> {
         let _ = scratch;
         encode_ber_tlv_serde(output, value)?;
         Ok(())
     }
 
     #[inline(always)]
-    fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<T, StructError> {
+    fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<T, CompositeError> {
         let value = decode_ber_tlv_serde::<T>(input, scratch)?;
         if !input.is_empty() {
             cold_path();

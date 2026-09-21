@@ -69,7 +69,7 @@ where
     type Decoded<'de> = Vec<Item::Decoded<'de>>;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &Vec<T>) -> Result<(), StructError> {
+    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &Vec<T>) -> Result<(), CompositeError> {
         if value.len() > MAX {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());
@@ -86,7 +86,7 @@ where
     }
 
     #[inline(always)]
-    fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, StructError> {
+    fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
         let expected = Count::decode_count(input, scratch)?;
         let initial_capacity = expected.unwrap_or(0).min(MAX);
         let mut values = Vec::with_capacity(initial_capacity);
@@ -168,10 +168,10 @@ pub trait FixedAreaSlot<T>: sealed::FixedAreaSlotSealed {
 
     const WIRE_LEN: usize;
 
-    fn encode_present(output: &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), StructError>;
-    fn decode_present<'de>(input: &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, StructError>;
-    fn encode_absent_slots(output: &mut [u8], scratch: &mut &mut [u8]) -> Result<(), StructError>;
-    fn validate_absent_slots(input: &[u8], scratch: &mut &mut [u8]) -> Result<(), StructError>;
+    fn encode_present(output: &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), CompositeError>;
+    fn decode_present<'de>(input: &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError>;
+    fn encode_absent_slots(output: &mut [u8], scratch: &mut &mut [u8]) -> Result<(), CompositeError>;
+    fn validate_absent_slots(input: &[u8], scratch: &mut &mut [u8]) -> Result<(), CompositeError>;
 }
 
 impl<T, Inner, Absent, const N: usize> sealed::FixedAreaSlotSealed for OptionalAbsent<T, Inner, Absent, N>
@@ -191,7 +191,7 @@ where
     const WIRE_LEN: usize = N;
 
     #[inline(always)]
-    fn encode_present(output: &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), StructError> {
+    fn encode_present(output: &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), CompositeError> {
         let mut slot_out = output;
         Inner::encode_cursor(&mut slot_out, scratch, value)?;
         if !slot_out.is_empty() {
@@ -202,7 +202,7 @@ where
     }
 
     #[inline(always)]
-    fn decode_present<'de>(input: &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, StructError> {
+    fn decode_present<'de>(input: &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError> {
         let mut slot_in = input;
         let value = Inner::decode_cursor(&mut slot_in, scratch)?;
         if !slot_in.is_empty() {
@@ -213,7 +213,7 @@ where
     }
 
     #[inline(always)]
-    fn encode_absent_slots(output: &mut [u8], scratch: &mut &mut [u8]) -> Result<(), StructError> {
+    fn encode_absent_slots(output: &mut [u8], scratch: &mut &mut [u8]) -> Result<(), CompositeError> {
         if output.is_empty() {
             return Ok(());
         }
@@ -229,7 +229,7 @@ where
     }
 
     #[inline(always)]
-    fn validate_absent_slots(input: &[u8], scratch: &mut &mut [u8]) -> Result<(), StructError> {
+    fn validate_absent_slots(input: &[u8], scratch: &mut &mut [u8]) -> Result<(), CompositeError> {
         if input.is_empty() {
             return Ok(());
         }
@@ -265,7 +265,7 @@ where
     type Decoded<'de> = Vec<Slot::Decoded<'de>>;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &Vec<T>) -> Result<(), StructError> {
+    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &Vec<T>) -> Result<(), CompositeError> {
         if value.len() > MAX {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());
@@ -274,19 +274,19 @@ where
         let area_len = fixed_area_lens(Slot::WIRE_LEN, MAX)?;
         let logical_len = value.len().checked_mul(Slot::WIRE_LEN).ok_or_else(|| {
             crate::utils::cold_path();
-            StructError::from(Error::BufferOverflow)
+            CompositeError::from(Error::BufferOverflow)
         })?;
         Len::encode(output, scratch, logical_len, logical_len)?;
 
         let area = output.split_off_mut(..area_len).ok_or_else(|| {
             crate::utils::cold_path();
-            StructError::from(Error::BufferOverflow)
+            CompositeError::from(Error::BufferOverflow)
         })?;
         let mut area_out = area;
         for item in value {
             let slot = area_out.split_off_mut(..Slot::WIRE_LEN).ok_or_else(|| {
                 crate::utils::cold_path();
-                StructError::from(Error::Internal)
+                CompositeError::from(Error::Internal)
             })?;
             Slot::encode_present(slot, scratch, item)?;
         }
@@ -295,7 +295,7 @@ where
     }
 
     #[inline(always)]
-    fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, StructError> {
+    fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError> {
         let plan = Len::decode_plan(input, scratch)?;
         let logical_len = plan.semantic_len.unwrap_or(plan.wire_len);
         let area_len = fixed_area_lens(Slot::WIRE_LEN, MAX)?;
@@ -306,7 +306,7 @@ where
 
         let area = input.split_off(..area_len).ok_or_else(|| {
             crate::utils::cold_path();
-            StructError::from(Error::UnexpectedEof)
+            CompositeError::from(Error::UnexpectedEof)
         })?;
         let count = logical_len / Slot::WIRE_LEN;
         let mut values = Vec::with_capacity(count);
@@ -314,7 +314,7 @@ where
         for _ in 0..count {
             let slot = slots.split_off(..Slot::WIRE_LEN).ok_or_else(|| {
                 crate::utils::cold_path();
-                StructError::from(Error::Internal)
+                CompositeError::from(Error::Internal)
             })?;
             values.push(Slot::decode_present(slot, scratch)?);
         }

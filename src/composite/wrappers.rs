@@ -5,7 +5,7 @@ impl<T, F: ScalarFmt, S: CompositeFmt<T>> CompositeFmt<T> for Frame<F, S> {
     type Decoded<'de> = S::Decoded<'de>;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), StructError> {
+    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), CompositeError> {
         let scratch_len = scratch.len();
         let used = {
             let mut semantic_out = &mut **scratch;
@@ -16,7 +16,7 @@ impl<T, F: ScalarFmt, S: CompositeFmt<T>> CompositeFmt<T> for Frame<F, S> {
         let mut scratch_tail = core::mem::take(scratch);
         let semantic = scratch_tail.split_off_mut(..used).ok_or_else(|| {
             crate::utils::cold_path();
-            StructError::from(Error::BufferOverflow)
+            CompositeError::from(Error::BufferOverflow)
         })?;
         F::encode(output, &mut scratch_tail, semantic)?;
         *scratch = scratch_tail;
@@ -24,7 +24,7 @@ impl<T, F: ScalarFmt, S: CompositeFmt<T>> CompositeFmt<T> for Frame<F, S> {
     }
 
     #[inline(always)]
-    fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, StructError> {
+    fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
         let source = *input;
         let mut input_ptr = source;
         let value_bytes = F::decode(&mut input_ptr, scratch)?;
@@ -207,7 +207,7 @@ where
     type Decoded<'de> = Body::Decoded<'de>;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), StructError> {
+    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), CompositeError> {
         let full_len = trailing_body_len::<Tails, BASE_LEN>()?;
         let mut scratch_tail = core::mem::take(scratch);
         let body = take_scratch(&mut scratch_tail, full_len)?;
@@ -219,12 +219,12 @@ where
         }
         let tails = body.get(BASE_LEN..).ok_or_else(|| {
             crate::utils::cold_path();
-            StructError::from(Error::Internal)
+            CompositeError::from(Error::Internal)
         })?;
         let tail_len = Tails::trim_len(tails, &mut scratch_tail)?;
         let logical_len = BASE_LEN.checked_add(tail_len).ok_or_else(|| {
             crate::utils::cold_path();
-            StructError::from(Error::BufferOverflow)
+            CompositeError::from(Error::BufferOverflow)
         })?;
         Len::encode(output, &mut scratch_tail, logical_len, logical_len)?;
         copy_bytes(output, body)?;
@@ -233,11 +233,11 @@ where
     }
 
     #[inline(always)]
-    fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, StructError> {
+    fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
         let plan = Len::decode_plan(input, scratch)?;
         let logical_len = plan.semantic_len.ok_or_else(|| {
             crate::utils::cold_path();
-            StructError::from(Error::Internal)
+            CompositeError::from(Error::Internal)
         })?;
         if logical_len < BASE_LEN {
             crate::utils::cold_path();
@@ -252,11 +252,11 @@ where
         let full_len = trailing_body_len::<Tails, BASE_LEN>()?;
         let body = input.split_off(..full_len).ok_or_else(|| {
             crate::utils::cold_path();
-            StructError::from(Error::UnexpectedEof)
+            CompositeError::from(Error::UnexpectedEof)
         })?;
         let tails = body.get(BASE_LEN..).ok_or_else(|| {
             crate::utils::cold_path();
-            StructError::from(Error::Internal)
+            CompositeError::from(Error::Internal)
         })?;
         Tails::validate_omitted(tails, tail_len, scratch)?;
 
@@ -278,10 +278,10 @@ where
     type Decoded<'de> = Option<Inner::Decoded<'de>>;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &Option<T>) -> Result<(), StructError> {
+    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &Option<T>) -> Result<(), CompositeError> {
         let area = output.split_off_mut(..N).ok_or_else(|| {
             crate::utils::cold_path();
-            StructError::from(Error::BufferOverflow)
+            CompositeError::from(Error::BufferOverflow)
         })?;
         let mut area_out = &mut area[..];
         match value {
@@ -296,10 +296,10 @@ where
     }
 
     #[inline(always)]
-    fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, StructError> {
+    fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
         let area = input.split_off(..N).ok_or_else(|| {
             crate::utils::cold_path();
-            StructError::from(Error::UnexpectedEof)
+            CompositeError::from(Error::UnexpectedEof)
         })?;
         if Absent::is_absent(area, scratch)? {
             return Ok(None);
@@ -332,12 +332,12 @@ impl<T: Default> CompositeFmt<T> for Empty<T> {
     type Decoded<'de> = T;
 
     #[inline(always)]
-    fn encode_cursor(_output: &mut &mut [u8], _scratch: &mut &mut [u8], _value: &T) -> Result<(), StructError> {
+    fn encode_cursor(_output: &mut &mut [u8], _scratch: &mut &mut [u8], _value: &T) -> Result<(), CompositeError> {
         Ok(())
     }
 
     #[inline(always)]
-    fn decode_cursor<'a>(_input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, StructError> {
+    fn decode_cursor<'a>(_input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
         Ok(T::default())
     }
 }

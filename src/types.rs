@@ -41,7 +41,7 @@ impl std::error::Error for Error {}
 /// records up to four nested field names from outermost to innermost. For deeper
 /// paths, it retains the three outermost names and the innermost name.
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd, Hash)]
-pub struct StructError {
+pub struct CompositeError {
     /// Underlying error kind.
     pub kind: Error,
     path_len: u8,
@@ -50,7 +50,7 @@ pub struct StructError {
     pub truncated: bool,
 }
 
-impl StructError {
+impl CompositeError {
     pub const MAX_DEPTH: usize = 4;
 
     #[inline(always)]
@@ -88,14 +88,14 @@ impl StructError {
     }
 }
 
-impl From<Error> for StructError {
+impl From<Error> for CompositeError {
     #[inline(always)]
     fn from(value: Error) -> Self {
         Self::new(value)
     }
 }
 
-impl core::fmt::Display for StructError {
+impl core::fmt::Display for CompositeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if self.path_len == 0 {
             return self.kind.fmt(f);
@@ -118,7 +118,7 @@ impl core::fmt::Display for StructError {
     }
 }
 
-impl std::error::Error for StructError {
+impl std::error::Error for CompositeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.kind)
     }
@@ -126,7 +126,7 @@ impl std::error::Error for StructError {
 
 #[cfg(test)]
 mod tests {
-    use super::{Error, StructError};
+    use super::{CompositeError, Error};
 
     #[test]
     fn test_error_display_messages() {
@@ -153,13 +153,13 @@ mod tests {
             let error = fields[..depth]
                 .iter()
                 .rev()
-                .fold(StructError::from(Error::Invalid), |error, field| error.with_field(field));
+                .fold(CompositeError::from(Error::Invalid), |error, field| error.with_field(field));
             assert_eq!(error.path(), path);
-            assert_eq!(error.truncated, depth > StructError::MAX_DEPTH);
+            assert_eq!(error.truncated, depth > CompositeError::MAX_DEPTH);
             assert_eq!(error.to_string(), display);
         }
         assert_eq!(
-            StructError::from(Error::InvalidValueLength)
+            CompositeError::from(Error::InvalidValueLength)
                 .with_field("inner")
                 .with_field("outer")
                 .to_string(),
@@ -172,20 +172,20 @@ mod tests {
 mod proptests {
     use proptest::prelude::*;
 
-    use super::{Error, StructError};
+    use super::{CompositeError, Error};
 
     proptest! {
         #[test]
         fn error_path_preserves_outer_context_and_leaf(
             fields in prop::collection::vec(prop::sample::select(vec!["outer", "inner", "leaf", "", "a.b"]), 0..65),
         ) {
-            let error = fields.iter().rev().fold(StructError::new(Error::Invalid), |error, field| error.with_field(field));
+            let error = fields.iter().rev().fold(CompositeError::new(Error::Invalid), |error, field| error.with_field(field));
             let mut expected = fields.clone();
-            if fields.len() > StructError::MAX_DEPTH {
+            if fields.len() > CompositeError::MAX_DEPTH {
                 expected = fields[..3].iter().copied().chain(fields.last().copied()).collect();
             }
             prop_assert_eq!(error.path(), expected.as_slice());
-            prop_assert_eq!(error.truncated, fields.len() > StructError::MAX_DEPTH);
+            prop_assert_eq!(error.truncated, fields.len() > CompositeError::MAX_DEPTH);
             prop_assert_eq!(error.kind, Error::Invalid);
             let mut display = expected;
             if error.truncated {

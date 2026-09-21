@@ -19,33 +19,33 @@ use core::marker::PhantomData;
 
 use crate::primitive::bytes::{contains_byte, copy_bytes, split_delimited_bytes};
 use crate::utils::take_scratch;
-use crate::{Error, ScalarFmt, StructError};
+use crate::{CompositeError, Error, ScalarFmt};
 
 pub trait CompositeFmt<T> {
     type Decoded<'de>;
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), StructError> {
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
         let mut scratch_ptr = scratch;
         Self::encode_cursor(output, &mut scratch_ptr, value)
     }
 
     #[inline(always)]
-    fn decode<'de>(input: &mut &'de [u8], scratch: &'de mut [u8]) -> Result<Self::Decoded<'de>, StructError> {
+    fn decode<'de>(input: &mut &'de [u8], scratch: &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError> {
         let mut scratch_ptr = scratch;
         Self::decode_cursor(input, &mut scratch_ptr)
     }
 
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), StructError>;
-    fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, StructError>;
+    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), CompositeError>;
+    fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError>;
 }
 
 /// Encode/decode a composite value using an already available context value.
 pub trait ContextFmt<T, C: ?Sized> {
     type Decoded<'de>;
 
-    fn encode_with(output: &mut &mut [u8], scratch: &mut &mut [u8], context: &C, value: &T) -> Result<(), StructError>;
-    fn decode_with<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8], context: &C) -> Result<Self::Decoded<'de>, StructError>;
+    fn encode_with(output: &mut &mut [u8], scratch: &mut &mut [u8], context: &C, value: &T) -> Result<(), CompositeError>;
+    fn decode_with<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8], context: &C) -> Result<Self::Decoded<'de>, CompositeError>;
 }
 
 /// Canonical bytes used by wrapper formats to represent an absent value.
@@ -129,7 +129,7 @@ mod tests {
     type Track2Fmt = Field<Track2<1, 37>, EbcdicWireLength<2>, crate::chain!(PadRightEven<b'?'>, crate::PackNibblesLeft<Bcdz, 0x0F>)>;
     const PIPE_SEPARATOR: u8 = b'|';
 
-    fn error_kind<T>(result: Result<T, StructError>) -> Result<T, Error> {
+    fn error_kind<T>(result: Result<T, CompositeError>) -> Result<T, Error> {
         result.map_err(|error| error.kind)
     }
     type AmountFmt = SignPrefix<Field<Numeric<1, 16>, Fixed<16>, crate::chain!(PadLeft<16, b'0'>, crate::PackNibblesRight<Bcdz, 0>)>>;
@@ -2234,13 +2234,17 @@ pub fn encode_delimiter(output: &mut &mut [u8], byte: u8) -> Result<(), Error> {
 }
 
 #[inline(always)]
-pub fn wrap_struct_error<E: Into<StructError>>(error: E, field: &'static str) -> StructError {
+pub fn wrap_composite_error<E: Into<CompositeError>>(error: E, field: &'static str) -> CompositeError {
     error.into().with_field(field)
 }
 
 #[inline(always)]
 #[doc(hidden)]
-pub fn encode_nested_value<T, F: CompositeFmt<T>>(value: &T, output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), StructError> {
+pub fn encode_nested_value<T, F: CompositeFmt<T>>(
+    value: &T,
+    output: &mut &mut [u8],
+    scratch: &mut &mut [u8],
+) -> Result<(), CompositeError> {
     F::encode_cursor(output, scratch, value)
 }
 
@@ -2252,26 +2256,26 @@ pub fn encode_ber_tlv_field<F>(
     tag_hex: &str,
     field: &'static str,
     encode_value: F,
-) -> Result<(), StructError>
+) -> Result<(), CompositeError>
 where
-    F: FnOnce(&mut &mut [u8], &mut &mut [u8]) -> Result<(), StructError>,
+    F: FnOnce(&mut &mut [u8], &mut &mut [u8]) -> Result<(), CompositeError>,
 {
     let (tag_bytes, tag_len) =
-        crate::primitive::bertlv::parse_ber_tag_hex(tag_hex).map_err(|_| wrap_struct_error(Error::Internal, field))?;
+        crate::primitive::bertlv::parse_ber_tag_hex(tag_hex).map_err(|_| wrap_composite_error(Error::Internal, field))?;
     let out = core::mem::take(output);
     let total = out.len();
     let mut value_out = &mut *out;
-    encode_value(&mut value_out, scratch).map_err(|error| wrap_struct_error(error, field))?;
+    encode_value(&mut value_out, scratch).map_err(|error| wrap_composite_error(error, field))?;
     let used = total - value_out.len();
-    let head_len = tag_len + crate::primitive::bertlv::ber_length_width(used).map_err(|error| wrap_struct_error(error, field))?;
+    let head_len = tag_len + crate::primitive::bertlv::ber_length_width(used).map_err(|error| wrap_composite_error(error, field))?;
     if total < head_len + used {
         crate::utils::cold_path();
-        return Err(wrap_struct_error(Error::BufferOverflow, field));
+        return Err(wrap_composite_error(Error::BufferOverflow, field));
     }
     out.copy_within(0..used, head_len);
     let mut head = &mut out[..head_len];
-    crate::primitive::bertlv::encode_ber_tag(&mut head, &tag_bytes[..tag_len]).map_err(|error| wrap_struct_error(error, field))?;
-    crate::primitive::bertlv::encode_ber_length(&mut head, used).map_err(|error| wrap_struct_error(error, field))?;
+    crate::primitive::bertlv::encode_ber_tag(&mut head, &tag_bytes[..tag_len]).map_err(|error| wrap_composite_error(error, field))?;
+    crate::primitive::bertlv::encode_ber_length(&mut head, used).map_err(|error| wrap_composite_error(error, field))?;
     *output = &mut out[head_len + used..];
     Ok(())
 }
@@ -2286,21 +2290,21 @@ pub fn decode_ber_tlv_field<'a, T, D>(
     field_value: &mut Option<T>,
     field: &'static str,
     decode_value: D,
-) -> Result<bool, StructError>
+) -> Result<bool, CompositeError>
 where
-    D: FnOnce(&mut &'a [u8], &mut &'a mut [u8]) -> Result<T, StructError>,
+    D: FnOnce(&mut &'a [u8], &mut &'a mut [u8]) -> Result<T, CompositeError>,
 {
-    if !crate::primitive::bertlv::ber_tag_matches_hex(tag_bytes, tag_hex).map_err(|_| wrap_struct_error(Error::Internal, field))? {
+    if !crate::primitive::bertlv::ber_tag_matches_hex(tag_bytes, tag_hex).map_err(|_| wrap_composite_error(Error::Internal, field))? {
         return Ok(false);
     }
     if field_value.is_some() {
         crate::utils::cold_path();
-        return Err(wrap_struct_error(Error::Invalid, field));
+        return Err(wrap_composite_error(Error::Invalid, field));
     }
-    let value = decode_value(value_input, scratch).map_err(|error| wrap_struct_error(error, field))?;
+    let value = decode_value(value_input, scratch).map_err(|error| wrap_composite_error(error, field))?;
     if !value_input.is_empty() {
         crate::utils::cold_path();
-        return Err(wrap_struct_error(Error::Invalid, field));
+        return Err(wrap_composite_error(Error::Invalid, field));
     }
     *field_value = Some(value);
     Ok(true)
@@ -2314,7 +2318,7 @@ pub fn should_retry_union(error: Error) -> bool {
 
 #[inline(always)]
 #[doc(hidden)]
-pub fn decode_owned_struct<'de, T, F>(input: &mut &'de [u8], scratch: &'de mut [u8]) -> Result<T, StructError>
+pub fn decode_composite_value<'de, T, F>(input: &mut &'de [u8], scratch: &'de mut [u8]) -> Result<T, CompositeError>
 where
     F: CompositeFmt<T, Decoded<'de> = T>,
 {
@@ -2322,9 +2326,9 @@ where
 }
 
 #[inline]
-fn encode_delimited_segment<E>(output: &mut &mut [u8], scratch: &mut &mut [u8], separator: u8, encode: E) -> Result<(), StructError>
+fn encode_delimited_segment<E>(output: &mut &mut [u8], scratch: &mut &mut [u8], separator: u8, encode: E) -> Result<(), CompositeError>
 where
-    E: FnOnce(&mut &mut [u8], &mut &mut [u8]) -> Result<(), StructError>,
+    E: FnOnce(&mut &mut [u8], &mut &mut [u8]) -> Result<(), CompositeError>,
 {
     let scratch_len = scratch.len();
     let used = {
@@ -2349,7 +2353,7 @@ pub fn encode_delimited_value<T, S: CompositeFmt<T>>(
     scratch: &mut &mut [u8],
     value: &T,
     separator: u8,
-) -> Result<(), StructError> {
+) -> Result<(), CompositeError> {
     encode_delimited_segment(output, scratch, separator, |segment_out, nested_scratch| {
         S::encode_cursor(segment_out, nested_scratch, value)
     })
@@ -2363,7 +2367,7 @@ pub fn encode_delimited_context<T, C: ?Sized, S: ContextFmt<T, C>>(
     context: &C,
     value: &T,
     separator: u8,
-) -> Result<(), StructError> {
+) -> Result<(), CompositeError> {
     encode_delimited_segment(output, scratch, separator, |segment_out, nested_scratch| {
         S::encode_with(segment_out, nested_scratch, context, value)
     })
@@ -2376,12 +2380,12 @@ pub fn encode_delimited_serde_value<T, F: ScalarFmt>(
     scratch: &mut &mut [u8],
     value: &T,
     separator: u8,
-) -> Result<(), StructError>
+) -> Result<(), CompositeError>
 where
     T: ?Sized + serde::Serialize,
 {
     encode_delimited_segment(output, scratch, separator, |segment_out, nested_scratch| {
-        encode_serde_scalar::<T, F>(value, segment_out, nested_scratch).map_err(StructError::from)
+        encode_serde_scalar::<T, F>(value, segment_out, nested_scratch).map_err(CompositeError::from)
     })
 }
 
@@ -2402,9 +2406,9 @@ pub fn decode_delimited_field<'a>(input: &mut &'a [u8], separator: u8, expect_se
 }
 
 #[inline]
-fn decode_delimited_segment<'a, T, D>(segment: &'a [u8], scratch: &mut &'a mut [u8], decode: D) -> Result<T, StructError>
+fn decode_delimited_segment<'a, T, D>(segment: &'a [u8], scratch: &mut &'a mut [u8], decode: D) -> Result<T, CompositeError>
 where
-    D: FnOnce(&mut &'a [u8], &mut &'a mut [u8]) -> Result<T, StructError>,
+    D: FnOnce(&mut &'a [u8], &mut &'a mut [u8]) -> Result<T, CompositeError>,
 {
     let mut input = segment;
     let value = decode(&mut input, scratch)?;
@@ -2420,7 +2424,7 @@ where
 pub fn decode_delimited_value<'a, T, S: CompositeFmt<T>>(
     segment: &'a [u8],
     scratch: &mut &'a mut [u8],
-) -> Result<S::Decoded<'a>, StructError> {
+) -> Result<S::Decoded<'a>, CompositeError> {
     decode_delimited_segment(segment, scratch, |input, scratch| S::decode_cursor(input, scratch))
 }
 
@@ -2430,18 +2434,18 @@ pub fn decode_delimited_context<'a, T, C: ?Sized, S: ContextFmt<T, C>>(
     segment: &'a [u8],
     scratch: &mut &'a mut [u8],
     context: &C,
-) -> Result<S::Decoded<'a>, StructError> {
+) -> Result<S::Decoded<'a>, CompositeError> {
     decode_delimited_segment(segment, scratch, |input, scratch| S::decode_with(input, scratch, context))
 }
 
 #[inline]
 #[doc(hidden)]
-pub fn decode_delimited_serde_value<'a, T, F: ScalarFmt>(segment: &'a [u8], scratch: &mut &'a mut [u8]) -> Result<T, StructError>
+pub fn decode_delimited_serde_value<'a, T, F: ScalarFmt>(segment: &'a [u8], scratch: &mut &'a mut [u8]) -> Result<T, CompositeError>
 where
     T: serde::Deserialize<'a>,
 {
     decode_delimited_segment(segment, scratch, |input, scratch| {
-        decode_serde_scalar::<T, F>(input, scratch).map_err(StructError::from)
+        decode_serde_scalar::<T, F>(input, scratch).map_err(CompositeError::from)
     })
 }
 
@@ -2452,9 +2456,9 @@ pub fn encode_delimited_literal<F: ScalarFmt>(
     scratch: &mut &mut [u8],
     expected: &[u8],
     separator: u8,
-) -> Result<(), StructError> {
+) -> Result<(), CompositeError> {
     encode_delimited_segment(output, scratch, separator, |segment_out, scratch| {
-        F::encode(segment_out, scratch, expected).map_err(StructError::from)
+        F::encode(segment_out, scratch, expected).map_err(CompositeError::from)
     })
 }
 
@@ -2464,14 +2468,14 @@ pub fn decode_delimited_literal<'a, F: ScalarFmt>(
     segment: &'a [u8],
     scratch: &mut &'a mut [u8],
     expected: &[u8],
-) -> Result<(), StructError> {
+) -> Result<(), CompositeError> {
     decode_delimited_segment(segment, scratch, |input, scratch| {
-        decode_literal::<F>(input, scratch, expected).map_err(StructError::from)
+        decode_literal::<F>(input, scratch, expected).map_err(CompositeError::from)
     })
 }
 
 #[inline(never)]
-pub(crate) fn decode_variant<'a, T, E, F, W>(input: &mut &'a [u8], scratch: &mut &'a mut [u8], wrap: W) -> Result<E, StructError>
+pub(crate) fn decode_variant<'a, T, E, F, W>(input: &mut &'a [u8], scratch: &mut &'a mut [u8], wrap: W) -> Result<E, CompositeError>
 where
     F: CompositeFmt<T>,
     W: FnOnce(F::Decoded<'a>) -> E,

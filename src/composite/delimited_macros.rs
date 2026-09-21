@@ -19,58 +19,58 @@ macro_rules! __finfmt_delimited_encode_field {
     ($value:expr, $output:expr, $scratch:expr, $separator:expr, $field:ident : Option<Composite<$fmt:ty>>) => {{
         if let Some(inner) = $value.$field.as_ref() {
             $crate::composite::encode_delimited_value::<_, $crate::composite::Composite<$fmt>>($output, $scratch, inner, $separator)
-                .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))
+                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
         } else {
-            Ok::<(), $crate::StructError>(())
+            Ok::<(), $crate::CompositeError>(())
         }
     }};
     ($value:expr, $output:expr, $scratch:expr, $separator:expr, $field:ident : Option<Composite<$fmt:ty> >) => {{
         if let Some(inner) = $value.$field.as_ref() {
             $crate::composite::encode_delimited_value::<_, $crate::composite::Composite<$fmt>>($output, $scratch, inner, $separator)
-                .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))
+                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
         } else {
-            Ok::<(), $crate::StructError>(())
+            Ok::<(), $crate::CompositeError>(())
         }
     }};
     ($value:expr, $output:expr, $scratch:expr, $separator:expr, $field:ident : Option<DirectScalar<$fmt:ty>>) => {{
         if let Some(inner) = $value.$field.as_ref() {
             $crate::composite::encode_delimited_value::<_, $crate::composite::DirectScalar<$fmt>>($output, $scratch, inner, $separator)
-                .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))
+                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
         } else {
-            Ok::<(), $crate::StructError>(())
+            Ok::<(), $crate::CompositeError>(())
         }
     }};
     ($value:expr, $output:expr, $scratch:expr, $separator:expr, $field:ident : Option<DirectScalar<$fmt:ty> >) => {{
         if let Some(inner) = $value.$field.as_ref() {
             $crate::composite::encode_delimited_value::<_, $crate::composite::DirectScalar<$fmt>>($output, $scratch, inner, $separator)
-                .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))
+                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
         } else {
-            Ok::<(), $crate::StructError>(())
+            Ok::<(), $crate::CompositeError>(())
         }
     }};
     ($value:expr, $output:expr, $scratch:expr, $separator:expr, $field:ident : Option<$fmt:ty>) => {{
         if let Some(inner) = $value.$field.as_ref() {
             $crate::composite::encode_delimited_serde_value::<_, $fmt>($output, $scratch, inner, $separator)
-                .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))
+                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
         } else {
-            Ok::<(), $crate::StructError>(())
+            Ok::<(), $crate::CompositeError>(())
         }
     }};
     ($value:expr, $output:expr, $scratch:expr, $separator:expr, $field:ident : Composite<$fmt:ty>::with($context:ident)) => {{
         $crate::composite::encode_delimited_context::<_, _, $fmt>($output, $scratch, &$value.$context, &$value.$field, $separator)
-            .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))
+            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
     }};
     ($value:expr, $output:expr, $scratch:expr, $separator:expr, $field:ident : Composite<$fmt:ty>) => {{
         $crate::composite::encode_delimited_value::<_, $crate::composite::Composite<$fmt>>($output, $scratch, &$value.$field, $separator)
-            .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))
+            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
     }};
     ($value:expr, $output:expr, $scratch:expr, $separator:expr, $field:ident : DirectScalar<$fmt:ty>) => {{
         $crate::composite::encode_delimited_value::<_, $crate::composite::DirectScalar<$fmt>>($output, $scratch, &$value.$field, $separator)
-            .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))
+            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
     }};
     ($value:expr, $output:expr, $scratch:expr, $separator:expr, $field:ident : $fmt:ty) => {{
         $crate::composite::encode_delimited_serde_value::<_, $fmt>($output, $scratch, &$value.$field, $separator)
-            .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))
+            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
     }};
 }
 
@@ -150,7 +150,7 @@ macro_rules! __finfmt_delimited_decode_construct_as {
 #[doc(hidden)]
 macro_rules! __finfmt_delimited_decode_build {
     ($input:expr, $scratch:expr, $separator:expr, $result_ty:ty, $ctor:path; [$($built:tt)*];) => {
-        Ok::<$result_ty, $crate::StructError>({ $ctor { $($built)* } })
+        Ok::<$result_ty, $crate::CompositeError>({ $ctor { $($built)* } })
     };
     ($input:expr, $scratch:expr, $separator:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; _: $fmt:ty = $bytes:expr $(, $($rest:tt)*)?) => {{
         let segment =
@@ -167,7 +167,7 @@ macro_rules! __finfmt_delimited_decode_build {
         } else {
             Some(
                 $crate::composite::decode_delimited_value::<_, $crate::composite::Composite<$fmt>>(segment, $scratch)
-                    .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))?,
+                    .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
             )
         };
         $crate::__finfmt_delimited_decode_build!($input, $scratch, $separator, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
@@ -180,7 +180,7 @@ macro_rules! __finfmt_delimited_decode_build {
         } else {
             Some(
                 $crate::composite::decode_delimited_value::<_, $crate::composite::Composite<$fmt>>(segment, $scratch)
-                    .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))?,
+                    .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
             )
         };
         $crate::__finfmt_delimited_decode_build!($input, $scratch, $separator, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
@@ -193,7 +193,7 @@ macro_rules! __finfmt_delimited_decode_build {
         } else {
             Some(
                 $crate::composite::decode_delimited_value::<_, $crate::composite::DirectScalar<$fmt>>(segment, $scratch)
-                    .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))?,
+                    .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
             )
         };
         $crate::__finfmt_delimited_decode_build!($input, $scratch, $separator, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
@@ -206,7 +206,7 @@ macro_rules! __finfmt_delimited_decode_build {
         } else {
             Some(
                 $crate::composite::decode_delimited_value::<_, $crate::composite::DirectScalar<$fmt>>(segment, $scratch)
-                    .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))?,
+                    .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
             )
         };
         $crate::__finfmt_delimited_decode_build!($input, $scratch, $separator, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
@@ -219,7 +219,7 @@ macro_rules! __finfmt_delimited_decode_build {
         } else {
             Some(
                 $crate::composite::decode_delimited_serde_value::<_, $fmt>(segment, $scratch)
-                    .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))?,
+                    .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
             )
         };
         $crate::__finfmt_delimited_decode_build!($input, $scratch, $separator, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
@@ -228,28 +228,28 @@ macro_rules! __finfmt_delimited_decode_build {
         let segment =
             $crate::composite::decode_delimited_field($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
         let $field = $crate::composite::decode_delimited_context::<_, _, $fmt>(segment, $scratch, &$context)
-            .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))?;
+            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
         $crate::__finfmt_delimited_decode_build!($input, $scratch, $separator, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
     ($input:expr, $scratch:expr, $separator:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : Composite<$fmt:ty> $(, $($rest:tt)*)?) => {{
         let segment =
             $crate::composite::decode_delimited_field($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
         let $field = $crate::composite::decode_delimited_value::<_, $crate::composite::Composite<$fmt>>(segment, $scratch)
-            .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))?;
+            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
         $crate::__finfmt_delimited_decode_build!($input, $scratch, $separator, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
     ($input:expr, $scratch:expr, $separator:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : DirectScalar<$fmt:ty> $(, $($rest:tt)*)?) => {{
         let segment =
             $crate::composite::decode_delimited_field($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
         let $field = $crate::composite::decode_delimited_value::<_, $crate::composite::DirectScalar<$fmt>>(segment, $scratch)
-            .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))?;
+            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
         $crate::__finfmt_delimited_decode_build!($input, $scratch, $separator, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
     ($input:expr, $scratch:expr, $separator:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : $fmt:ty $(, $($rest:tt)*)?) => {{
         let segment =
             $crate::composite::decode_delimited_field($input, $separator, $crate::__finfmt_delimited_has_rest!($($($rest)*)?))?;
         let $field = $crate::composite::decode_delimited_serde_value::<_, $fmt>(segment, $scratch)
-            .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($field)))?;
+            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
         $crate::__finfmt_delimited_decode_build!($input, $scratch, $separator, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
 }
@@ -269,14 +269,14 @@ macro_rules! delimited_format {
             type Decoded<'de> = $ty<'de>;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::StructError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 let _ = value;
                 $crate::__finfmt_delimited_encode_fields!(value, output, scratch, $separator; $($fields)*);
                 Ok(())
             }
 
             #[inline(always)]
-            fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::StructError> {
+            fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
                 $crate::__finfmt_delimited_decode_construct_as!(input, scratch, $separator, $ty<'de>, $ty; $($fields)*)
             }
         }
@@ -294,14 +294,14 @@ macro_rules! delimited_format {
             type Decoded<'de> = $ty;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty) -> Result<(), $crate::StructError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 let _ = value;
                 $crate::__finfmt_delimited_encode_fields!(value, output, scratch, $separator; $($fields)*);
                 Ok(())
             }
 
             #[inline(always)]
-            fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::StructError> {
+            fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
                 $crate::__finfmt_delimited_decode_construct!(input, scratch, $separator, $ty; $($fields)*)
             }
         }

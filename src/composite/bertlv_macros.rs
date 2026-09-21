@@ -32,7 +32,7 @@ macro_rules! __finfmt_ber_tlv_encode_field {
     ($value:expr, $output:expr, $scratch:expr, $tag:expr, $field:ident : Option<$fmt:ty>) => {{
         if let Some(inner) = $value.$field.as_ref() {
             $crate::composite::encode_ber_tlv_field($output, $scratch, $tag, stringify!($field), |value_out, scratch| {
-                $crate::composite::encode_serde_scalar::<_, $fmt>(inner, value_out, scratch).map_err($crate::StructError::from)
+                $crate::composite::encode_serde_scalar::<_, $fmt>(inner, value_out, scratch).map_err($crate::CompositeError::from)
             })?;
         }
     }};
@@ -48,7 +48,7 @@ macro_rules! __finfmt_ber_tlv_encode_field {
     }};
     ($value:expr, $output:expr, $scratch:expr, $tag:expr, $field:ident : $fmt:ty) => {{
         $crate::composite::encode_ber_tlv_field($output, $scratch, $tag, stringify!($field), |value_out, scratch| {
-            $crate::composite::encode_serde_scalar::<_, $fmt>(&$value.$field, value_out, scratch).map_err($crate::StructError::from)
+            $crate::composite::encode_serde_scalar::<_, $fmt>(&$value.$field, value_out, scratch).map_err($crate::CompositeError::from)
         })?;
     }};
 }
@@ -174,7 +174,7 @@ macro_rules! __finfmt_ber_tlv_match_field {
                 &mut $field,
                 stringify!($field),
                 |value_input, scratch| {
-                    $crate::composite::decode_serde_scalar::<_, $fmt>(value_input, scratch).map_err($crate::StructError::from)
+                    $crate::composite::decode_serde_scalar::<_, $fmt>(value_input, scratch).map_err($crate::CompositeError::from)
                 },
             )?;
         }
@@ -219,7 +219,7 @@ macro_rules! __finfmt_ber_tlv_match_field {
                 &mut $field,
                 stringify!($field),
                 |value_input, scratch| {
-                    $crate::composite::decode_serde_scalar::<_, $fmt>(value_input, scratch).map_err($crate::StructError::from)
+                    $crate::composite::decode_serde_scalar::<_, $fmt>(value_input, scratch).map_err($crate::CompositeError::from)
                 },
             )?;
         }
@@ -268,7 +268,7 @@ macro_rules! __finfmt_ber_tlv_match_fields {
 #[doc(hidden)]
 macro_rules! __finfmt_ber_tlv_finish_fields_as {
     ($result_ty:ty, $ctor:path; [$($built:tt)*];) => {
-        Ok::<$result_ty, $crate::StructError>({ $ctor { $($built)* } })
+        Ok::<$result_ty, $crate::CompositeError>({ $ctor { $($built)* } })
     };
     ($result_ty:ty, $ctor:path; [$($built:tt)*]; $tag:expr => $field:ident : Option<Composite<$fmt:ty>> $(, $($rest:tt)*)?) => {{
         let $field = $field;
@@ -295,7 +295,7 @@ macro_rules! __finfmt_ber_tlv_finish_fields_as {
             Some(value) => value,
             None => {
                 $crate::__private::cold_path();
-                return Err($crate::composite::wrap_struct_error($crate::Error::Invalid, stringify!($field)));
+                return Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)));
             }
         };
         $crate::__finfmt_ber_tlv_finish_fields_as!($result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
@@ -305,7 +305,7 @@ macro_rules! __finfmt_ber_tlv_finish_fields_as {
             Some(value) => value,
             None => {
                 $crate::__private::cold_path();
-                return Err($crate::composite::wrap_struct_error($crate::Error::Invalid, stringify!($field)));
+                return Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)));
             }
         };
         $crate::__finfmt_ber_tlv_finish_fields_as!($result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
@@ -315,7 +315,7 @@ macro_rules! __finfmt_ber_tlv_finish_fields_as {
             Some(value) => value,
             None => {
                 $crate::__private::cold_path();
-                return Err($crate::composite::wrap_struct_error($crate::Error::Invalid, stringify!($field)));
+                return Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)));
             }
         };
         $crate::__finfmt_ber_tlv_finish_fields_as!($result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
@@ -340,13 +340,13 @@ macro_rules! __finfmt_ber_tlv_decode_construct_as {
         let mut $extras = ::core::default::Default::default();
         $crate::__finfmt_ber_tlv_init_fields!($($fields)*);
 
-        while let Some(entry) = $crate::primitive::bertlv::decode_ber_tlv_entry($input).map_err($crate::StructError::from)? {
+        while let Some(entry) = $crate::primitive::bertlv::decode_ber_tlv_entry($input).map_err($crate::CompositeError::from)? {
             let mut value_input = entry.value;
             let mut matched = false;
             $crate::__finfmt_ber_tlv_match_fields!(entry.tag, &mut value_input, $scratch, matched; $($fields)*);
             if !matched {
                 $crate::composite::BerTlvExtras::decode_unknown(&mut $extras, entry.tag, value_input, $scratch)
-                    .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($extras)))?;
+                    .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($extras)))?;
             }
         }
 
@@ -355,13 +355,13 @@ macro_rules! __finfmt_ber_tlv_decode_construct_as {
     ($input:expr, $scratch:expr, $result_ty:ty, $ctor:path; $($fields:tt)*) => {{
         $crate::__finfmt_ber_tlv_init_fields!($($fields)*);
 
-        while let Some(entry) = $crate::primitive::bertlv::decode_ber_tlv_entry($input).map_err($crate::StructError::from)? {
+        while let Some(entry) = $crate::primitive::bertlv::decode_ber_tlv_entry($input).map_err($crate::CompositeError::from)? {
             let mut value_input = entry.value;
             let mut matched = false;
             $crate::__finfmt_ber_tlv_match_fields!(entry.tag, &mut value_input, $scratch, matched; $($fields)*);
             if !matched {
                 $crate::__private::cold_path();
-                return Err($crate::StructError::from($crate::Error::Invalid));
+                return Err($crate::CompositeError::from($crate::Error::Invalid));
             }
         }
 
@@ -385,15 +385,15 @@ macro_rules! ber_tlv_format {
             type Decoded<'de> = $ty<'de>;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::StructError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_encode_fields!(value, output, scratch; $($fields)*);
                 $crate::composite::BerTlvExtras::encode_unknowns(&value.$extras, output, scratch)
-                    .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($extras)))?;
+                    .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($extras)))?;
                 Ok(())
             }
 
             #[inline(always)]
-            fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::StructError> {
+            fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_decode_construct_as!(input, scratch, $ty<'de>, $ty; extras: $extras, $($fields)*)
             }
         }
@@ -411,13 +411,13 @@ macro_rules! ber_tlv_format {
             type Decoded<'de> = $ty<'de>;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::StructError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_encode_fields!(value, output, scratch; $($fields)*);
                 Ok(())
             }
 
             #[inline(always)]
-            fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::StructError> {
+            fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_decode_construct_as!(input, scratch, $ty<'de>, $ty; $($fields)*)
             }
         }
@@ -436,15 +436,15 @@ macro_rules! ber_tlv_format {
             type Decoded<'de> = $ty;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty) -> Result<(), $crate::StructError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_encode_fields!(value, output, scratch; $($fields)*);
                 $crate::composite::BerTlvExtras::encode_unknowns(&value.$extras, output, scratch)
-                    .map_err(|error| $crate::composite::wrap_struct_error(error, stringify!($extras)))?;
+                    .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($extras)))?;
                 Ok(())
             }
 
             #[inline(always)]
-            fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::StructError> {
+            fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_decode_construct!(input, scratch, $ty; extras: $extras, $($fields)*)
             }
         }
@@ -462,13 +462,13 @@ macro_rules! ber_tlv_format {
             type Decoded<'de> = $ty;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty) -> Result<(), $crate::StructError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_encode_fields!(value, output, scratch; $($fields)*);
                 Ok(())
             }
 
             #[inline(always)]
-            fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::StructError> {
+            fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_decode_construct!(input, scratch, $ty; $($fields)*)
             }
         }

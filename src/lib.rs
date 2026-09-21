@@ -25,11 +25,11 @@ pub use field::{
     Track2, TruncateBytes, UnpackNibbles, UpperAlpha, UpperAlphanum, UpperAsciiPrintable, WireFixed, WireLength,
 };
 pub use scalarfmt::ScalarFmt;
-pub use types::{Error, StructError};
+pub use types::{CompositeError, Error};
 
 #[doc(hidden)]
 pub mod __private {
-    use crate::{Error, StructError};
+    use crate::{CompositeError, Error};
 
     #[inline(always)]
     pub fn cold_path() {
@@ -52,7 +52,7 @@ pub mod __private {
     }
 
     #[inline(always)]
-    pub fn decode_variant<'a, T, E, F, W>(input: &mut &'a [u8], scratch: &mut &'a mut [u8], wrap: W) -> Result<E, StructError>
+    pub fn decode_variant<'a, T, E, F, W>(input: &mut &'a [u8], scratch: &mut &'a mut [u8], wrap: W) -> Result<E, CompositeError>
     where
         F: crate::composite::CompositeFmt<T>,
         W: FnOnce(<F as crate::composite::CompositeFmt<T>>::Decoded<'a>) -> E,

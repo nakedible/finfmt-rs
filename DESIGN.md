@@ -166,7 +166,7 @@ and fixed/even lengths where a format boundary requires that check.
 - `Invalid`: input data was malformed or rejected by the format.
 - `Internal`: format composition or library invariant was inconsistent.
 
-`StructError` wraps `Error` with a short field path for composite formats.
+`CompositeError` wraps `Error` with a short field path for composite formats.
 Composite decoders should reject unknown or duplicate structural data unless a
 format explicitly provides an extras/list path for preserving it.
 
