@@ -64,102 +64,6 @@ pub fn validate_numeric(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn split_signed_input(input: &[u8]) -> Result<(bool, &[u8]), Error> {
-    let Some((&first, rest)) = input.split_first() else {
-        cold_path();
-        return Err(Error::Invalid);
-    };
-    let (negative, digits) = match first {
-        b'-' => (true, rest),
-        b'+' => {
-            cold_path();
-            return Err(Error::Invalid);
-        }
-        _ => (false, input),
-    };
-    if digits.is_empty() {
-        cold_path();
-        return Err(Error::Invalid);
-    }
-    Ok((negative, digits))
-}
-
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn parse_signed_decimal(input: &[u8], max_digits: usize) -> Result<(bool, &[u8]), Error> {
-    let (negative, digits) = split_signed_input(input)?;
-    validate_numeric(digits, 1, max_digits)?;
-    Ok((negative, digits))
-}
-
-/// Return the normalized sign, output length, and significant source suffix,
-/// which may still contain the decimal point.
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub(crate) fn parse_scaled_decimal(input: &[u8], scale: usize, max_digits: usize, signed: bool) -> Result<(bool, usize, &[u8]), Error> {
-    let (negative, input) = split_signed_input(input)?;
-    if negative && !signed {
-        cold_path();
-        return Err(Error::Invalid);
-    }
-    let mut int_digits = 0usize;
-    let mut frac_digits = 0usize;
-    let mut seen_dot = false;
-    let mut first_nonzero = None;
-    let mut digit_index = 0usize;
-    let mut significant = &b""[..];
-    let mut remaining = input;
-    while let Some((&byte, rest)) = remaining.split_first() {
-        match byte {
-            b'0'..=b'9' => {
-                if byte != b'0' && first_nonzero.is_none() {
-                    first_nonzero = Some(digit_index);
-                    significant = remaining;
-                }
-                if seen_dot {
-                    frac_digits += 1;
-                } else {
-                    int_digits += 1;
-                }
-                digit_index += 1;
-            }
-            b'.' if !seen_dot => seen_dot = true,
-            _ => {
-                cold_path();
-                return Err(Error::Invalid);
-            }
-        }
-        remaining = rest;
-    }
-    if int_digits == 0 || (seen_dot && frac_digits == 0) || frac_digits > scale {
-        cold_path();
-        return Err(Error::Invalid);
-    }
-    let total_digits = int_digits.checked_add(scale).ok_or_else(|| {
-        cold_path();
-        Error::Internal
-    })?;
-    let digits_len = first_nonzero.map_or(1, |first| total_digits - first);
-    if digits_len > max_digits {
-        cold_path();
-        return Err(Error::InvalidValueLength);
-    }
-    let negative = negative && first_nonzero.is_some();
-    let out_len = digits_len.checked_add(usize::from(negative)).ok_or_else(|| {
-        cold_path();
-        Error::Internal
-    })?;
-    Ok((negative, out_len, significant))
-}
-
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_decimal_implied(input: &[u8], scale: usize, max_digits: usize, signed: bool) -> Result<usize, Error> {
-    parse_scaled_decimal(input, scale, max_digits, signed).map(|(_, out_len, _)| out_len)
-}
-
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn validate_alpha(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, u8::is_ascii_alphabetic)
 }
@@ -377,26 +281,6 @@ mod tests {
         for s in ["12a", " 12", "1.2", "-1", "1 2"] {
             assert_eq!(validate_numeric(s, 0, 99), Err(Error::Invalid));
         }
-    }
-
-    #[test]
-    fn test_validate_signed_decimal_and_implied() {
-        assert_eq!(split_signed_input(b"12"), Ok((false, &b"12"[..])));
-        assert_eq!(split_signed_input(b"-12"), Ok((true, &b"12"[..])));
-        assert_eq!(split_signed_input(b"+12"), Err(Error::Invalid));
-        assert_eq!(split_signed_input(b"-"), Err(Error::Invalid));
-
-        assert_eq!(parse_signed_decimal(b"12", 2), Ok((false, &b"12"[..])));
-        assert_eq!(parse_signed_decimal(b"-12", 2), Ok((true, &b"12"[..])));
-        assert_eq!(parse_signed_decimal(b"-123", 2), Err(Error::InvalidValueLength));
-        assert_eq!(parse_signed_decimal(b"+12", 2), Err(Error::Invalid));
-
-        assert_eq!(validate_decimal_implied(b"123.45", 2, 5, false), Ok(5));
-        assert_eq!(validate_decimal_implied(b"-0.05", 2, 5, true), Ok(2));
-        assert_eq!(validate_decimal_implied(b"1234.56", 2, 5, false), Err(Error::InvalidValueLength));
-        assert_eq!(validate_decimal_implied(b".5", 2, 5, false), Err(Error::Invalid));
-        assert_eq!(validate_decimal_implied(b"1.", 2, 5, false), Err(Error::Invalid));
-        assert_eq!(validate_decimal_implied(b"+1", 2, 5, true), Err(Error::Invalid));
     }
 
     #[test]

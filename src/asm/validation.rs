@@ -1,10 +1,9 @@
 use crate::Error;
 use crate::primitive::validation::{
-    parse_signed_decimal, split_signed_input, validate_alpha, validate_alphanum, validate_ascii, validate_ascii_printable,
-    validate_bcd_bytes, validate_bcdz, validate_byte_length, validate_decimal_implied, validate_ebcdic_037_ascii,
-    validate_ebcdic_1142_text, validate_ebcdic_printable, validate_hex, validate_hex_even, validate_hex_lower, validate_hex_lower_even,
-    validate_hex_upper, validate_hex_upper_even, validate_iso8859_1_str, validate_numeric, validate_range, validate_track2_chars,
-    validate_upper_alpha, validate_upper_alphanum, validate_upper_ascii_printable,
+    validate_alpha, validate_alphanum, validate_ascii, validate_ascii_printable, validate_bcd_bytes, validate_bcdz, validate_byte_length,
+    validate_ebcdic_037_ascii, validate_ebcdic_1142_text, validate_ebcdic_printable, validate_hex, validate_hex_even, validate_hex_lower,
+    validate_hex_lower_even, validate_hex_upper, validate_hex_upper_even, validate_iso8859_1_str, validate_numeric, validate_range,
+    validate_track2_chars, validate_upper_alpha, validate_upper_alphanum, validate_upper_ascii_printable,
 };
 
 #[inline(never)]
@@ -115,21 +114,6 @@ pub fn validate_ebcdic_037_ascii_1_99(input: &[u8]) -> Result<usize, Error> {
 #[inline(never)]
 pub fn validate_ebcdic_printable_1_99(input: &[u8]) -> Result<usize, Error> {
     validate_ebcdic_printable(input, 1, 99)
-}
-
-#[inline(never)]
-pub fn split_signed_input_runtime(input: &[u8]) -> Result<(bool, &[u8]), Error> {
-    split_signed_input(input)
-}
-
-#[inline(never)]
-pub fn parse_signed_decimal_19(input: &[u8]) -> Result<(bool, &[u8]), Error> {
-    parse_signed_decimal(input, 19)
-}
-
-#[inline(never)]
-pub fn validate_decimal_implied_scale2_signed(input: &[u8]) -> Result<usize, Error> {
-    validate_decimal_implied(input, 2, 12, true)
 }
 
 #[inline(never)]

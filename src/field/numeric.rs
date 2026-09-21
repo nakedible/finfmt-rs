@@ -3,10 +3,10 @@ use core::mem::size_of;
 
 use crate::primitive::bytes::{decode_exact_bytes, encode_exact_bytes, validate_exact_length};
 use crate::primitive::decimal::{
-    decode_decimal_ebcdic_signed_fixed, decode_decimal_implied_digits, decode_decimal_packed_fixed, decode_decimal_packed_signed_fixed,
-    decode_negative_prefix, decode_sign, encode_decimal_ebcdic_signed_digits, encode_decimal_ebcdic_signed_fixed, encode_decimal_implied,
-    encode_decimal_packed_digits, encode_decimal_packed_fixed, encode_decimal_packed_signed_fixed, encode_negative_prefix, encode_sign,
-    packed_decimal_max_digits, prepend_minus,
+    decode_decimal_implied_digits, decode_decimal_packed_fixed, decode_decimal_packed_signed_fixed, decode_ebcdic_zoned_decimal,
+    decode_negative_prefix, decode_sign, encode_decimal_implied, encode_decimal_packed_digits, encode_decimal_packed_fixed,
+    encode_decimal_packed_signed_fixed, encode_ebcdic_zoned_decimal, encode_ebcdic_zoned_digits, encode_negative_prefix, encode_sign,
+    encoded_decimal_implied_len, packed_decimal_max_digits, parse_signed_decimal, prepend_minus, split_signed_input,
 };
 use crate::primitive::int::{
     decode_binary_i64_be_fixed, decode_binary_u64_be_fixed, decode_nibble_int_fixed, decode_signed_magnitude_i64,
@@ -14,7 +14,7 @@ use crate::primitive::int::{
     validate_nibble_int_fixed,
 };
 use crate::primitive::nibble::NibbleAlphabet;
-use crate::primitive::validation::{parse_signed_decimal, split_signed_input, validate_decimal_implied, validate_numeric};
+use crate::primitive::validation::validate_numeric;
 use crate::utils::cold_path;
 use crate::{Error, ScalarFmt};
 
@@ -76,7 +76,7 @@ impl<const N: usize> FixedDecimalCodec for FixedSignedZonedEbcdic<N> {
     const SIGNED: bool = true;
     #[inline(always)]
     fn encode_digits(output: &mut &mut [u8], digits: &[u8], negative: bool) -> Result<(), Error> {
-        encode_decimal_ebcdic_signed_digits(output, digits, negative, N)
+        encode_ebcdic_zoned_digits(output, digits, negative, N)
     }
 }
 
@@ -479,19 +479,19 @@ impl<const N: usize> ScalarFmt for FixedSignedZonedEbcdic<N> {
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
-        encode_decimal_ebcdic_signed_fixed(output, input, N)
+        encode_ebcdic_zoned_decimal(output, input, N)
     }
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
-        decode_decimal_ebcdic_signed_fixed(input, scratch, N).map(|buf| &*buf)
+        decode_ebcdic_zoned_decimal(input, scratch, N).map(|buf| &*buf)
     }
 }
 
 impl<F: FixedDecimalCodec, const SCALE: usize> ScalarFmt for ImpliedDecimal<F, SCALE> {
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
-        let _ = validate_decimal_implied(input, SCALE, F::max_digits()?, F::SIGNED)?;
+        let _ = encoded_decimal_implied_len(input, SCALE, F::max_digits()?, F::SIGNED)?;
         Ok(F::WIRE_LEN)
     }
 

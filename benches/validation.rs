@@ -22,7 +22,6 @@ const BCD_BYTES: &[u8] = b"\x12\x34\x56\x78";
 const BINARY: &[u8] = b"\x00\xFF\x42\x99";
 const ISO_8859_1_STR: &str = "héllo";
 const EBCDIC_PRINT: &[u8] = &[0xC8, 0x85, 0x93, 0x93, 0x96];
-const SIGNED_DECIMAL: &[u8] = b"-1234567";
 
 fn bench_class_predicates(suite: &mut Suite) {
     suite.group("class_predicates", |group| {
@@ -112,19 +111,4 @@ fn bench_specialty(suite: &mut Suite) {
     });
 }
 
-fn bench_signed_and_implied(suite: &mut Suite) {
-    suite.group("signed_and_implied", |group| {
-        quick(group);
-        group.bench("split_signed_input_runtime", |b| {
-            b.iter(|| black_box(split_signed_input_runtime(black_box(SIGNED_DECIMAL))))
-        });
-        group.bench("parse_signed_decimal_19", |b| {
-            b.iter(|| black_box(parse_signed_decimal_19(black_box(SIGNED_DECIMAL))))
-        });
-        group.bench("validate_decimal_implied_scale2_signed", |b| {
-            b.iter(|| black_box(validate_decimal_implied_scale2_signed(black_box(b"-123.45"))))
-        });
-    });
-}
-
-zenbench::main!(bench_class_predicates, bench_hex, bench_specialty, bench_signed_and_implied);
+zenbench::main!(bench_class_predicates, bench_hex, bench_specialty);

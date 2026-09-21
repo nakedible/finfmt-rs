@@ -216,20 +216,20 @@ fn bench_fixed_ebcdic(suite: &mut Suite) {
 fn bench_signed_zoned(suite: &mut Suite) {
     suite.group("signed_zoned", |group| {
         quick(group);
-        group.bench("encode_decimal_ebcdic_signed_fixed_8", |b| {
+        group.bench("encode_ebcdic_zoned_decimal_8", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 8];
                 let mut out = &mut buf[..];
-                let _ = encode_decimal_ebcdic_signed_fixed_8(&mut out, black_box(b"-1234567"));
+                let _ = encode_ebcdic_zoned_decimal_8(&mut out, black_box(b"-1234567"));
                 black_box(buf)
             })
         });
-        group.bench("decode_decimal_ebcdic_signed_fixed_8", |b| {
+        group.bench("decode_ebcdic_zoned_decimal_8", |b| {
             b.iter(|| {
                 let mut input = black_box(&[0xF0u8, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xD7][..]);
                 let mut buf = [0u8; 16];
                 let mut out = &mut buf[..];
-                let _ = decode_decimal_ebcdic_signed_fixed_8(&mut input, &mut out);
+                let _ = decode_ebcdic_zoned_decimal_8(&mut input, &mut out);
                 black_box(buf)
             })
         });
@@ -284,7 +284,23 @@ fn bench_packed(suite: &mut Suite) {
     });
 }
 
+fn bench_signed_and_implied(suite: &mut Suite) {
+    suite.group("signed_and_implied", |group| {
+        quick(group);
+        group.bench("split_signed_input_runtime", |b| {
+            b.iter(|| black_box(split_signed_input_runtime(black_box(b"-1234567"))))
+        });
+        group.bench("parse_signed_decimal_19", |b| {
+            b.iter(|| black_box(parse_signed_decimal_19(black_box(b"-1234567"))))
+        });
+        group.bench("encoded_decimal_implied_len_scale2_signed", |b| {
+            b.iter(|| black_box(encoded_decimal_implied_len_scale2_signed(black_box(b"-123.45"))))
+        });
+    });
+}
+
 zenbench::main!(
+    bench_signed_and_implied,
     bench_format,
     bench_parse,
     bench_sign,

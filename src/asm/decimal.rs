@@ -1,11 +1,12 @@
 use crate::Error;
 use crate::primitive::decimal::{
     MAX_INTEGER_TEXT_LEN, decode_decimal_ascii_fixed, decode_decimal_ebcdic_blank_zero_fixed, decode_decimal_ebcdic_fixed,
-    decode_decimal_ebcdic_signed_fixed, decode_decimal_implied, decode_decimal_packed_fixed, decode_decimal_packed_signed_fixed,
+    decode_decimal_implied, decode_decimal_packed_fixed, decode_decimal_packed_signed_fixed, decode_ebcdic_zoned_decimal,
     decode_negative_prefix, decode_overpunch_digit, decode_packed_sign, decode_sign, encode_decimal_ascii_fixed,
-    encode_decimal_ebcdic_blank_zero_fixed, encode_decimal_ebcdic_fixed, encode_decimal_ebcdic_signed_fixed, encode_decimal_implied,
-    encode_decimal_packed_fixed, encode_decimal_packed_signed_fixed, encode_negative_prefix, encode_overpunch_digit, encode_packed_sign,
-    encode_sign, format_i64, format_u64, packed_decimal_max_digits, parse_i64, parse_u64, parse_usize, prepend_minus,
+    encode_decimal_ebcdic_blank_zero_fixed, encode_decimal_ebcdic_fixed, encode_decimal_implied, encode_decimal_packed_fixed,
+    encode_decimal_packed_signed_fixed, encode_ebcdic_zoned_decimal, encode_negative_prefix, encode_overpunch_digit, encode_packed_sign,
+    encode_sign, encoded_decimal_implied_len, format_i64, format_u64, packed_decimal_max_digits, parse_i64, parse_signed_decimal,
+    parse_u64, parse_usize, prepend_minus, split_signed_input,
 };
 
 #[inline(never)]
@@ -151,13 +152,13 @@ pub fn decode_decimal_ebcdic_blank_zero_fixed_2(input: &mut &[u8]) -> Result<usi
 }
 
 #[inline(never)]
-pub fn encode_decimal_ebcdic_signed_fixed_8(output: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
-    encode_decimal_ebcdic_signed_fixed(output, input, 8)
+pub fn encode_ebcdic_zoned_decimal_8(output: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
+    encode_ebcdic_zoned_decimal(output, input, 8)
 }
 
 #[inline(never)]
-pub fn decode_decimal_ebcdic_signed_fixed_8<'a>(input: &mut &[u8], output: &mut &'a mut [u8]) -> Result<&'a mut [u8], Error> {
-    decode_decimal_ebcdic_signed_fixed(input, output, 8)
+pub fn decode_ebcdic_zoned_decimal_8<'a>(input: &mut &[u8], output: &mut &'a mut [u8]) -> Result<&'a mut [u8], Error> {
+    decode_ebcdic_zoned_decimal(input, output, 8)
 }
 
 #[inline(never)]
@@ -178,4 +179,19 @@ pub fn decode_decimal_packed_fixed_8<'a>(input: &mut &[u8], output: &mut &'a mut
 #[inline(never)]
 pub fn decode_decimal_packed_signed_fixed_8<'a>(input: &mut &[u8], output: &mut &'a mut [u8]) -> Result<&'a mut [u8], Error> {
     decode_decimal_packed_signed_fixed(input, output, 8)
+}
+
+#[inline(never)]
+pub fn split_signed_input_runtime(input: &[u8]) -> Result<(bool, &[u8]), Error> {
+    split_signed_input(input)
+}
+
+#[inline(never)]
+pub fn parse_signed_decimal_19(input: &[u8]) -> Result<(bool, &[u8]), Error> {
+    parse_signed_decimal(input, 19)
+}
+
+#[inline(never)]
+pub fn encoded_decimal_implied_len_scale2_signed(input: &[u8]) -> Result<usize, Error> {
+    encoded_decimal_implied_len(input, 2, 12, true)
 }
