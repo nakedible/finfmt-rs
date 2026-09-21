@@ -9,10 +9,13 @@ use super::*;
 
 /// Wrap a leaf [`ScalarFmt`] as a [`CompositeFmt`] through Serde scalar values.
 ///
-/// This is the Serde-backed scalar adapter used by the struct-format macros.
-/// It is also useful when a custom composite wrapper needs to reuse a scalar
-/// field format for a type that already implements Serde but does not implement
-/// [`ScalarValue`].
+/// Use this adapter when a composite wrapper needs a scalar field format for
+/// an owned type that implements Serde but does not implement [`ScalarValue`].
+/// Record macros use the same scalar machinery directly, including for borrowed
+/// values.
+///
+/// Serializers using `collect_str` format their text into caller-provided scratch
+/// before field encoding. Scratch must fit that text plus the field's workspace.
 pub struct SerdeScalar<F>(PhantomData<F>);
 
 impl ser::Error for Error {
@@ -253,6 +256,27 @@ impl<F: ScalarFmt> serde::Serializer for ScalarValueSerializer<'_, '_, '_, F> {
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
         crate::utils::cold_path();
         Err(Error::Internal)
+    }
+
+    #[inline(always)]
+    fn collect_str<T: ?Sized + core::fmt::Display>(self, value: &T) -> Result<(), Error> {
+        use std::io::Write;
+
+        let capacity = self.scratch.len();
+        let used = {
+            let mut remaining = &mut **self.scratch;
+            write!(&mut remaining, "{value}").map_err(|_| {
+                crate::utils::cold_path();
+                Error::BufferOverflow
+            })?;
+            capacity - remaining.len()
+        };
+        let text = take_scratch(self.scratch, used)?;
+        let text = core::str::from_utf8(text).map_err(|_| {
+            crate::utils::cold_path();
+            Error::Internal
+        })?;
+        F::encode_str(self.output, self.scratch, text)
     }
 
     #[inline(always)]
@@ -629,5 +653,92 @@ where
     fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<T, CompositeError> {
         let value = decode_serde_scalar::<T, F>(input, scratch)?;
         Ok(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::fmt;
+
+    use super::*;
+    use crate::{Ascii, Binary, Ebcdic037, Field, Fixed, Identity, PadRight, Rest, TruncateBytes};
+
+    type A4 = Field<Ascii<4, 4>, Fixed<4>>;
+    type Text = Field<Binary<0, 64>, Rest>;
+
+    struct Parts<'a>(&'a [&'a str]);
+
+    impl fmt::Display for Parts<'_> {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            for part in self.0 {
+                formatter.write_str(part)?;
+            }
+            Ok(())
+        }
+    }
+
+    fn encode_display<F: ScalarFmt>(value: &impl fmt::Display, output_len: usize, scratch_len: usize) -> Result<Vec<u8>, Error> {
+        let mut output = [0xAA; 64];
+        let mut scratch = [0xAA; 128];
+        let mut out = &mut output[..output_len];
+        let mut space = &mut scratch[..scratch_len];
+        encode_serde_scalar::<_, F>(&format_args!("{value}"), &mut out, &mut space)?;
+        let used = output_len - out.len();
+        assert!(out.iter().all(|&byte| byte == 0xAA));
+        assert!(space.iter().all(|&byte| byte == 0xAA));
+        Ok(output[..used].to_vec())
+    }
+
+    #[test]
+    fn collect_str_uses_bounded_scratch_and_preserves_field_behavior() {
+        let value = Parts(&["A", "B", "CD"]);
+        assert_eq!(encode_display::<A4>(&value, 4, 4), Ok(b"ABCD".to_vec()));
+        assert_eq!(encode_display::<A4>(&value, 8, 32), Ok(b"ABCD".to_vec()));
+        assert_eq!(encode_display::<A4>(&value, 4, 0), Err(Error::BufferOverflow));
+        assert_eq!(encode_display::<A4>(&value, 4, 3), Err(Error::BufferOverflow));
+        assert_eq!(encode_display::<A4>(&value, 3, 4), Err(Error::BufferOverflow));
+        assert_eq!(encode_display::<Text>(&Parts(&[]), 0, 0), Ok(vec![]));
+        assert_eq!(encode_display::<Text>(&Parts(&["é", "€"]), 5, 5), Ok("é€".as_bytes().to_vec()));
+        assert_eq!(encode_display::<Text>(&Parts(&["é", "€"]), 5, 4), Err(Error::BufferOverflow));
+        assert_eq!(encode_display::<A4>(&"ABC", 4, 4), Err(Error::InvalidValueLength));
+        assert_eq!(encode_display::<A4>(&"éé", 4, 4), Err(Error::Invalid));
+        type E4 = Field<Ascii<4, 4>, Fixed<4>, Ebcdic037>;
+        assert_eq!(encode_display::<E4>(&value, 4, 4), Ok(vec![0xC1, 0xC2, 0xC3, 0xC4]));
+        type Temp4 = Field<Ascii<4, 4>, Fixed<4>, crate::chain!(Identity, PadRight<4>)>;
+        assert_eq!(encode_display::<Temp4>(&value, 4, 8), Ok(b"ABCD".to_vec()));
+        assert_eq!(encode_display::<Temp4>(&value, 4, 7), Err(Error::BufferOverflow));
+        type Cut = TruncateBytes<Field<Binary<1, 1>, Fixed<1>>, 1>;
+        assert_eq!(encode_display::<Cut>(&"é", 1, 2), Err(Error::Invalid));
+    }
+
+    #[test]
+    fn collect_str_formats_once() {
+        struct Counted(core::cell::Cell<usize>);
+        impl fmt::Display for Counted {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.set(self.0.get() + 1);
+                formatter.write_str("ABCD")
+            }
+        }
+        let value = Counted(core::cell::Cell::new(0));
+        assert_eq!(encode_display::<A4>(&value, 4, 4), Ok(b"ABCD".to_vec()));
+        assert_eq!(value.0.get(), 1);
+    }
+
+    mod proptests {
+        use proptest::prelude::*;
+
+        use super::*;
+
+        proptest! {
+            #[test]
+            fn collect_str_preserves_unicode_with_exact_scratch(chars in proptest::collection::vec(any::<char>(), 0..16)) {
+                let text: String = chars.into_iter().collect();
+                prop_assert_eq!(encode_display::<Text>(&text, text.len(), text.len()), Ok(text.as_bytes().to_vec()));
+                if !text.is_empty() {
+                    prop_assert_eq!(encode_display::<Text>(&text, text.len(), text.len() - 1), Err(Error::BufferOverflow));
+                }
+            }
+        }
     }
 }
