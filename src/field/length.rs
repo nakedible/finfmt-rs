@@ -2,10 +2,29 @@ use core::marker::PhantomData;
 
 use super::Step;
 use crate::primitive::decimal::{
-    decode_decimal_ascii_fixed, decode_decimal_ebcdic_blank_zero_fixed, decode_decimal_ebcdic_fixed, encode_decimal_ascii_fixed,
-    encode_decimal_ebcdic_blank_zero_fixed, encode_decimal_ebcdic_fixed,
+    MAX_INTEGER_TEXT_LEN, decode_decimal_ascii_fixed, decode_decimal_ebcdic_blank_zero_fixed, decode_decimal_ebcdic_fixed,
+    encode_decimal_ascii_fixed, encode_decimal_ebcdic_blank_zero_fixed, encode_decimal_ebcdic_fixed, format_u64,
 };
+use crate::utils::cold_path;
 use crate::{Error, ScalarFmt};
+
+#[inline(always)]
+fn decimal_prefix_len(value: usize, width: usize) -> Result<usize, Error> {
+    let mut digits = [0; MAX_INTEGER_TEXT_LEN];
+    if format_u64(&mut digits, value as u64).len() > width {
+        cold_path();
+        return Err(Error::Invalid);
+    }
+    Ok(width)
+}
+
+#[inline(always)]
+fn declared_wire_len<S: Step>(semantic_len: usize) -> Result<usize, Error> {
+    S::encoded_len(semantic_len).map_err(|error| {
+        cold_path();
+        if error == Error::BufferOverflow { Error::Invalid } else { error }
+    })
+}
 
 pub struct DecodePlan {
     pub output_cap: usize,
@@ -14,6 +33,7 @@ pub struct DecodePlan {
 }
 
 pub trait LengthSpec<S: Step> {
+    /// Encoded prefix size, excluding the payload, after checking length limits.
     fn encoded_len(semantic_len: usize, wire_len: usize) -> Result<usize, Error>;
     fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], semantic_len: usize, wire_len: usize) -> Result<(), Error>;
     fn decode_plan<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error>;
@@ -91,7 +111,7 @@ impl<F: ScalarFmt, S: Step> LengthSpec<S> for Length<F> {
     #[inline(always)]
     fn decode_plan<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
         let semantic_len = F::decode_usize(input, scratch)?;
-        let wire_len = S::encoded_len(semantic_len)?;
+        let wire_len = declared_wire_len::<S>(semantic_len)?;
         Ok(DecodePlan {
             output_cap: S::decoded_max_len(wire_len)?,
             wire_len,
@@ -128,8 +148,8 @@ pub struct AsciiLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for AsciiLength<N> {
     #[inline(always)]
-    fn encoded_len(_semantic_len: usize, _wire_len: usize) -> Result<usize, Error> {
-        Ok(N)
+    fn encoded_len(semantic_len: usize, _wire_len: usize) -> Result<usize, Error> {
+        decimal_prefix_len(semantic_len, N)
     }
 
     #[inline(always)]
@@ -140,7 +160,7 @@ impl<const N: usize, S: Step> LengthSpec<S> for AsciiLength<N> {
     #[inline(always)]
     fn decode_plan<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
         let semantic_len = decode_decimal_ascii_fixed(input, N)?;
-        let wire_len = S::encoded_len(semantic_len)?;
+        let wire_len = declared_wire_len::<S>(semantic_len)?;
         Ok(DecodePlan {
             output_cap: S::decoded_max_len(wire_len)?,
             wire_len,
@@ -153,8 +173,8 @@ pub struct AsciiWireLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for AsciiWireLength<N> {
     #[inline(always)]
-    fn encoded_len(_semantic_len: usize, _wire_len: usize) -> Result<usize, Error> {
-        Ok(N)
+    fn encoded_len(_semantic_len: usize, wire_len: usize) -> Result<usize, Error> {
+        decimal_prefix_len(wire_len, N)
     }
 
     #[inline(always)]
@@ -177,8 +197,8 @@ pub struct EbcdicLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for EbcdicLength<N> {
     #[inline(always)]
-    fn encoded_len(_semantic_len: usize, _wire_len: usize) -> Result<usize, Error> {
-        Ok(N)
+    fn encoded_len(semantic_len: usize, _wire_len: usize) -> Result<usize, Error> {
+        decimal_prefix_len(semantic_len, N)
     }
 
     #[inline(always)]
@@ -189,7 +209,7 @@ impl<const N: usize, S: Step> LengthSpec<S> for EbcdicLength<N> {
     #[inline(always)]
     fn decode_plan<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
         let semantic_len = decode_decimal_ebcdic_fixed(input, N)?;
-        let wire_len = S::encoded_len(semantic_len)?;
+        let wire_len = declared_wire_len::<S>(semantic_len)?;
         Ok(DecodePlan {
             output_cap: S::decoded_max_len(wire_len)?,
             wire_len,
@@ -202,8 +222,12 @@ pub struct BlankableEbcdicLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for BlankableEbcdicLength<N> {
     #[inline(always)]
-    fn encoded_len(_semantic_len: usize, _wire_len: usize) -> Result<usize, Error> {
-        Ok(N)
+    fn encoded_len(semantic_len: usize, _wire_len: usize) -> Result<usize, Error> {
+        if semantic_len == 0 {
+            Ok(N)
+        } else {
+            decimal_prefix_len(semantic_len, N)
+        }
     }
 
     #[inline(always)]
@@ -214,7 +238,7 @@ impl<const N: usize, S: Step> LengthSpec<S> for BlankableEbcdicLength<N> {
     #[inline(always)]
     fn decode_plan<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
         let semantic_len = decode_decimal_ebcdic_blank_zero_fixed(input, N)?;
-        let wire_len = S::encoded_len(semantic_len)?;
+        let wire_len = declared_wire_len::<S>(semantic_len)?;
         Ok(DecodePlan {
             output_cap: S::decoded_max_len(wire_len)?,
             wire_len,
@@ -227,8 +251,8 @@ pub struct EbcdicWireLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for EbcdicWireLength<N> {
     #[inline(always)]
-    fn encoded_len(_semantic_len: usize, _wire_len: usize) -> Result<usize, Error> {
-        Ok(N)
+    fn encoded_len(_semantic_len: usize, wire_len: usize) -> Result<usize, Error> {
+        decimal_prefix_len(wire_len, N)
     }
 
     #[inline(always)]
@@ -273,21 +297,20 @@ impl<S: Step> LengthSpec<S> for Rest {
 
 #[cfg(test)]
 mod tests {
-    use super::{AsciiLength, AsciiWireLength, BlankableEbcdicLength, EbcdicLength, EbcdicWireLength, Fixed, LengthSpec, WireFixed};
-    use crate::field::{Ascii, Field, Identity, Numeric, PadLeft};
+    use super::{
+        AsciiLength, AsciiWireLength, BlankableEbcdicLength, EbcdicLength, EbcdicWireLength, Fixed, Length, LengthSpec, WireFixed,
+        encode_decimal_ascii_fixed,
+    };
+    use crate::field::{Ascii, Binary, Field, FixedBinaryBe, Identity, Numeric, PadLeft, PadRightEven, Step, UnpackNibbles};
     use crate::{Error, ScalarFmt};
 
-    fn encode_length<L: LengthSpec<Identity>>(semantic_len: usize, wire_len: usize) -> Vec<u8> {
-        let mut output = [0u8; 16];
-        let mut scratch = [0u8; 16];
-        let total = output.len();
-        let used = {
-            let mut out = output.as_mut_slice();
-            let mut scratch = scratch.as_mut_slice();
-            L::encode(&mut out, &mut scratch, semantic_len, wire_len).unwrap();
-            total - out.len()
-        };
-        output[..used].to_vec()
+    fn encode_length<L: LengthSpec<Identity>>(semantic_len: usize, wire_len: usize) -> Result<Vec<u8>, Error> {
+        let mut output = [0; 32];
+        let mut out = output.as_mut_slice();
+        let encoded = L::encode(&mut out, &mut &mut [][..], semantic_len, wire_len);
+        let written = 32 - out.len();
+        assert_eq!(L::encoded_len(semantic_len, wire_len), encoded.map(|()| written));
+        encoded.map(|()| output[..written].to_vec())
     }
 
     fn decode_semantic<L: LengthSpec<Identity>>(input: &[u8]) -> (usize, usize, Option<usize>) {
@@ -300,22 +323,22 @@ mod tests {
 
     #[test]
     fn test_ascii_length_specs() {
-        assert_eq!(encode_length::<AsciiLength<2>>(16, 0), b"16");
-        assert_eq!(encode_length::<AsciiLength<3>>(255, 0), b"255");
-        assert_eq!(encode_length::<AsciiLength<4>>(9999, 0), b"9999");
+        assert_eq!(encode_length::<AsciiLength<2>>(16, 0).unwrap(), b"16");
+        assert_eq!(encode_length::<AsciiLength<3>>(255, 0).unwrap(), b"255");
+        assert_eq!(encode_length::<AsciiLength<4>>(9999, 0).unwrap(), b"9999");
         assert_eq!(decode_semantic::<AsciiLength<2>>(b"16"), (16, 16, Some(16)));
         assert_eq!(decode_semantic::<AsciiWireLength<2>>(b"19"), (19, 19, None));
     }
 
     #[test]
     fn test_ebcdic_length_specs() {
-        assert_eq!(encode_length::<EbcdicLength<2>>(16, 0), [0xF1, 0xF6]);
-        assert_eq!(encode_length::<EbcdicLength<3>>(255, 0), [0xF2, 0xF5, 0xF5]);
-        assert_eq!(encode_length::<EbcdicLength<4>>(9999, 0), [0xF9, 0xF9, 0xF9, 0xF9]);
+        assert_eq!(encode_length::<EbcdicLength<2>>(16, 0).unwrap(), [0xF1, 0xF6]);
+        assert_eq!(encode_length::<EbcdicLength<3>>(255, 0).unwrap(), [0xF2, 0xF5, 0xF5]);
+        assert_eq!(encode_length::<EbcdicLength<4>>(9999, 0).unwrap(), [0xF9, 0xF9, 0xF9, 0xF9]);
         assert_eq!(decode_semantic::<EbcdicLength<2>>(&[0xF1, 0xF6]), (16, 16, Some(16)));
         assert_eq!(decode_semantic::<EbcdicWireLength<2>>(&[0xF1, 0xF9]), (19, 19, None));
-        assert_eq!(encode_length::<BlankableEbcdicLength<2>>(0, 0), [0x40, 0x40]);
-        assert_eq!(encode_length::<BlankableEbcdicLength<2>>(16, 0), [0xF1, 0xF6]);
+        assert_eq!(encode_length::<BlankableEbcdicLength<2>>(0, 0).unwrap(), [0x40, 0x40]);
+        assert_eq!(encode_length::<BlankableEbcdicLength<2>>(16, 0).unwrap(), [0xF1, 0xF6]);
         assert_eq!(decode_semantic::<BlankableEbcdicLength<2>>(&[0x40, 0x40]), (0, 0, Some(0)));
         assert_eq!(decode_semantic::<BlankableEbcdicLength<2>>(&[0xF1, 0xF6]), (16, 16, Some(16)));
     }
@@ -388,5 +411,66 @@ mod tests {
         assert_eq!(Padded::encoded_len(b"7"), Ok(4));
         Padded::encode(&mut &mut output[..], &mut &mut [][..], b"7").unwrap();
         assert_eq!(output, *b"0007");
+    }
+    #[test]
+    fn decimal_prefixes_validate_the_selected_length() {
+        for value in [0, 1, 9, 10, 99, 100, usize::MAX] {
+            let expected = if value < 100 { Ok(2) } else { Err(Error::Invalid) };
+            assert_eq!(encode_length::<AsciiLength<2>>(value, usize::MAX).map(|v| v.len()), expected);
+            assert_eq!(encode_length::<AsciiWireLength<2>>(usize::MAX, value).map(|v| v.len()), expected);
+            assert_eq!(encode_length::<EbcdicLength<2>>(value, usize::MAX).map(|v| v.len()), expected);
+            assert_eq!(encode_length::<EbcdicWireLength<2>>(usize::MAX, value).map(|v| v.len()), expected);
+            assert_eq!(
+                encode_length::<BlankableEbcdicLength<2>>(value, usize::MAX).map(|v| v.len()),
+                expected
+            );
+        }
+        assert_eq!(
+            Field::<Binary<0, 100>, AsciiLength<1>>::encoded_len(b"0123456789"),
+            Err(Error::Invalid)
+        );
+        assert_eq!(encode_length::<AsciiLength<0>>(0, 0), Err(Error::Invalid));
+        assert_eq!(encode_length::<AsciiWireLength<0>>(0, 0), Err(Error::Invalid));
+        assert_eq!(encode_length::<EbcdicLength<0>>(0, 0), Err(Error::Invalid));
+        assert_eq!(encode_length::<EbcdicWireLength<0>>(0, 0), Err(Error::Invalid));
+        assert_eq!(encode_length::<BlankableEbcdicLength<0>>(0, 0), Ok(vec![]));
+        assert_eq!(encode_length::<BlankableEbcdicLength<0>>(1, 0), Err(Error::Invalid));
+        assert_eq!(encode_length::<AsciiLength<20>>(usize::MAX, 0).map(|v| v.len()), Ok(20));
+        assert_eq!(encode_length::<AsciiLength<32>>(usize::MAX, 0).map(|v| v.len()), Ok(32));
+    }
+    #[test]
+    fn impossible_declared_lengths_are_invalid() {
+        fn decode<S: Step, L: LengthSpec<S>>(wire: &[u8]) -> Result<(), Error> {
+            L::decode_plan(&mut &wire[..], &mut &mut [][..]).map(|_| ())
+        }
+        let max = (usize::MAX as u64).to_be_bytes();
+        assert_eq!(decode::<PadRightEven, Length<FixedBinaryBe<8>>>(&max), Err(Error::Invalid));
+        assert_eq!(
+            decode::<UnpackNibbles<crate::primitive::nibble::HexUpper>, Length<FixedBinaryBe<8>>>(&max),
+            Err(Error::Invalid)
+        );
+        let mut ascii = [0; 20];
+        encode_decimal_ascii_fixed(&mut &mut ascii[..], usize::MAX, 20).unwrap();
+        let ebcdic = ascii.map(|b| b - b'0' + 0xF0);
+        assert_eq!(decode::<PadRightEven, AsciiLength<20>>(&ascii), Err(Error::Invalid));
+        assert_eq!(decode::<PadRightEven, EbcdicLength<20>>(&ebcdic), Err(Error::Invalid));
+        assert_eq!(decode::<PadRightEven, BlankableEbcdicLength<20>>(&ebcdic), Err(Error::Invalid));
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use proptest::prelude::*;
+
+    use super::*;
+
+    proptest! {
+        #[test]
+        fn prefix_prediction_matches_encoding(value in any::<usize>(), width in 0usize..33) {
+            let mut output = [0; 32];
+            let mut out = &mut output[..];
+            let encoded = encode_decimal_ascii_fixed(&mut out, value, width).map(|()| 32 - out.len());
+            prop_assert_eq!(decimal_prefix_len(value, width), encoded);
+        }
     }
 }
