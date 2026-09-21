@@ -18,10 +18,10 @@ fn bench_be_bytes(suite: &mut Suite) {
                 black_box(buf)
             })
         });
-        group.bench("extend_be_bytes_4_zero_to_8", |b| {
+        group.bench("decode_be_bytes_4_zero_to_8", |b| {
             b.iter(|| {
                 let mut input = black_box(&[0x12u8, 0x34, 0x56, 0x78][..]);
-                black_box(extend_be_bytes_4_zero_to_8(&mut input))
+                black_box(decode_be_bytes_4_zero_to_8(&mut input))
             })
         });
     });
@@ -45,6 +45,12 @@ fn bench_nibble_int(suite: &mut Suite) {
             b.iter(|| {
                 let mut input = black_box(&b"ABCD"[..]);
                 black_box(decode_nibble_int_fixed_hex_upper_4(&mut input))
+            })
+        });
+        group.bench("decode_nibble_int_fixed_hex_upper_17", |b| {
+            b.iter(|| {
+                let mut input = black_box(&b"0000000000000ABCD"[..]);
+                black_box(decode_nibble_int_fixed_hex_upper_17(&mut input))
             })
         });
     });
