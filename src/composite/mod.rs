@@ -1196,9 +1196,17 @@ mod tests {
         let used = roundtrip::<_, BorrowedConcatFmt>(&concat, output.as_mut_slice(), scratch.as_mut_slice());
         let mut input = &output[..used];
         let mut decode_scratch = [0u8; 96];
+        let scratch_start = decode_scratch.as_ptr();
         let decoded = BorrowedConcatFmt::decode(&mut input, decode_scratch.as_mut_slice()).unwrap();
         assert_eq!(decoded, concat);
         assert!(input.is_empty());
+        assert_eq!(decoded.ascii.as_ptr(), output.as_ptr());
+        assert_eq!(decoded.ebcdic.as_ptr(), scratch_start);
+        let mut json = [0; 64];
+        let mut writer = &mut json[..];
+        serde_json::to_writer(&mut writer, &decoded).unwrap();
+        let json_len = 64 - writer.len();
+        assert_eq!(&json[..json_len], br#"{"ascii":"ABCD","ebcdic":"WXYZ"}"#);
 
         let used = roundtrip::<_, BorrowedDelimitedFmt>(&delimited, output.as_mut_slice(), scratch.as_mut_slice());
         let mut input = &output[..used];

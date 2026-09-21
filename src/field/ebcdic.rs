@@ -38,19 +38,14 @@ impl Step for Ebcdic037 {
     }
 
     #[inline(always)]
-    fn decode<'a>(
-        input: &'a [u8],
-        output: &mut &'a mut [u8],
-        _scratch: &mut &'a mut [u8],
-        output_len: Option<usize>,
-    ) -> Result<&'a [u8], Error> {
-        if let Some(output_len) = output_len
-            && input.len() != output_len
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
+        if let Some(semantic_len) = semantic_len
+            && input.len() != semantic_len
         {
             cold_path();
             return Err(Error::Invalid);
         }
-        let buf = output.split_off_mut(..input.len()).ok_or_else(|| {
+        let buf = scratch.split_off_mut(..input.len()).ok_or_else(|| {
             cold_path();
             Error::BufferOverflow
         })?;
@@ -85,18 +80,13 @@ impl Step for Ebcdic1142 {
     }
 
     #[inline(always)]
-    fn decode<'a>(
-        input: &'a [u8],
-        output: &mut &'a mut [u8],
-        _scratch: &mut &'a mut [u8],
-        output_len: Option<usize>,
-    ) -> Result<&'a [u8], Error> {
-        if let Some(output_len) = output_len
-            && input.len() != output_len
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
+        if let Some(semantic_len) = semantic_len
+            && input.len() != semantic_len
         {
             cold_path();
             return Err(Error::Invalid);
         }
-        decode_ebcdic_1142(output, input).map(|buf| &*buf)
+        decode_ebcdic_1142(scratch, input).map(|buf| &*buf)
     }
 }

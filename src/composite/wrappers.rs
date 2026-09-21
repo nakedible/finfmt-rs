@@ -235,7 +235,7 @@ where
     #[inline(always)]
     fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, StructError> {
         let plan = Len::decode_plan(input, scratch)?;
-        let logical_len = plan.exact_len.ok_or_else(|| {
+        let logical_len = plan.semantic_len.ok_or_else(|| {
             crate::utils::cold_path();
             StructError::from(Error::Internal)
         })?;

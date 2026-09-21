@@ -15,23 +15,22 @@ pub trait Step {
     /// Exact encoded byte count from logical input length. Built-in steps use
     /// bytes, except `Ebcdic1142`, which uses Unicode scalar values.
     fn encoded_len(input_len: usize) -> Result<usize, Error>;
-    /// Byte capacity sufficient to decode up to this many encoded bytes.
+    /// Upper bound on the final decoded byte length for this many encoded bytes.
+    /// This excludes scratch consumed by intermediate steps. Decoding does not
+    /// call this sizing helper; each step reserves its own output when needed.
     /// Chains pass upper bounds, so odd lengths and similar data-shape conditions
     /// must be checked by `decode`, not rejected during capacity calculation.
     fn decoded_max_len(input_len: usize) -> Result<usize, Error>;
 
     fn encode<'a>(output: &mut &'a mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error>;
 
-    /// Decode an already framed representation. `output_len`, when known, is
-    /// the original logical input length, not a byte-capacity limit. Padding
+    /// Decode an already framed representation. `semantic_len`, when known, is
+    /// the required decoded logical length, not a byte-capacity limit. Padding
     /// steps preserve at least that much and never discard non-padding data;
     /// the field composer checks the resulting semantic length.
-    fn decode<'a>(
-        input: &'a [u8],
-        output: &mut &'a mut [u8],
-        scratch: &mut &'a mut [u8],
-        output_len: Option<usize>,
-    ) -> Result<&'a [u8], Error>;
+    /// Borrow input when possible; otherwise reserve output from `scratch`,
+    /// advancing it so later steps can allocate disjoint regions.
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error>;
 
     #[inline(always)]
     fn encode_in_place(_buf: &mut [u8]) -> Result<(), Error> {
@@ -77,24 +76,13 @@ impl<First: Step, Rest: Step> Step for Chain<First, Rest> {
     }
 
     #[inline(always)]
-    fn decode<'a>(
-        input: &'a [u8],
-        output: &mut &'a mut [u8],
-        scratch: &mut &'a mut [u8],
-        output_len: Option<usize>,
-    ) -> Result<&'a [u8], Error> {
-        let rest_output_len = match output_len {
-            Some(output_len) => Some(First::encoded_len(output_len)?),
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
+        let rest_semantic_len = match semantic_len {
+            Some(semantic_len) => Some(First::encoded_len(semantic_len)?),
             None => None,
         };
-        let mid_cap = match rest_output_len {
-            Some(len) => len,
-            None => Rest::decoded_max_len(input.len())?,
-        };
-        let mid_buf = take_scratch(scratch, mid_cap)?;
-        let mut mid_out = mid_buf;
-        let mid = Rest::decode(input, &mut mid_out, scratch, rest_output_len)?;
-        First::decode(mid, output, scratch, output_len)
+        let mid = Rest::decode(input, scratch, rest_semantic_len)?;
+        First::decode(mid, scratch, semantic_len)
     }
 
     #[inline(always)]
@@ -123,12 +111,7 @@ impl<S: Step, C: Check> Step for DecodeCheck<S, C> {
     }
 
     #[inline(always)]
-    fn decode<'a>(
-        input: &'a [u8],
-        output: &mut &'a mut [u8],
-        scratch: &mut &'a mut [u8],
-        output_len: Option<usize>,
-    ) -> Result<&'a [u8], Error> {
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
         C::validate(input).map_err(|error| {
             cold_path();
             if error == Error::InvalidValueLength {
@@ -137,7 +120,7 @@ impl<S: Step, C: Check> Step for DecodeCheck<S, C> {
                 error
             }
         })?;
-        S::decode(input, output, scratch, output_len)
+        S::decode(input, scratch, semantic_len)
     }
 
     #[inline(always)]
@@ -185,7 +168,7 @@ mod tests {
     #[test]
     fn oversized_unpack_request_is_invalid() {
         assert_eq!(
-            UnpackNibbles::<HexDigits>::decode(&[], &mut &mut [][..], &mut &mut [][..], Some(usize::MAX / 2 + 1)),
+            UnpackNibbles::<HexDigits>::decode(&[], &mut &mut [][..], Some(usize::MAX / 2 + 1)),
             Err(Error::Invalid)
         );
     }
@@ -193,7 +176,7 @@ mod tests {
     #[test]
     fn wire_check_length_is_invalid_wire_data() {
         assert_eq!(
-            DecodeCheck::<Identity, Binary<2, 2>>::decode(b"A", &mut &mut [][..], &mut &mut [][..], None),
+            DecodeCheck::<Identity, Binary<2, 2>>::decode(b"A", &mut &mut [][..], None),
             Err(Error::Invalid)
         );
     }
@@ -208,7 +191,7 @@ mod tests {
     #[test]
     fn decode_check_preserves_internal_errors_and_encode_passes_through() {
         assert_eq!(
-            DecodeCheck::<Identity, InternalCheck>::decode(b"A", &mut &mut [][..], &mut &mut [][..], None),
+            DecodeCheck::<Identity, InternalCheck>::decode(b"A", &mut &mut [][..], None),
             Err(Error::Internal)
         );
         let mut output = [0; 1];

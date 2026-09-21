@@ -24,14 +24,9 @@ impl Step for Identity {
     }
 
     #[inline(always)]
-    fn decode<'a>(
-        input: &'a [u8],
-        _output: &mut &'a mut [u8],
-        _scratch: &mut &'a mut [u8],
-        output_len: Option<usize>,
-    ) -> Result<&'a [u8], Error> {
-        if let Some(output_len) = output_len
-            && input.len() != output_len
+    fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
+        if let Some(semantic_len) = semantic_len
+            && input.len() != semantic_len
         {
             cold_path();
             return Err(Error::Invalid);
@@ -64,13 +59,8 @@ impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadRigh
     }
 
     #[inline(always)]
-    fn decode<'a>(
-        input: &'a [u8],
-        _output: &mut &'a mut [u8],
-        _scratch: &mut &'a mut [u8],
-        output_len: Option<usize>,
-    ) -> Result<&'a [u8], Error> {
-        Ok(decode_bytes(input, output_len.unwrap_or(MIN_LEN).max(MIN_LEN), false, CHAR))
+    fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
+        Ok(decode_bytes(input, semantic_len.unwrap_or(MIN_LEN).max(MIN_LEN), false, CHAR))
     }
 }
 
@@ -93,13 +83,8 @@ impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadLeft
     }
 
     #[inline(always)]
-    fn decode<'a>(
-        input: &'a [u8],
-        _output: &mut &'a mut [u8],
-        _scratch: &mut &'a mut [u8],
-        output_len: Option<usize>,
-    ) -> Result<&'a [u8], Error> {
-        Ok(decode_bytes(input, output_len.unwrap_or(MIN_LEN).max(MIN_LEN), true, CHAR))
+    fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
+        Ok(decode_bytes(input, semantic_len.unwrap_or(MIN_LEN).max(MIN_LEN), true, CHAR))
     }
 }
 
@@ -125,13 +110,8 @@ impl<const CHAR: u8> Step for PadRightEven<CHAR> {
     }
 
     #[inline(always)]
-    fn decode<'a>(
-        input: &'a [u8],
-        _output: &mut &'a mut [u8],
-        _scratch: &mut &'a mut [u8],
-        output_len: Option<usize>,
-    ) -> Result<&'a [u8], Error> {
-        Ok(decode_bytes(input, output_len.unwrap_or(0), false, CHAR))
+    fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
+        Ok(decode_bytes(input, semantic_len.unwrap_or(0), false, CHAR))
     }
 }
 
@@ -157,12 +137,7 @@ impl<const CHAR: u8> Step for PadLeftEven<CHAR> {
     }
 
     #[inline(always)]
-    fn decode<'a>(
-        input: &'a [u8],
-        _output: &mut &'a mut [u8],
-        _scratch: &mut &'a mut [u8],
-        output_len: Option<usize>,
-    ) -> Result<&'a [u8], Error> {
-        Ok(decode_bytes(input, output_len.unwrap_or(0), true, CHAR))
+    fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
+        Ok(decode_bytes(input, semantic_len.unwrap_or(0), true, CHAR))
     }
 }

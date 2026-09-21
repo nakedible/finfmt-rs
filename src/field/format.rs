@@ -2,9 +2,11 @@ use core::marker::PhantomData;
 
 use super::{Check, LengthSpec, Step};
 use crate::primitive::bytes::{decode_padded_bytes, reserve_filled_area};
-use crate::utils::{cold_path, take_scratch};
+use crate::utils::cold_path;
 use crate::{Error, ScalarFmt};
 
+/// Compose a semantic check, length framing, and byte transform.
+/// `C` and `S` must agree on the logical length unit and input repertoire.
 pub struct Field<C, L, S = super::Identity>(PhantomData<(C, L, S)>);
 pub struct PaddedField<C, L, S, const PAD_TO: usize, const FILL: u8>(PhantomData<(C, L, S)>);
 
@@ -34,12 +36,10 @@ impl<C: Check, L: LengthSpec<S>, S: Step> ScalarFmt for Field<C, L, S> {
             cold_path();
             Error::UnexpectedEof
         })?;
-        let output_buf = take_scratch(scratch, plan.output_cap)?;
-        let mut output = output_buf;
-        let semantic = S::decode(wire, &mut output, scratch, plan.exact_len)?;
+        let semantic = S::decode(wire, scratch, plan.semantic_len)?;
         let semantic_len = C::validate(semantic)?;
-        if let Some(exact_len) = plan.exact_len
-            && semantic_len != exact_len
+        if let Some(expected_len) = plan.semantic_len
+            && semantic_len != expected_len
         {
             cold_path();
             return Err(Error::Invalid);
@@ -89,12 +89,10 @@ impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> S
             return Err(Error::Invalid);
         }
         let wire = decode_padded_bytes(input, PAD_TO, plan.wire_len, FILL)?;
-        let output_buf = take_scratch(scratch, plan.output_cap)?;
-        let mut output = output_buf;
-        let semantic = S::decode(wire, &mut output, scratch, plan.exact_len)?;
+        let semantic = S::decode(wire, scratch, plan.semantic_len)?;
         let semantic_len = C::validate(semantic)?;
-        if let Some(exact_len) = plan.exact_len
-            && semantic_len != exact_len
+        if let Some(expected_len) = plan.semantic_len
+            && semantic_len != expected_len
         {
             cold_path();
             return Err(Error::Invalid);
@@ -111,7 +109,7 @@ mod tests {
         Numeric, PackNibblesLeft, PackNibblesRight, PadLeft, PadLeftEven, PadRight, PadRightEven, SignPrefix, Track2,
     };
     use crate::primitive::nibble::{Bcdz, HexEbcdic, HexUpper};
-    use crate::{Error, ScalarFmt};
+    use crate::{AsciiLength, Ebcdic037, Error, Identity, ScalarFmt, WireFixed, WireLength};
 
     type LlvarPan = Field<Numeric<0, 19>, EbcdicLength<2>, crate::chain!(PadRight<19, b'?'>, PadLeftEven<b'0'>, PackNibblesRight<Bcdz, 0>)>;
     type LlvarTrack2 = Field<Track2<0, 37>, EbcdicWireLength<2>, crate::chain!(PadRightEven<b'?'>, PackNibblesLeft<Bcdz, 0x0F>)>;
@@ -349,5 +347,81 @@ mod tests {
             Err(Error::Invalid)
         );
         assert_eq!(encode_field::<PaddedHex>(b"ABCDEF0123", 8, 8), Err(Error::InvalidValueLength));
+    }
+
+    fn decode<F: ScalarFmt>(wire: &[u8], capacity: usize) -> (Result<Vec<u8>, Error>, usize, usize) {
+        let mut input = wire;
+        let mut scratch = vec![0; capacity];
+        let mut work = scratch.as_mut_slice();
+        let result = F::decode(&mut input, &mut work).map(<[u8]>::to_vec);
+        (result, input.len(), capacity - work.len())
+    }
+
+    #[test]
+    fn borrowing_and_transforming_decoders_own_their_scratch_reservations() {
+        type Borrowed = Field<Ascii<3, 3>, Fixed<3>>;
+        type BorrowedChain = Field<Ascii<0, 8>, WireFixed<8>, crate::chain!(PadLeft<8>, PadRight<8>)>;
+        type Padded = PaddedField<Ascii<0, 8>, AsciiLength<1>, Identity, 8, b' '>;
+        type Translated = Field<Ascii<3, 3>, Fixed<3>, crate::chain!(Ebcdic037, PadRight<5, 0x40>)>;
+        type Utf8 = Field<Ebcdic1142Text<1, 1>, Fixed<1>, Ebcdic1142>;
+        assert_eq!(decode::<Borrowed>(b"ABCtail", 0), (Ok(b"ABC".to_vec()), 4, 0));
+        assert_eq!(decode::<BorrowedChain>(b"     ABCtail", 0), (Ok(b"ABC".to_vec()), 4, 0));
+        assert_eq!(decode::<Padded>(b"3ABC     tail", 0), (Ok(b"ABC".to_vec()), 4, 0));
+        assert_eq!(
+            decode::<Translated>(&[0xC1, 0xC2, 0xC3, 0x40, 0x40], 3),
+            (Ok(b"ABC".to_vec()), 0, 3)
+        );
+        assert_eq!(decode::<Utf8>(&[0xC1], 1), (Ok(b"A".to_vec()), 0, 1));
+        assert_eq!(decode::<Utf8>(&[0x5A], 3), (Ok("€".as_bytes().to_vec()), 0, 3));
+        assert_eq!(decode::<Utf8>(&[0x5A], 2).0, Err(Error::BufferOverflow));
+        let wire = b"ABCtail";
+        let mut input = &wire[..];
+        let decoded = Borrowed::decode(&mut input, &mut &mut [][..]).unwrap();
+        assert_eq!(decoded.as_ptr(), wire.as_ptr());
+    }
+
+    #[test]
+    fn semantic_length_hints_are_enforced_after_decoding() {
+        type Mismatched = Field<Ebcdic1142Text<0, 8>, AsciiLength<1>>;
+        type Padded = PaddedField<Ebcdic1142Text<0, 8>, AsciiLength<1>, Identity, 8, b' '>;
+        assert_eq!(decode::<Mismatched>("3€tail".as_bytes(), 64).0, Err(Error::Invalid));
+        assert_eq!(decode::<Padded>("3€     tail".as_bytes(), 64).0, Err(Error::Invalid));
+    }
+
+    #[test]
+    fn semantic_hint_rejects_nonpadding_excess_for_both_fields() {
+        type F = Field<Ascii<0, 4>, AsciiLength<1>, PadRight<4>>;
+        type P = PaddedField<Ascii<0, 4>, AsciiLength<1>, PadRight<4>, 5, b' '>;
+        assert_eq!(F::decode(&mut &b"1AB  "[..], &mut &mut [][..]), Err(Error::Invalid));
+        assert_eq!(P::decode(&mut &b"1AB   "[..], &mut &mut [][..]), Err(Error::Invalid));
+    }
+
+    #[test]
+    fn chained_borrows_survive_later_fields() {
+        type F = Field<Ascii<0, 8>, AsciiLength<1>, crate::chain!(PadRight<4>, Ebcdic037)>;
+        let mut wire = &b"1\xC1\x40\x40\x402\xC2\xC3\x40\x40"[..];
+        let mut scratch = [0; 64];
+        let mut arena = scratch.as_mut_slice();
+        let a = F::decode(&mut wire, &mut arena).unwrap();
+        let b = F::decode(&mut wire, &mut arena).unwrap();
+        assert_eq!(a, b"A");
+        assert_eq!(b, b"BC");
+        assert!(wire.is_empty());
+        type U = Field<Ebcdic1142Text<0, 8>, AsciiLength<1>, Ebcdic1142>;
+        let mut wire = &b"1\x5A1\xC1"[..];
+        let euro = U::decode(&mut wire, &mut arena).unwrap();
+        let letter = U::decode(&mut wire, &mut arena).unwrap();
+        assert_eq!(euro, "€".as_bytes());
+        assert_eq!(letter, b"A");
+        assert!(wire.is_empty());
+        assert_eq!(a, b"A");
+        assert_eq!(b, b"BC");
+    }
+
+    #[test]
+    fn wire_extent_is_framed_before_decoding_capacity() {
+        type F = Field<Ebcdic1142Text<0, { usize::MAX }>, WireLength<FixedBinaryBe<8>>, Ebcdic1142>;
+        let max = (usize::MAX as u64).to_be_bytes();
+        assert_eq!(decode_field::<F>(&max, 0), Err(Error::UnexpectedEof));
     }
 }

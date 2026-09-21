@@ -29,15 +29,10 @@ impl<F: NibbleAlphabet, const ALIGN_RIGHT: bool, const PADDING: u8> Step for Pac
     }
 
     #[inline(always)]
-    fn decode<'a>(
-        input: &'a [u8],
-        output: &mut &'a mut [u8],
-        _scratch: &mut &'a mut [u8],
-        output_len: Option<usize>,
-    ) -> Result<&'a [u8], Error> {
-        match output_len {
-            Some(output_len) => unpack_padded_nibbles(output, input, output_len, ALIGN_RIGHT, PADDING, &F::DIGITS).map(|buf| &*buf),
-            None => unpack_nibbles(output, input, &F::DIGITS).map(|buf| &*buf),
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
+        match semantic_len {
+            Some(semantic_len) => unpack_padded_nibbles(scratch, input, semantic_len, ALIGN_RIGHT, PADDING, &F::DIGITS).map(|buf| &*buf),
+            None => unpack_nibbles(scratch, input, &F::DIGITS).map(|buf| &*buf),
         }
     }
 }
@@ -64,19 +59,14 @@ impl<F: NibbleAlphabet> Step for UnpackNibbles<F> {
     }
 
     #[inline(always)]
-    fn decode<'a>(
-        input: &'a [u8],
-        output: &mut &'a mut [u8],
-        _scratch: &mut &'a mut [u8],
-        output_len: Option<usize>,
-    ) -> Result<&'a [u8], Error> {
-        if let Some(output_len) = output_len
-            && output_len != input.len() / 2
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
+        if let Some(semantic_len) = semantic_len
+            && semantic_len != input.len() / 2
         {
             cold_path();
             return Err(Error::Invalid);
         }
-        pack_expanded_nibbles(output, input, &F::NIBBLES).map(|buf| &*buf)
+        pack_expanded_nibbles(scratch, input, &F::NIBBLES).map(|buf| &*buf)
     }
 }
 
@@ -96,10 +86,7 @@ mod tests {
             (b"AG", Some(1), Err(Error::Invalid)),
         ] {
             let mut output = [0; 2];
-            assert_eq!(
-                UnpackNibbles::<HexUpper>::decode(input, &mut &mut output[..], &mut &mut [][..], requested),
-                expected
-            );
+            assert_eq!(UnpackNibbles::<HexUpper>::decode(input, &mut &mut output[..], requested), expected);
         }
     }
 }
