@@ -26,7 +26,8 @@ impl<C: Check, L: LengthSpec<S>, S: Step> ScalarFmt for Field<C, L, S> {
         let wire_len = S::encoded_len(semantic_len)?;
         L::encode(output, scratch, semantic_len, wire_len)?;
 
-        S::encode(output, scratch, input)?;
+        let encoded = S::encode(output, scratch, input)?;
+        debug_assert_eq!(encoded.len(), wire_len, "step encoded a different number of bytes than predicted");
         Ok(())
     }
 
@@ -423,5 +424,22 @@ mod tests {
         type F = Field<Ebcdic1142Text<0, { usize::MAX }>, WireLength<FixedBinaryBe<8>>, Ebcdic1142>;
         let max = (usize::MAX as u64).to_be_bytes();
         assert_eq!(decode_field::<F>(&max, 0), Err(Error::UnexpectedEof));
+    }
+    #[test]
+    #[cfg(debug_assertions)]
+    fn incompatible_length_units_are_diagnosed_in_debug() {
+        type WrongBytes = Field<Ebcdic1142Text<1, 1>, AsciiLength<2>>;
+        type WrongScalars = Field<crate::Binary<1, 3>, AsciiLength<2>, Ebcdic1142>;
+        fn fails<F: ScalarFmt>() {
+            assert!(
+                std::panic::catch_unwind(|| {
+                    let mut output = [0; 16];
+                    F::encode(&mut &mut output[..], &mut &mut [][..], "€".as_bytes()).unwrap();
+                })
+                .is_err()
+            );
+        }
+        fails::<WrongBytes>();
+        fails::<WrongScalars>();
     }
 }
