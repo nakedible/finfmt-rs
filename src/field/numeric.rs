@@ -3,10 +3,9 @@ use core::mem::size_of;
 
 use crate::primitive::bytes::{decode_exact_bytes, encode_exact_bytes, validate_exact_length};
 use crate::primitive::decimal::{
-    MAX_INTEGER_TEXT_LEN, decode_decimal_ebcdic_signed_fixed, decode_decimal_implied, decode_decimal_packed_fixed,
-    decode_decimal_packed_signed_fixed, decode_negative_prefix, decode_sign, encode_decimal_ebcdic_signed_fixed, encode_decimal_implied,
-    encode_decimal_packed_fixed, encode_decimal_packed_signed_fixed, encode_negative_prefix, encode_sign, packed_decimal_max_digits,
-    prepend_minus,
+    decode_decimal_ebcdic_signed_fixed, decode_decimal_implied, decode_decimal_packed_fixed, decode_decimal_packed_signed_fixed,
+    decode_negative_prefix, decode_sign, encode_decimal_ebcdic_signed_fixed, encode_decimal_implied, encode_decimal_packed_fixed,
+    encode_decimal_packed_signed_fixed, encode_negative_prefix, encode_sign, packed_decimal_max_digits, prepend_minus,
 };
 use crate::primitive::int::{
     decode_binary_i64_be_fixed, decode_binary_u64_be_fixed, decode_nibble_int_fixed, decode_signed_magnitude_i64,
@@ -15,7 +14,7 @@ use crate::primitive::int::{
 };
 use crate::primitive::nibble::NibbleAlphabet;
 use crate::primitive::validation::{parse_signed_decimal, split_signed_input, validate_decimal_implied, validate_numeric};
-use crate::utils::{cold_path, take_scratch};
+use crate::utils::cold_path;
 use crate::{Error, ScalarFmt};
 
 /// Prefix a nonnegative magnitude with one of two distinct sign bytes.
@@ -36,25 +35,34 @@ pub struct ImpliedDecimal<F, const SCALE: usize>(PhantomData<F>);
 
 trait FixedDecimalCodec: ScalarFmt {
     const WIRE_LEN: usize;
-    const MAX_DIGITS: usize;
+    fn max_digits() -> Result<usize, Error>;
     const SIGNED: bool;
 }
 
 impl<const N: usize> FixedDecimalCodec for FixedComp3<N> {
     const WIRE_LEN: usize = N;
-    const MAX_DIGITS: usize = N * 2 - 1;
+    #[inline(always)]
+    fn max_digits() -> Result<usize, Error> {
+        packed_decimal_max_digits(N)
+    }
     const SIGNED: bool = false;
 }
 
 impl<const N: usize> FixedDecimalCodec for FixedSignedComp3<N> {
     const WIRE_LEN: usize = N;
-    const MAX_DIGITS: usize = N * 2 - 1;
+    #[inline(always)]
+    fn max_digits() -> Result<usize, Error> {
+        packed_decimal_max_digits(N)
+    }
     const SIGNED: bool = true;
 }
 
 impl<const N: usize> FixedDecimalCodec for FixedSignedZonedEbcdic<N> {
     const WIRE_LEN: usize = N;
-    const MAX_DIGITS: usize = N;
+    #[inline(always)]
+    fn max_digits() -> Result<usize, Error> {
+        Ok(N)
+    }
     const SIGNED: bool = true;
 }
 
@@ -91,13 +99,12 @@ impl<F: ScalarFmt, const POS: u8, const NEG: u8> ScalarFmt for SignPrefix<F, POS
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
         Self::validate_signs()?;
-        let mut output = take_scratch(scratch, MAX_INTEGER_TEXT_LEN)?;
         let negative = decode_sign(input, POS, NEG)?;
         let digits = F::decode(input, scratch)?;
         if !negative {
             return Ok(digits);
         }
-        prepend_minus(&mut output, digits).map(|buf| &*buf)
+        prepend_minus(scratch, digits).map(|buf| &*buf)
     }
 
     #[inline(always)]
@@ -171,13 +178,12 @@ impl<F: ScalarFmt, const NEG: u8> ScalarFmt for MinusPrefix<F, NEG> {
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
-        let mut output = take_scratch(scratch, MAX_INTEGER_TEXT_LEN)?;
         let negative = decode_negative_prefix(input, NEG);
         let digits = F::decode(input, scratch)?;
         if !negative {
             return Ok(digits);
         }
-        prepend_minus(&mut output, digits).map(|buf| &*buf)
+        prepend_minus(scratch, digits).map(|buf| &*buf)
     }
 
     #[inline(always)]
@@ -428,8 +434,7 @@ impl<const N: usize> ScalarFmt for FixedComp3<N> {
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
-        let mut output = take_scratch(scratch, N * 2)?;
-        decode_decimal_packed_fixed(input, &mut output, N).map(|buf| &*buf)
+        decode_decimal_packed_fixed(input, scratch, N).map(|buf| &*buf)
     }
 }
 
@@ -447,8 +452,7 @@ impl<const N: usize> ScalarFmt for FixedSignedComp3<N> {
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
-        let mut output = take_scratch(scratch, N * 2)?;
-        decode_decimal_packed_signed_fixed(input, &mut output, N).map(|buf| &*buf)
+        decode_decimal_packed_signed_fixed(input, scratch, N).map(|buf| &*buf)
     }
 }
 
@@ -466,21 +470,20 @@ impl<const N: usize> ScalarFmt for FixedSignedZonedEbcdic<N> {
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
-        let mut output = take_scratch(scratch, N + 1)?;
-        decode_decimal_ebcdic_signed_fixed(input, &mut output, N).map(|buf| &*buf)
+        decode_decimal_ebcdic_signed_fixed(input, scratch, N).map(|buf| &*buf)
     }
 }
 
 impl<F: FixedDecimalCodec, const SCALE: usize> ScalarFmt for ImpliedDecimal<F, SCALE> {
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
-        let _ = validate_decimal_implied(input, SCALE, F::MAX_DIGITS, F::SIGNED)?;
+        let _ = validate_decimal_implied(input, SCALE, F::max_digits()?, F::SIGNED)?;
         Ok(F::WIRE_LEN)
     }
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
-        let digits = encode_decimal_implied(scratch, input, SCALE, F::MAX_DIGITS, F::SIGNED)?;
+        let digits = encode_decimal_implied(scratch, input, SCALE, F::max_digits()?, F::SIGNED)?;
         F::encode(output, scratch, digits)
     }
 
@@ -763,6 +766,54 @@ mod tests {
         assert_eq!(decode_u64::<MinusPrefix<FixedNibbleInt<HexUpper, 1>>>(b"-0"), Err(Error::Invalid));
         assert_eq!(decode_i64::<SignPrefix<FixedBinaryBe<1>>>(&[b'D', 0]), Ok(0));
         assert_eq!(decode_i64::<MinusPrefix<FixedNibbleInt<HexUpper, 1>>>(b"-0"), Ok(0));
+    }
+
+    fn scratch_decode<F: ScalarFmt>(wire: &[u8], capacity: usize, expected: Result<&[u8], Error>, consumed: usize) {
+        let mut input = wire;
+        let mut scratch = vec![0; capacity];
+        let mut work = scratch.as_mut_slice();
+        assert_eq!(F::decode(&mut input, &mut work), expected);
+        if expected.is_ok() {
+            assert!(input.is_empty());
+            assert_eq!(capacity - work.len(), consumed);
+        }
+    }
+
+    #[test]
+    fn sign_decode_supports_caller_scratch() {
+        scratch_decode::<SignPrefix<FixedBinaryBe<1>>>(b"C1", 0, Ok(b"1"), 0);
+        scratch_decode::<MinusPrefix<FixedBinaryBe<1>>>(b"1", 0, Ok(b"1"), 0);
+        scratch_decode::<SignPrefix<FixedBinaryBe<1>>>(b"D0", 2, Ok(b"-0"), 2);
+        scratch_decode::<MinusPrefix<FixedBinaryBe<1>>>(b"-0", 2, Ok(b"-0"), 2);
+        scratch_decode::<SignPrefix<FixedBinaryBe<20>>>(b"D12345678901234567890", 21, Ok(b"-12345678901234567890"), 21);
+        scratch_decode::<MinusPrefix<FixedBinaryBe<20>>>(b"-12345678901234567890", 21, Ok(b"-12345678901234567890"), 21);
+        scratch_decode::<SignPrefix<FixedBinaryBe<20>>>(b"D12345678901234567890", 128, Ok(b"-12345678901234567890"), 21);
+        scratch_decode::<MinusPrefix<FixedBinaryBe<20>>>(b"-12345678901234567890", 128, Ok(b"-12345678901234567890"), 21);
+        scratch_decode::<SignPrefix<FixedBinaryBe<20>>>(b"D12345678901234567890", 20, Err(Error::BufferOverflow), 0);
+        scratch_decode::<MinusPrefix<FixedBinaryBe<20>>>(b"-12345678901234567890", 20, Err(Error::BufferOverflow), 0);
+        scratch_decode::<FixedComp3<2>>(&[0x12, 0x3F], 4, Ok(b"123"), 4);
+        scratch_decode::<FixedSignedComp3<2>>(&[0x12, 0x3D], 4, Ok(b"-123"), 4);
+        scratch_decode::<FixedSignedZonedEbcdic<2>>(&[0xF1, 0xD2], 3, Ok(b"-12"), 3);
+        scratch_decode::<FixedComp3<2>>(&[0x12, 0x3F], 3, Err(Error::BufferOverflow), 0);
+        scratch_decode::<FixedSignedZonedEbcdic<2>>(&[0xF1, 0xD2], 2, Err(Error::BufferOverflow), 0);
+        scratch_decode::<SignPrefix<FixedComp3<2>>>(&[b'D', 0x12, 0x3F], 8, Ok(b"-123"), 8);
+        scratch_decode::<MinusPrefix<FixedComp3<2>>>(&[b'-', 0x12, 0x3F], 8, Ok(b"-123"), 8);
+        scratch_decode::<SignPrefix<FixedComp3<2>>>(&[b'C', 0x12, 0x3F], 4, Ok(b"123"), 4);
+        scratch_decode::<MinusPrefix<FixedComp3<2>>>(&[0x12, 0x3F], 4, Ok(b"123"), 4);
+    }
+
+    #[test]
+    fn decimal_width_edges_return_errors() {
+        scratch_decode::<FixedComp3<{ usize::MAX / 2 + 1 }>>(b"", 0, Err(Error::UnexpectedEof), 0);
+        scratch_decode::<FixedSignedComp3<{ usize::MAX / 2 + 1 }>>(b"", 0, Err(Error::UnexpectedEof), 0);
+        scratch_decode::<FixedSignedZonedEbcdic<{ usize::MAX }>>(b"", 0, Err(Error::UnexpectedEof), 0);
+        assert_eq!(ImpliedDecimal::<FixedComp3<0>, 0>::encoded_len(b"0"), Err(Error::Invalid));
+        assert_eq!(ImpliedDecimal::<FixedSignedComp3<0>, 0>::encoded_len(b"0"), Err(Error::Invalid));
+        assert_eq!(
+            ImpliedDecimal::<FixedComp3<{ usize::MAX / 2 + 1 }>, 0>::encoded_len(b"0"),
+            Err(Error::Invalid)
+        );
+        assert_eq!(encode_bytes::<ImpliedDecimal<FixedSignedComp3<0>, 0>>(b"0"), Err(Error::Invalid));
     }
 }
 
