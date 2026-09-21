@@ -19,16 +19,21 @@ pub trait LengthSpec<S: Step> {
     fn decode_plan<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error>;
 }
 
+/// Fix the decoded logical length to `N` and frame `S::encoded_len(N)` bytes.
+/// The check and transform must agree with that width, including any explicitly
+/// selected padding or truncation. Encoding checks this invariant in debug builds.
 pub struct Fixed<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for Fixed<N> {
     #[inline(always)]
-    fn encoded_len(_semantic_len: usize, _wire_len: usize) -> Result<usize, Error> {
+    fn encoded_len(_semantic_len: usize, wire_len: usize) -> Result<usize, Error> {
+        debug_assert_eq!(S::encoded_len(N), Ok(wire_len));
         Ok(0)
     }
 
     #[inline(always)]
-    fn encode(_output: &mut &mut [u8], _scratch: &mut &mut [u8], _semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
+    fn encode(_output: &mut &mut [u8], _scratch: &mut &mut [u8], semantic_len: usize, wire_len: usize) -> Result<(), Error> {
+        <Self as LengthSpec<S>>::encoded_len(semantic_len, wire_len)?;
         Ok(())
     }
 
@@ -43,16 +48,20 @@ impl<const N: usize, S: Step> LengthSpec<S> for Fixed<N> {
     }
 }
 
+/// Frame exactly `N` wire bytes; the step determines the decoded logical length.
+/// The check and transform must produce this width; encoding asserts it in debug.
 pub struct WireFixed<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for WireFixed<N> {
     #[inline(always)]
-    fn encoded_len(_semantic_len: usize, _wire_len: usize) -> Result<usize, Error> {
+    fn encoded_len(_semantic_len: usize, wire_len: usize) -> Result<usize, Error> {
+        debug_assert_eq!(wire_len, N);
         Ok(0)
     }
 
     #[inline(always)]
-    fn encode(_output: &mut &mut [u8], _scratch: &mut &mut [u8], _semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
+    fn encode(_output: &mut &mut [u8], _scratch: &mut &mut [u8], semantic_len: usize, wire_len: usize) -> Result<(), Error> {
+        <Self as LengthSpec<S>>::encoded_len(semantic_len, wire_len)?;
         Ok(())
     }
 
@@ -264,8 +273,9 @@ impl<S: Step> LengthSpec<S> for Rest {
 
 #[cfg(test)]
 mod tests {
-    use super::{AsciiLength, AsciiWireLength, BlankableEbcdicLength, EbcdicLength, EbcdicWireLength, LengthSpec, WireFixed};
-    use crate::field::Identity;
+    use super::{AsciiLength, AsciiWireLength, BlankableEbcdicLength, EbcdicLength, EbcdicWireLength, Fixed, LengthSpec, WireFixed};
+    use crate::field::{Ascii, Field, Identity, Numeric, PadLeft};
+    use crate::{Error, ScalarFmt};
 
     fn encode_length<L: LengthSpec<Identity>>(semantic_len: usize, wire_len: usize) -> Vec<u8> {
         let mut output = [0u8; 16];
@@ -342,5 +352,41 @@ mod tests {
         assert_eq!(plan.output_cap, 7);
         assert_eq!(plan.wire_len, 7);
         assert_eq!(plan.exact_len, None);
+    }
+
+    #[test]
+    fn fixed_framing_asserts_only_in_debug() {
+        fn check<L: LengthSpec<Identity>>() {
+            for len in [0, 1, 3] {
+                let predicted = std::panic::catch_unwind(|| L::encoded_len(len, len));
+                let encoded = std::panic::catch_unwind(|| L::encode(&mut &mut [][..], &mut &mut [][..], len, len));
+                if cfg!(debug_assertions) {
+                    assert!(predicted.is_err());
+                    assert!(encoded.is_err());
+                } else {
+                    assert_eq!(predicted.unwrap(), Ok(0));
+                    assert_eq!(encoded.unwrap(), Ok(()));
+                }
+            }
+            // Framing does not forbid an explicit transform from shortening input.
+            assert_eq!(L::encoded_len(usize::MAX, 2), Ok(0));
+        }
+        check::<Fixed<2>>();
+        check::<WireFixed<2>>();
+    }
+
+    #[test]
+    fn fixed_framing_preserves_input_validation_and_padding() {
+        type Exact = Field<Ascii<2, 2>, Fixed<2>>;
+        assert_eq!(Exact::encoded_len(b"ABC"), Err(Error::InvalidValueLength));
+        assert_eq!(
+            Exact::encode(&mut &mut [0; 8][..], &mut &mut [][..], b"ABC"),
+            Err(Error::InvalidValueLength)
+        );
+        type Padded = Field<Numeric<1, 4>, Fixed<4>, PadLeft<4, b'0'>>;
+        let mut output = [0; 4];
+        assert_eq!(Padded::encoded_len(b"7"), Ok(4));
+        Padded::encode(&mut &mut output[..], &mut &mut [][..], b"7").unwrap();
+        assert_eq!(output, *b"0007");
     }
 }
