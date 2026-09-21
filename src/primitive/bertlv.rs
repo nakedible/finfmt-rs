@@ -39,6 +39,9 @@ pub fn encode_ber_tag<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a
 /// - Supports tags up to 4 octets; longer tags are rejected.
 /// - Accepts financial tags such as `9F02`; no ASN.1 minimum numeric tag is imposed.
 ///
+/// This frames tag octets only, including the `00` end-of-contents identifier.
+/// [`decode_ber_tlv_entry`] rejects that identifier as an ordinary data entry.
+///
 /// Returns:
 /// - A sub-slice of `input` that contains the tag bytes.
 ///
@@ -150,10 +153,10 @@ pub fn ber_length_width(len: usize) -> Result<usize, Error> {
     }
 }
 
-/// Parses uppercase hex representing exactly one supported tag.
+/// Parses uppercase hex representing exactly one supported data tag.
 ///
-/// Returns `Invalid` for malformed text and incomplete or concatenated tags.
-/// Unused array bytes are zero.
+/// Returns `Invalid` for malformed text, incomplete or concatenated tags, and
+/// the `00` end-of-contents identifier. Unused array bytes are zero.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn parse_ber_tag_hex(tag: &str) -> Result<([u8; MAX_BER_TAG_BYTES], usize), Error> {
@@ -172,18 +175,18 @@ pub fn parse_ber_tag_hex(tag: &str) -> Result<([u8; MAX_BER_TAG_BYTES], usize), 
         }
     })?;
     let mut input = &*packed;
-    decode_ber_tag(&mut input).map_err(|_| {
+    let tag = decode_ber_tag(&mut input).map_err(|_| {
         cold_path();
         Error::Invalid
     })?;
-    if !input.is_empty() {
+    if !input.is_empty() || tag == [0] {
         cold_path();
         return Err(Error::Invalid);
     }
     Ok((out, bytes.len() / 2))
 }
 
-/// Compares tag bytes with a checked uppercase textual tag.
+/// Compares tag bytes with a checked uppercase textual data tag.
 /// The wire tag is already framed; it is not validated again.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
@@ -304,12 +307,15 @@ pub(crate) fn encode_unknown_tlv_from_tag(output: &mut &mut [u8], tag: &[u8], va
     Ok(())
 }
 
-#[derive(Clone, Copy)]
+/// Borrowed tag and value bytes; the original length octets are not retained.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BerTlvEntry<'a> {
     pub tag: &'a [u8],
     pub value: &'a [u8],
 }
 
+/// Frames one definite-length data entry, or returns `None` at clean empty input.
+/// Rejects end-of-contents as data and does not skip padding.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_ber_tlv_entry<'a>(input: &mut &'a [u8]) -> Result<Option<BerTlvEntry<'a>>, Error> {
@@ -317,6 +323,10 @@ pub fn decode_ber_tlv_entry<'a>(input: &mut &'a [u8]) -> Result<Option<BerTlvEnt
         return Ok(None);
     }
     let tag = decode_ber_tag(input)?;
+    if tag == [0] {
+        cold_path();
+        return Err(Error::Invalid);
+    }
     let len = decode_ber_length(input)?;
     let value = input.split_off(..len).ok_or_else(|| {
         cold_path();
@@ -533,6 +543,7 @@ mod tests {
             assert_eq!(ber_tag_matches_hex(&expected[..len], text), Ok(true));
         }
         for text in [
+            "00",
             "9F",
             "9F81",
             "9F8180",
@@ -558,9 +569,37 @@ mod tests {
     #[test]
     fn test_parse_unknown_tag_key_uppercase_only() {
         assert_eq!(parse_unknown_tag_key("t9F02_unknown"), Ok(([0x9F, 0x02, 0, 0], 2)));
+        assert_eq!(parse_unknown_tag_key("t00_unknown"), Err(Error::Invalid));
         assert_eq!(parse_unknown_tag_key("t9f02_unknown"), Err(Error::Invalid));
         assert_eq!(parse_unknown_tag_key("9F02_unknown"), Err(Error::Invalid));
         assert_eq!(parse_unknown_tag_key("t9F02"), Err(Error::Invalid));
+    }
+
+    #[test]
+    fn test_raw_entry_boundaries() {
+        assert_eq!(decode_ber_tlv_entry(&mut &b""[..]), Ok(None));
+        for wire in [&b"\x5A\x00"[..], &b"\x5A\x81\x00"[..], &b"\x5A\x82\x00\x00"[..]] {
+            let mut input = wire;
+            assert_eq!(decode_ber_tlv_entry(&mut input), Ok(Some(BerTlvEntry { tag: &[0x5A], value: &[] })));
+            assert!(input.is_empty());
+        }
+        for wire in [&b"\x00"[..], &b"\x00\x00"[..], &b"\x5A\x80\x00\x00"[..], &b"\x5A\x83"[..]] {
+            assert_eq!(decode_ber_tlv_entry(&mut &wire[..]), Err(Error::Invalid));
+        }
+        let wire = b"\x9F\x81\x80\x00\x82\x00\x02\xAB\xCD";
+        for len in 1..wire.len() {
+            assert_eq!(decode_ber_tlv_entry(&mut &wire[..len]), Err(Error::UnexpectedEof));
+        }
+        let mut input = &b"\x9F\x02\x02\xAB\xCD\x5A\x00"[..];
+        assert_eq!(
+            decode_ber_tlv_entry(&mut input),
+            Ok(Some(BerTlvEntry {
+                tag: &[0x9F, 0x02],
+                value: &[0xAB, 0xCD]
+            }))
+        );
+        assert_eq!(decode_ber_tlv_entry(&mut input), Ok(Some(BerTlvEntry { tag: &[0x5A], value: &[] })));
+        assert_eq!(decode_ber_tlv_entry(&mut input), Ok(None));
     }
 }
 

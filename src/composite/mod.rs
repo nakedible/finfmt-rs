@@ -2542,7 +2542,7 @@ mod ber_tag_boundary_tests {
 
     #[test]
     fn malformed_configured_tags_are_internal_errors() {
-        for tag in ["9F", "5A5B", "9f02"] {
+        for tag in ["9F", "5A5B", "00", "9f02"] {
             let mut storage = [0u8; 16];
             let mut scratch = [0u8; 16];
             let result = encode_ber_tlv_field(&mut &mut storage[..], &mut &mut scratch[..], tag, "field", |_, _| Ok(()));
