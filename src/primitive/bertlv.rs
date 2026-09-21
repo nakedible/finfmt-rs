@@ -37,6 +37,7 @@ pub fn encode_ber_tag<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a
 /// - One-octet tag if low 5 bits of the first octet are not `0x1F`.
 /// - Otherwise, continuation octets are consumed until a byte with MSB 0 is found.
 /// - Supports tags up to 4 octets; longer tags are rejected.
+/// - Accepts financial tags such as `9F02`; no ASN.1 minimum numeric tag is imposed.
 ///
 /// Returns:
 /// - A sub-slice of `input` that contains the tag bytes.
@@ -149,23 +150,41 @@ pub fn ber_length_width(len: usize) -> Result<usize, Error> {
     }
 }
 
+/// Parses uppercase hex representing exactly one supported tag.
+///
+/// Returns `Invalid` for malformed text and incomplete or concatenated tags.
+/// Unused array bytes are zero.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn parse_ber_tag_hex(tag: &str) -> Result<([u8; MAX_BER_TAG_BYTES], usize), Error> {
     let bytes = tag.as_bytes();
     if bytes.is_empty() || bytes.len() > 2 * MAX_BER_TAG_BYTES || !bytes.len().is_multiple_of(2) {
         cold_path();
-        return Err(Error::Internal);
+        return Err(Error::Invalid);
     }
     let mut out = [0u8; MAX_BER_TAG_BYTES];
-    let mut packed = &mut out[..];
-    pack_expanded_nibbles(&mut packed, bytes, &HexUpper::NIBBLES).map_err(|_| {
+    let packed = pack_expanded_nibbles(&mut &mut out[..], bytes, &HexUpper::NIBBLES).map_err(|error| {
         cold_path();
-        Error::Internal
+        if error == Error::BufferOverflow {
+            Error::Internal
+        } else {
+            Error::Invalid
+        }
     })?;
+    let mut input = &*packed;
+    decode_ber_tag(&mut input).map_err(|_| {
+        cold_path();
+        Error::Invalid
+    })?;
+    if !input.is_empty() {
+        cold_path();
+        return Err(Error::Invalid);
+    }
     Ok((out, bytes.len() / 2))
 }
 
+/// Compares tag bytes with a checked uppercase textual tag.
+/// The wire tag is already framed; it is not validated again.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn ber_tag_matches_hex(tag_bytes: &[u8], tag_hex: &str) -> Result<bool, Error> {
@@ -505,16 +524,41 @@ mod tests {
     #[test]
     fn test_parse_ber_tag_hex_uppercase_only() {
         assert_eq!(parse_ber_tag_hex("9F02"), Ok(([0x9F, 0x02, 0, 0], 2)));
-        assert_eq!(parse_ber_tag_hex(""), Err(Error::Internal));
-        assert_eq!(parse_ber_tag_hex("9f02"), Err(Error::Internal));
-        assert_eq!(parse_ber_tag_hex("9F0"), Err(Error::Internal));
-        assert_eq!(parse_ber_tag_hex("9G02"), Err(Error::Internal));
+        for (text, expected, len) in [
+            ("5A", [0x5A, 0, 0, 0], 1),
+            ("9F817F", [0x9F, 0x81, 0x7F, 0], 3),
+            ("FF818000", [0xFF, 0x81, 0x80, 0], 4),
+        ] {
+            assert_eq!(parse_ber_tag_hex(text), Ok((expected, len)));
+            assert_eq!(ber_tag_matches_hex(&expected[..len], text), Ok(true));
+        }
+        for text in [
+            "9F",
+            "9F81",
+            "9F8180",
+            "5A5B",
+            "9F025A",
+            "9F00",
+            "9F8001",
+            "9F818080",
+            "9F81808000",
+            "é",
+        ] {
+            assert_eq!(parse_ber_tag_hex(text), Err(Error::Invalid), "{text}");
+        }
+        assert_eq!(ber_tag_matches_hex(&[0x9F, 0x03], "9F02"), Ok(false));
+        assert_eq!(ber_tag_matches_hex(&[0x5A], "9F02"), Ok(false));
+        assert_eq!(ber_tag_matches_hex(&[0x9F], "9F"), Err(Error::Invalid));
+        assert_eq!(parse_ber_tag_hex(""), Err(Error::Invalid));
+        assert_eq!(parse_ber_tag_hex("9f02"), Err(Error::Invalid));
+        assert_eq!(parse_ber_tag_hex("9F0"), Err(Error::Invalid));
+        assert_eq!(parse_ber_tag_hex("9G02"), Err(Error::Invalid));
     }
 
     #[test]
     fn test_parse_unknown_tag_key_uppercase_only() {
         assert_eq!(parse_unknown_tag_key("t9F02_unknown"), Ok(([0x9F, 0x02, 0, 0], 2)));
-        assert_eq!(parse_unknown_tag_key("t9f02_unknown"), Err(Error::Internal));
+        assert_eq!(parse_unknown_tag_key("t9f02_unknown"), Err(Error::Invalid));
         assert_eq!(parse_unknown_tag_key("9F02_unknown"), Err(Error::Invalid));
         assert_eq!(parse_unknown_tag_key("t9F02"), Err(Error::Invalid));
     }
@@ -545,6 +589,11 @@ mod proptests {
             };
             let mut inp = &input[..];
             prop_assert_eq!(decode_ber_tag(&mut inp), Ok(&input[..]));
+            let mut hex = [0u8; 2 * MAX_BER_TAG_BYTES];
+            let text = encode_hex_upper_into(&mut hex, &input).unwrap();
+            let (tag, len) = parse_ber_tag_hex(text).unwrap();
+            prop_assert_eq!(&tag[..len], input.as_slice());
+            prop_assert_eq!(ber_tag_matches_hex(&input, text), Ok(true));
         }
 
         #[test]

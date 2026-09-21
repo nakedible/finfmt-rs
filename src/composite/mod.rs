@@ -2248,7 +2248,8 @@ pub fn encode_ber_tlv_field<F>(
 where
     F: FnOnce(&mut &mut [u8], &mut &mut [u8]) -> Result<(), StructError>,
 {
-    let (tag_bytes, tag_len) = crate::primitive::bertlv::parse_ber_tag_hex(tag_hex).map_err(|error| wrap_struct_error(error, field))?;
+    let (tag_bytes, tag_len) =
+        crate::primitive::bertlv::parse_ber_tag_hex(tag_hex).map_err(|_| wrap_struct_error(Error::Internal, field))?;
     let out = core::mem::take(output);
     let total = out.len();
     let mut value_out = &mut *out;
@@ -2281,7 +2282,7 @@ pub fn decode_ber_tlv_field<'a, T, D>(
 where
     D: FnOnce(&mut &'a [u8], &mut &'a mut [u8]) -> Result<T, StructError>,
 {
-    if !crate::primitive::bertlv::ber_tag_matches_hex(tag_bytes, tag_hex).map_err(|error| wrap_struct_error(error, field))? {
+    if !crate::primitive::bertlv::ber_tag_matches_hex(tag_bytes, tag_hex).map_err(|_| wrap_struct_error(Error::Internal, field))? {
         return Ok(false);
     }
     if field_value.is_some() {
@@ -2533,4 +2534,21 @@ fn match_encoded_literal(input: &mut &[u8], encoded: &[u8]) -> Result<bool, Erro
     }
     advance_input(input, encoded.len())?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod ber_tag_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn malformed_configured_tags_are_internal_errors() {
+        for tag in ["9F", "5A5B", "9f02"] {
+            let mut storage = [0u8; 16];
+            let mut scratch = [0u8; 16];
+            let result = encode_ber_tlv_field(&mut &mut storage[..], &mut &mut scratch[..], tag, "field", |_, _| Ok(()));
+            assert_eq!(result.unwrap_err().kind, Error::Internal);
+            let result = decode_ber_tlv_field(&[0x5A], tag, &mut &[][..], &mut &mut scratch[..], &mut None, "field", |_, _| Ok(()));
+            assert_eq!(result.unwrap_err().kind, Error::Internal);
+        }
+    }
 }
