@@ -159,6 +159,56 @@ pub fn encode_ebcdic_1142<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result
     encode_ebcdic_1142_slow(output, input)
 }
 
+/// Encode bytes already validated as UTF-8 in the IBM1142 repertoire.
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub(crate) fn encode_ebcdic_1142_validated<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+    if input.is_ascii() {
+        let buf = output.split_off_mut(..input.len()).ok_or_else(|| {
+            cold_path();
+            Error::BufferOverflow
+        })?;
+        translate_bytes(buf, input, &LATIN1_TO_EBCDIC_1142)?;
+        return Ok(buf);
+    }
+    encode_ebcdic_1142_validated_slow(output, input)
+}
+
+#[cold]
+#[inline(never)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+fn encode_ebcdic_1142_validated_slow<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+    debug_assert!(super::validation::validate_ebcdic_1142_text(input, 0, usize::MAX).is_ok());
+    let mut bytes = input.iter();
+    let mut used = 0;
+    while let Some(&first) = bytes.next() {
+        let byte = match first {
+            0..=0x7F => LATIN1_TO_EBCDIC_1142[first as usize],
+            0xC2 | 0xC3 => {
+                let last = bytes.next().copied().unwrap_or(0);
+                let latin = ((first & 3) << 6) | (last & 0x3F);
+                LATIN1_TO_EBCDIC_1142[latin as usize]
+            }
+            // The only supported character outside Latin-1 is Euro (E2 82 AC).
+            _ => {
+                bytes.next();
+                bytes.next();
+                0x5A
+            }
+        };
+        let dest = output.get_mut(used).ok_or_else(|| {
+            cold_path();
+            Error::BufferOverflow
+        })?;
+        *dest = byte;
+        used += 1;
+    }
+    output.split_off_mut(..used).ok_or_else(|| {
+        cold_path();
+        Error::BufferOverflow
+    })
+}
+
 /// Decode IBM1142 bytes into UTF-8.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
@@ -445,6 +495,54 @@ mod tests {
                 assert!(output.iter().all(|&b| b == 0xA5));
             }
             assert!(storage[capacity..].iter().all(|&b| b == 0xA5));
+        }
+    }
+
+    #[test]
+    fn validated_conversion_matches_strict_for_every_character_pair() {
+        for &first in &EBCDIC_1142_TO_UNICODE {
+            for &last in &EBCDIC_1142_TO_UNICODE {
+                let text: String = [first, last].into_iter().map(|v| char::from_u32(v as u32).unwrap()).collect();
+                let mut actual = [0; 2];
+                let mut expected = [0; 2];
+                assert_eq!(
+                    encode_ebcdic_1142_validated(&mut &mut actual[..], text.as_bytes()).unwrap(),
+                    encode_ebcdic_1142(&mut &mut expected[..], text.as_bytes()).unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn malformed_validated_input_cannot_panic_in_release() {
+        for first in 0..=255 {
+            for last in 0..=255 {
+                for size in 0..=2 {
+                    let mut output = [0; 2];
+                    let _ = encode_ebcdic_1142_validated(&mut &mut output[..size], &[first, last]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn validated_encoding_buffer_boundaries() {
+        for text in ["", "AB", "€", "Æ€A"] {
+            let expected = utf8_to_1142(text).unwrap();
+            for capacity in 0..=expected.len() + 1 {
+                let mut storage = [0xA5; 8];
+                let mut output = &mut storage[..capacity];
+                let result = encode_ebcdic_1142_validated(&mut output, text.as_bytes()).map(|b| b.to_vec());
+                if capacity < expected.len() {
+                    assert_eq!(result, Err(Error::BufferOverflow));
+                } else {
+                    assert_eq!(result, Ok(expected.clone()));
+                    assert_eq!(output.len(), capacity - expected.len());
+                    assert!(output.iter().all(|&b| b == 0xA5));
+                }
+                assert!(storage[capacity..].iter().all(|&b| b == 0xA5));
+            }
         }
     }
 }

@@ -81,6 +81,20 @@ fn bench_1142(suite: &mut Suite) {
                 black_box(buf)
             })
         });
+        for (name, input) in [
+            ("encode_ebcdic_1142_field_ascii", ASCII_INPUT),
+            ("encode_ebcdic_1142_field_mixed", "ABCÆØÅæøå€".as_bytes()),
+            ("encode_ebcdic_1142_field_euro", "€€€€€€€€€€".as_bytes()),
+        ] {
+            group.bench(name, |b| {
+                b.iter(|| {
+                    let mut buf = [0u8; 32];
+                    let mut out = &mut buf[..];
+                    let _ = black_box(encode_ebcdic_1142_field(&mut out, black_box(input)));
+                    black_box(buf)
+                })
+            });
+        }
         group.bench("decode_ebcdic_1142_runtime", |b| {
             let input = b"\xC1\xC2\xC3\x7B\x7C\x5B\xC0\x6A\xD0";
             b.iter(|| {

@@ -144,7 +144,7 @@ mod tests {
         Ok(out[..used].to_vec())
     }
 
-    fn decode_field<F: ScalarFmt>(input: &[u8], scratch_len: usize) -> Result<Vec<u8>, Error> {
+    pub(super) fn decode_field<F: ScalarFmt>(input: &[u8], scratch_len: usize) -> Result<Vec<u8>, Error> {
         let mut scratch = vec![0u8; scratch_len];
         let mut input_ptr = input;
         let mut scratch_ptr = scratch.as_mut_slice();
@@ -441,5 +441,32 @@ mod tests {
         }
         fails::<WrongBytes>();
         fails::<WrongScalars>();
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use proptest::prelude::*;
+
+    use crate::*;
+
+    proptest! {
+        #[test]
+        fn cp1142_field_preserves_values_and_character_prefix(bytes in prop::collection::vec(any::<u8>(), 0..64)) {
+            use crate::primitive::ebcdic::EBCDIC_1142_TO_UNICODE;
+            type F = Field<Ebcdic1142Text<0, 99>, AsciiLength<2>, Ebcdic1142>;
+            let text: String = bytes.iter().map(|&b| char::from_u32(EBCDIC_1142_TO_UNICODE[b as usize] as u32).unwrap()).collect();
+            let expected = F::encoded_len(text.as_bytes()).unwrap();
+            prop_assert_eq!(expected, bytes.len() + 2);
+            let mut output = vec![0; expected];
+            let mut out = output.as_mut_slice();
+            F::encode(&mut out, &mut &mut [][..], text.as_bytes()).unwrap();
+            prop_assert!(out.is_empty());
+            prop_assert_eq!(&output[2..], &bytes);
+            prop_assert_eq!(((output[0] - b'0') * 10 + output[1] - b'0') as usize, bytes.len());
+            for size in [text.len(), 1024] {
+                prop_assert_eq!(super::tests::decode_field::<F>(&output, size), Ok(text.as_bytes().to_vec()));
+            }
+        }
     }
 }
