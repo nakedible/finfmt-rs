@@ -18,7 +18,13 @@ use crate::primitive::validation::{parse_signed_decimal, split_signed_input, val
 use crate::utils::{cold_path, take_scratch};
 use crate::{Error, ScalarFmt};
 
+/// Prefix a nonnegative magnitude with one of two distinct sign bytes.
+/// Equal sign bytes are an invalid format (`Internal`). Typed numeric methods
+/// delegate the magnitude to the inner numeric codec.
 pub struct SignPrefix<F, const POS: u8 = b'C', const NEG: u8 = b'D'>(PhantomData<F>);
+/// Prefix negative magnitudes only. The inner format represents a nonnegative
+/// magnitude, and `NEG` must never start one of its encodings. Arbitrary binary
+/// formats may violate this; use an explicit `SignPrefix` for those formats.
 pub struct MinusPrefix<F, const NEG: u8 = b'-'>(PhantomData<F>);
 pub struct FixedNibbleInt<F, const N: usize>(PhantomData<F>);
 pub struct FixedBinaryBe<const N: usize>;
@@ -52,9 +58,21 @@ impl<const N: usize> FixedDecimalCodec for FixedSignedZonedEbcdic<N> {
     const SIGNED: bool = true;
 }
 
+impl<F, const POS: u8, const NEG: u8> SignPrefix<F, POS, NEG> {
+    #[inline(always)]
+    fn validate_signs() -> Result<(), Error> {
+        if POS == NEG {
+            cold_path();
+            return Err(Error::Internal);
+        }
+        Ok(())
+    }
+}
+
 impl<F: ScalarFmt, const POS: u8, const NEG: u8> ScalarFmt for SignPrefix<F, POS, NEG> {
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
+        Self::validate_signs()?;
         let (_, digits) = split_signed_input(input)?;
         F::encoded_len(digits)?.checked_add(1).ok_or_else(|| {
             cold_path();
@@ -62,13 +80,17 @@ impl<F: ScalarFmt, const POS: u8, const NEG: u8> ScalarFmt for SignPrefix<F, POS
         })
     }
 
+    #[inline(always)]
     fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
+        Self::validate_signs()?;
         let (negative, digits) = split_signed_input(input)?;
         encode_sign(output, negative, POS, NEG)?;
         F::encode(output, scratch, digits)
     }
 
+    #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
+        Self::validate_signs()?;
         let mut output = take_scratch(scratch, MAX_INTEGER_TEXT_LEN)?;
         let negative = decode_sign(input, POS, NEG)?;
         let digits = F::decode(input, scratch)?;
@@ -79,7 +101,34 @@ impl<F: ScalarFmt, const POS: u8, const NEG: u8> ScalarFmt for SignPrefix<F, POS
     }
 
     #[inline(always)]
+    fn encoded_len_u64(input: u64) -> Result<usize, Error> {
+        Self::validate_signs()?;
+        F::encoded_len_u64(input)?.checked_add(1).ok_or_else(|| {
+            cold_path();
+            Error::Invalid
+        })
+    }
+
+    #[inline(always)]
+    fn encode_u64(output: &mut &mut [u8], scratch: &mut &mut [u8], input: u64) -> Result<(), Error> {
+        Self::validate_signs()?;
+        encode_sign(output, false, POS, NEG)?;
+        F::encode_u64(output, scratch, input)
+    }
+
+    #[inline(always)]
+    fn decode_u64<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<u64, Error> {
+        Self::validate_signs()?;
+        if decode_sign(input, POS, NEG)? {
+            cold_path();
+            return Err(Error::Invalid);
+        }
+        F::decode_u64(input, scratch)
+    }
+
+    #[inline(always)]
     fn encoded_len_i64(input: i64) -> Result<usize, Error> {
+        Self::validate_signs()?;
         F::encoded_len_u64(input.unsigned_abs())?.checked_add(1).ok_or_else(|| {
             cold_path();
             Error::Invalid
@@ -88,12 +137,14 @@ impl<F: ScalarFmt, const POS: u8, const NEG: u8> ScalarFmt for SignPrefix<F, POS
 
     #[inline(always)]
     fn encode_i64(output: &mut &mut [u8], scratch: &mut &mut [u8], input: i64) -> Result<(), Error> {
+        Self::validate_signs()?;
         encode_sign(output, input < 0, POS, NEG)?;
         F::encode_u64(output, scratch, input.unsigned_abs())
     }
 
     #[inline(always)]
     fn decode_i64<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<i64, Error> {
+        Self::validate_signs()?;
         let negative = decode_sign(input, POS, NEG)?;
         let magnitude = F::decode_u64(input, scratch)?;
         decode_signed_magnitude_i64(negative, magnitude)
@@ -111,12 +162,14 @@ impl<F: ScalarFmt, const NEG: u8> ScalarFmt for MinusPrefix<F, NEG> {
         })
     }
 
+    #[inline(always)]
     fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
         let (negative, digits) = split_signed_input(input)?;
         encode_negative_prefix(output, negative, NEG)?;
         F::encode(output, scratch, digits)
     }
 
+    #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
         let mut output = take_scratch(scratch, MAX_INTEGER_TEXT_LEN)?;
         let negative = decode_negative_prefix(input, NEG);
@@ -125,6 +178,25 @@ impl<F: ScalarFmt, const NEG: u8> ScalarFmt for MinusPrefix<F, NEG> {
             return Ok(digits);
         }
         prepend_minus(&mut output, digits).map(|buf| &*buf)
+    }
+
+    #[inline(always)]
+    fn encoded_len_u64(input: u64) -> Result<usize, Error> {
+        F::encoded_len_u64(input)
+    }
+
+    #[inline(always)]
+    fn encode_u64(output: &mut &mut [u8], scratch: &mut &mut [u8], input: u64) -> Result<(), Error> {
+        F::encode_u64(output, scratch, input)
+    }
+
+    #[inline(always)]
+    fn decode_u64<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<u64, Error> {
+        if decode_negative_prefix(input, NEG) {
+            cold_path();
+            return Err(Error::Invalid);
+        }
+        F::decode_u64(input, scratch)
     }
 
     #[inline(always)]
@@ -157,11 +229,13 @@ impl<F: NibbleAlphabet, const N: usize> ScalarFmt for FixedNibbleInt<F, N> {
         Ok(N)
     }
 
+    #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
         validate_nibble_int_fixed::<F>(input, N)?;
         encode_exact_bytes(output, input, N)
     }
 
+    #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
         let bytes = decode_exact_bytes(input, N)?;
         validate_nibble_int_fixed::<F>(bytes, N)?;
@@ -188,31 +262,12 @@ impl<F: NibbleAlphabet, const N: usize> ScalarFmt for FixedNibbleInt<F, N> {
     }
 
     #[inline(always)]
-    fn encoded_len_usize(input: usize) -> Result<usize, Error> {
-        Self::encoded_len_u64(input as u64)
-    }
-
-    #[inline(always)]
-    fn encode_usize(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: usize) -> Result<(), Error> {
-        Self::encode_u64(output, _scratch, input as u64)
-    }
-
-    #[inline(always)]
-    fn decode_usize<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<usize, Error> {
-        let value = Self::decode_u64(input, _scratch)?;
-        usize::try_from(value).map_err(|_| {
-            cold_path();
-            Error::Invalid
-        })
-    }
-
-    #[inline(always)]
     fn encoded_len_i64(input: i64) -> Result<usize, Error> {
         if input < 0 {
             cold_path();
             return Err(Error::Invalid);
         }
-        Ok(N)
+        Self::encoded_len_u64(input as u64)
     }
 
     #[inline(always)]
@@ -241,10 +296,12 @@ impl<const N: usize> ScalarFmt for FixedBinaryBe<N> {
         Ok(N)
     }
 
+    #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
         encode_exact_bytes(output, input, N)
     }
 
+    #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
         decode_exact_bytes(input, N)
     }
@@ -269,31 +326,12 @@ impl<const N: usize> ScalarFmt for FixedBinaryBe<N> {
     }
 
     #[inline(always)]
-    fn encoded_len_usize(input: usize) -> Result<usize, Error> {
-        Self::encoded_len_u64(input as u64)
-    }
-
-    #[inline(always)]
-    fn encode_usize(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: usize) -> Result<(), Error> {
-        Self::encode_u64(output, _scratch, input as u64)
-    }
-
-    #[inline(always)]
-    fn decode_usize<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<usize, Error> {
-        let value = Self::decode_u64(input, _scratch)?;
-        usize::try_from(value).map_err(|_| {
-            cold_path();
-            Error::Invalid
-        })
-    }
-
-    #[inline(always)]
     fn encoded_len_i64(input: i64) -> Result<usize, Error> {
         if input < 0 {
             cold_path();
             return Err(Error::Invalid);
         }
-        Ok(N)
+        Self::encoded_len_u64(input as u64)
     }
 
     #[inline(always)]
@@ -322,10 +360,12 @@ impl<const N: usize> ScalarFmt for FixedSignedBinaryBe<N> {
         Ok(N)
     }
 
+    #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
         encode_exact_bytes(output, input, N)
     }
 
+    #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
         decode_exact_bytes(input, N)
     }
@@ -358,25 +398,6 @@ impl<const N: usize> ScalarFmt for FixedSignedBinaryBe<N> {
     }
 
     #[inline(always)]
-    fn encoded_len_usize(input: usize) -> Result<usize, Error> {
-        Self::encoded_len_u64(input as u64)
-    }
-
-    #[inline(always)]
-    fn encode_usize(output: &mut &mut [u8], scratch: &mut &mut [u8], input: usize) -> Result<(), Error> {
-        Self::encode_u64(output, scratch, input as u64)
-    }
-
-    #[inline(always)]
-    fn decode_usize<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<usize, Error> {
-        let value = Self::decode_u64(input, scratch)?;
-        usize::try_from(value).map_err(|_| {
-            cold_path();
-            Error::Invalid
-        })
-    }
-
-    #[inline(always)]
     fn encoded_len_i64(input: i64) -> Result<usize, Error> {
         validate_binary_i64_be_fixed(input, N)?;
         Ok(N)
@@ -400,10 +421,12 @@ impl<const N: usize> ScalarFmt for FixedComp3<N> {
         Ok(N)
     }
 
+    #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
         encode_decimal_packed_fixed(output, input, N)
     }
 
+    #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
         let mut output = take_scratch(scratch, N * 2)?;
         decode_decimal_packed_fixed(input, &mut output, N).map(|buf| &*buf)
@@ -417,10 +440,12 @@ impl<const N: usize> ScalarFmt for FixedSignedComp3<N> {
         Ok(N)
     }
 
+    #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
         encode_decimal_packed_signed_fixed(output, input, N)
     }
 
+    #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
         let mut output = take_scratch(scratch, N * 2)?;
         decode_decimal_packed_signed_fixed(input, &mut output, N).map(|buf| &*buf)
@@ -434,10 +459,12 @@ impl<const N: usize> ScalarFmt for FixedSignedZonedEbcdic<N> {
         Ok(N)
     }
 
+    #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
         encode_decimal_ebcdic_signed_fixed(output, input, N)
     }
 
+    #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
         let mut output = take_scratch(scratch, N + 1)?;
         decode_decimal_ebcdic_signed_fixed(input, &mut output, N).map(|buf| &*buf)
@@ -451,11 +478,13 @@ impl<F: FixedDecimalCodec, const SCALE: usize> ScalarFmt for ImpliedDecimal<F, S
         Ok(F::WIRE_LEN)
     }
 
+    #[inline(always)]
     fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
         let digits = encode_decimal_implied(scratch, input, SCALE, F::MAX_DIGITS, F::SIGNED)?;
         F::encode(output, scratch, digits)
     }
 
+    #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
         let digits = F::decode(input, scratch)?;
         decode_decimal_implied(scratch, digits, SCALE).map(|buf| &*buf)
@@ -464,7 +493,10 @@ impl<F: FixedDecimalCodec, const SCALE: usize> ScalarFmt for ImpliedDecimal<F, S
 
 #[cfg(test)]
 mod tests {
-    use super::{FixedBinaryBe, FixedComp3, FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedEbcdic, ImpliedDecimal};
+    use super::{
+        FixedBinaryBe, FixedComp3, FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedEbcdic, ImpliedDecimal,
+        MinusPrefix, SignPrefix,
+    };
     use crate::primitive::nibble::{HexEbcdic, HexLower, HexUpper};
     use crate::{Error, ScalarFmt};
 
@@ -660,5 +692,98 @@ mod tests {
         assert_eq!(decode_bytes::<F>(b"\x12\x34\x0D"), Ok(b"-12.34".to_vec()));
         assert_eq!(decode_bytes::<F>(b"\x12\x00\x0C"), Ok(b"12".to_vec()));
         assert_eq!(encode_bytes::<F>(b"-.1"), Err(Error::Invalid));
+    }
+
+    pub(super) fn numeric_roundtrip<F: ScalarFmt>(signed: i64, unsigned: u64) {
+        let mut output = [0; 64];
+        let mut scratch = [0; 128];
+        let mut out = output.as_mut_slice();
+        let mut work = scratch.as_mut_slice();
+        let result = F::encode_i64(&mut out, &mut work, signed);
+        let used = 64 - out.len();
+        assert_eq!(result.map(|()| used), F::encoded_len_i64(signed));
+        if result.is_ok() {
+            let mut input = &output[..used];
+            let mut work = scratch.as_mut_slice();
+            assert_eq!(F::decode_i64(&mut input, &mut work), Ok(signed));
+            assert!(input.is_empty());
+        }
+        let mut out = output.as_mut_slice();
+        let mut work = scratch.as_mut_slice();
+        let result = F::encode_u64(&mut out, &mut work, unsigned);
+        let used = 64 - out.len();
+        assert_eq!(result.map(|()| used), F::encoded_len_u64(unsigned));
+        if result.is_ok() {
+            let mut input = &output[..used];
+            let mut work = scratch.as_mut_slice();
+            assert_eq!(F::decode_u64(&mut input, &mut work), Ok(unsigned));
+            assert!(input.is_empty());
+            let mut input = &output[..used];
+            let mut work = scratch.as_mut_slice();
+            assert_eq!(
+                F::decode_usize(&mut input, &mut work),
+                usize::try_from(unsigned).map_err(|_| Error::Invalid)
+            );
+        }
+    }
+
+    #[test]
+    fn identical_sign_markers_are_invalid_configuration() {
+        type F = SignPrefix<FixedBinaryBe<1>, b'X', b'X'>;
+        assert_eq!(F::encoded_len(b"1"), Err(Error::Internal));
+        assert_eq!(F::encoded_len_i64(-1), Err(Error::Internal));
+        assert_eq!(F::encoded_len_u64(1), Err(Error::Internal));
+        assert_eq!(encode_bytes::<F>(b"1"), Err(Error::Internal));
+        assert_eq!(encode_i64::<F>(-1), Err(Error::Internal));
+        assert_eq!(encode_u64::<F>(1), Err(Error::Internal));
+        assert_eq!(decode_bytes::<F>(&[b'X', 1]), Err(Error::Internal));
+        assert_eq!(decode_i64::<F>(&[b'X', 1]), Err(Error::Internal));
+        assert_eq!(decode_u64::<F>(&[b'X', 1]), Err(Error::Internal));
+    }
+
+    #[test]
+    fn numeric_length_and_roundtrip_boundaries() {
+        for value in [0, 1, 15, 16, 127, 128, 255, 256, i64::MAX, i64::MIN, -1] {
+            numeric_roundtrip::<FixedBinaryBe<0>>(value, value as u64);
+            numeric_roundtrip::<FixedBinaryBe<1>>(value, value as u64);
+            numeric_roundtrip::<FixedBinaryBe<8>>(value, value as u64);
+            numeric_roundtrip::<FixedBinaryBe<9>>(value, value as u64);
+            numeric_roundtrip::<FixedNibbleInt<HexUpper, 0>>(value, value as u64);
+            numeric_roundtrip::<FixedNibbleInt<HexUpper, 1>>(value, value as u64);
+            numeric_roundtrip::<FixedNibbleInt<HexUpper, 16>>(value, value as u64);
+            numeric_roundtrip::<FixedNibbleInt<HexUpper, 17>>(value, value as u64);
+            numeric_roundtrip::<FixedSignedBinaryBe<1>>(value, value as u64);
+            numeric_roundtrip::<FixedSignedBinaryBe<8>>(value, value as u64);
+            numeric_roundtrip::<SignPrefix<FixedBinaryBe<8>>>(value, value as u64);
+            numeric_roundtrip::<MinusPrefix<FixedNibbleInt<HexLower, 16>>>(value, value as u64);
+        }
+        assert_eq!(encode_u64::<SignPrefix<FixedBinaryBe<1>>>(1), Ok(vec![b'C', 1]));
+        assert_eq!(encode_u64::<MinusPrefix<FixedNibbleInt<HexUpper, 1>>>(15), Ok(b"F".to_vec()));
+        assert_eq!(decode_u64::<SignPrefix<FixedBinaryBe<1>>>(&[b'D', 0]), Err(Error::Invalid));
+        assert_eq!(decode_u64::<MinusPrefix<FixedNibbleInt<HexUpper, 1>>>(b"-0"), Err(Error::Invalid));
+        assert_eq!(decode_i64::<SignPrefix<FixedBinaryBe<1>>>(&[b'D', 0]), Ok(0));
+        assert_eq!(decode_i64::<MinusPrefix<FixedNibbleInt<HexUpper, 1>>>(b"-0"), Ok(0));
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use proptest::prelude::*;
+
+    use super::*;
+    use crate::primitive::nibble::{HexLower, HexUpper};
+
+    proptest! {
+        #[test]
+        fn numeric_lengths_match_encoding(signed: i64, unsigned: u64) {
+            super::tests::numeric_roundtrip::<FixedBinaryBe<1>>(signed, unsigned);
+            super::tests::numeric_roundtrip::<FixedBinaryBe<7>>(signed, unsigned);
+            super::tests::numeric_roundtrip::<FixedBinaryBe<9>>(signed, unsigned);
+            super::tests::numeric_roundtrip::<FixedNibbleInt<HexUpper, 1>>(signed, unsigned);
+            super::tests::numeric_roundtrip::<FixedNibbleInt<HexUpper, 15>>(signed, unsigned);
+            super::tests::numeric_roundtrip::<FixedNibbleInt<HexUpper, 17>>(signed, unsigned);
+            super::tests::numeric_roundtrip::<SignPrefix<FixedBinaryBe<8>>>(signed, unsigned);
+            super::tests::numeric_roundtrip::<MinusPrefix<FixedNibbleInt<HexLower, 16>>>(signed, unsigned);
+        }
     }
 }

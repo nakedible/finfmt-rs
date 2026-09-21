@@ -1,5 +1,5 @@
 use crate::Error;
-use crate::primitive::decimal::{MAX_INTEGER_TEXT_LEN, format_i64, format_u64, parse_i64, parse_u64, parse_usize};
+use crate::primitive::decimal::{MAX_INTEGER_TEXT_LEN, format_i64, format_u64, parse_i64, parse_u64};
 use crate::utils::cold_path;
 
 /// Core encode/decode trait for financial message field types.
@@ -15,7 +15,7 @@ use crate::utils::cold_path;
 /// - Functions consume/produce bytes and advance the slice
 /// - After the call, the slice reflects remaining capacity/data
 ///
-/// The wire side is always `[u8]}`. The user side can be `[u8]` or `str`:
+/// The wire side is always `[u8]`. The user side can be `[u8]` or `str`:
 /// - `encode`/`decode`: work with `&[u8]` user data
 /// - `encode_str`/`decode_str`: convenience wrappers for `&str` user data
 ///
@@ -90,7 +90,7 @@ pub trait ScalarFmt {
 
     /// Calculate the encoded length in bytes for an unsigned 64-bit integer.
     ///
-    /// Default implementation converts to decimal string and delegates to `encoded_len_str`.
+    /// Default implementation converts to decimal string and delegates to `encoded_len`.
     ///
     /// Override for binary integer encodings.
     #[inline(always)]
@@ -101,7 +101,7 @@ pub trait ScalarFmt {
 
     /// Calculate the encoded length in bytes for a `usize`.
     ///
-    /// Default implementation converts to decimal string and delegates to `encoded_len_str`.
+    /// Default implementation delegates to `encoded_len_u64`.
     #[inline(always)]
     fn encoded_len_usize(input: usize) -> Result<usize, Error> {
         Self::encoded_len_u64(input as u64)
@@ -109,7 +109,7 @@ pub trait ScalarFmt {
 
     /// Calculate the encoded length in bytes for a signed 64-bit integer.
     ///
-    /// Default implementation converts to decimal string and delegates to `encoded_len_str`.
+    /// Default implementation converts to decimal string and delegates to `encoded_len`.
     ///
     /// Override for binary integer encodings or special sign handling.
     #[inline(always)]
@@ -132,7 +132,7 @@ pub trait ScalarFmt {
 
     /// Encode a `usize` to wire format.
     ///
-    /// Default implementation converts to decimal ASCII in a fixed stack buffer and delegates to `encode`.
+    /// Default implementation delegates to `encode_u64`.
     #[inline(always)]
     fn encode_usize(output: &mut &mut [u8], scratch: &mut &mut [u8], input: usize) -> Result<(), Error> {
         Self::encode_u64(output, scratch, input as u64)
@@ -150,10 +150,13 @@ pub trait ScalarFmt {
 
     /// Decode wire format to a `usize`.
     ///
-    /// Default implementation decodes via `decode` and parses ASCII digits.
+    /// Default implementation delegates to `decode_u64` and checks that the value fits.
     #[inline(always)]
     fn decode_usize<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<usize, Error> {
-        parse_usize(Self::decode(input, scratch)?)
+        usize::try_from(Self::decode_u64(input, scratch)?).map_err(|_| {
+            cold_path();
+            Error::Invalid
+        })
     }
 
     /// Encode a signed 64-bit integer to wire format.
