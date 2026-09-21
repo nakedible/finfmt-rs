@@ -226,6 +226,53 @@ mod tests {
         }
     }
 
+    struct ScratchWord<const OUTPUT_BYTES: usize>;
+
+    impl<const N: usize> BitmapWord for ScratchWord<N> {
+        const BYTES: usize = 8;
+    }
+
+    impl<const N: usize> crate::ScalarFmt for ScratchWord<N> {
+        fn encoded_len(input: &[u8]) -> Result<usize, crate::Error> {
+            BitmapBinaryWord::encoded_len(input)
+        }
+
+        fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<(), crate::Error> {
+            BitmapBinaryWord::encode(output, scratch, input)
+        }
+
+        fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
+            use crate::primitive::bytes::{copy_bytes, decode_exact_bytes};
+            let bytes = decode_exact_bytes(input, N)?;
+            Ok(copy_bytes(scratch, bytes)?)
+        }
+    }
+
+    #[test]
+    fn test_bitmap_custom_word_decode_contract() {
+        fn wrong_width<const N: usize>() {
+            let result = std::panic::catch_unwind(|| {
+                decode_bitmap::<ScratchWord<N>>(&mut [0; 16].as_slice(), &mut [0; 128], BitmapLayout::fixed(1))
+            });
+            if cfg!(debug_assertions) {
+                assert!(result.is_err());
+            } else {
+                assert_eq!(result.unwrap(), Err(crate::Error::Internal));
+            }
+        }
+        wrong_width::<0>();
+        wrong_width::<7>();
+        wrong_width::<9>();
+
+        let mut bitmap = Bitmap::new();
+        for id in [2, 66, 130, 192] {
+            bitmap.set(id, true);
+        }
+        for scratch_len in [8, 128] {
+            assert_eq!(roundtrip::<ScratchWord<8>>(&bitmap, BitmapLayout::iso(1, 3), scratch_len).1, 24);
+        }
+    }
+
     #[cfg(debug_assertions)]
     #[test]
     #[should_panic(expected = "bitmap max_words out of range")]

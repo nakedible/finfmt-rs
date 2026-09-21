@@ -202,13 +202,15 @@ fn encode_bitmap_word<F: BitmapWord>(output: &mut &mut [u8], scratch: &mut [u8],
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 fn decode_bitmap_word<F: BitmapWord>(input: &mut &[u8], scratch: &mut [u8]) -> Result<u64, Error> {
+    // Reborrow input for scratch's lifetime, then restore a suffix of the original slice.
     let source = *input;
     let mut input_ptr = source;
     let mut scratch_ptr = &mut scratch[..];
     let bytes = F::decode(&mut input_ptr, &mut scratch_ptr)?;
+    debug_assert_eq!(bytes.len(), F::BYTES, "bitmap word decoder returned incorrect length");
     if bytes.len() != F::BYTES {
         cold_path();
-        return Err(Error::Invalid);
+        return Err(Error::Internal);
     }
     let mut word = [0u8; 8];
     let dst = word.get_mut(..F::BYTES).ok_or_else(|| {
