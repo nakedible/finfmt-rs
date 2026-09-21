@@ -219,6 +219,14 @@ fn bench_packed(suite: &mut Suite) {
                 black_box(buf)
             })
         });
+        group.bench("encode_decimal_packed_fixed_8_even", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 8];
+                let mut out = &mut buf[..];
+                let _ = encode_decimal_packed_fixed_8(&mut out, black_box(b"123456789012"));
+                black_box(buf)
+            })
+        });
         group.bench("encode_decimal_packed_signed_fixed_8", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 8];

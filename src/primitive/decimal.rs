@@ -3,9 +3,9 @@ use no_panic::no_panic;
 
 use crate::Error;
 use crate::primitive::bytes::all_bytes_eq;
-use crate::primitive::ebcdic::{ASCII_TO_EBCDIC_037, EBCDIC_037_TO_ASCII, translate_bytes, translate_bytes_inplace};
+use crate::primitive::ebcdic::{EBCDIC_037_TO_ASCII, translate_bytes};
 use crate::primitive::int::decode_signed_magnitude_i64;
-use crate::primitive::nibble::{Bcdz, NibbleAlphabet, pack_nibbles, unpack_nibbles};
+use crate::primitive::nibble::{Bcdz, NibbleAlphabet, pack_nibbles, unpack_padded_nibbles};
 use crate::primitive::validation::{parse_scaled_decimal, parse_signed_decimal, split_signed_input, validate_numeric};
 use crate::utils::cold_path;
 
@@ -386,35 +386,36 @@ pub fn packed_decimal_max_digits(bytes_len: usize) -> Result<usize, Error> {
 
 #[inline(always)]
 fn encode_decimal_ebcdic_signed_digits(output: &mut [u8], digits: &[u8], negative: bool) {
-    let pad = output.len() - digits.len();
-    output[..pad].fill(0xF0);
-    if digits.len() > 1 {
-        let end = output.len() - 1;
-        output[pad..end].copy_from_slice(&digits[..digits.len() - 1]);
-        translate_bytes_inplace(&mut output[pad..end], &ASCII_TO_EBCDIC_037);
+    debug_assert!(!digits.is_empty() && digits.len() <= output.len());
+    if let ([body @ .., last], [out @ .., last_out]) = (digits, output) {
+        let pad = out.len().saturating_sub(body.len());
+        let (padding, target) = out.split_at_mut(pad);
+        padding.fill(0xF0);
+        for (out, &digit) in target.iter_mut().zip(body) {
+            *out = digit.wrapping_add(0xC0);
+        }
+        *last_out = encode_overpunch_digit(negative, last.wrapping_sub(b'0'));
     }
-    output[output.len() - 1] = encode_overpunch_digit(negative, digits[digits.len() - 1] - b'0');
 }
 
 #[inline(always)]
 fn encode_decimal_packed_digits(output: &mut [u8], digits: &[u8], negative: bool, signed: bool) -> Result<(), Error> {
-    let max_digits = packed_decimal_max_digits(output.len())?;
-    let pad = max_digits - digits.len();
-    let prefix_bytes = pad / 2;
+    debug_assert!(!digits.is_empty());
+    debug_assert!(digits.len() <= output.len().saturating_mul(2).saturating_sub(1));
+    let used_bytes = digits.len() / 2 + 1;
+    let prefix_bytes = output.len().saturating_sub(used_bytes);
+    let (prefix, tail) = output.split_at_mut(prefix_bytes);
+    prefix.fill(0);
     let sign = encode_packed_sign(negative, signed);
-    output[..prefix_bytes].fill(0);
     if digits.len().is_multiple_of(2) {
-        let (first, rest) = digits.split_first().ok_or_else(|| {
+        let ([first, rest @ ..], [first_out, tail @ ..]) = (digits, tail) else {
             cold_path();
-            Error::Invalid
-        })?;
-        let tail = &mut output[prefix_bytes..];
-        tail[0] = first.wrapping_sub(b'0');
-        let mut rest_out = &mut tail[1..];
-        let _ = pack_nibbles(&mut rest_out, rest, false, sign, &Bcdz::NIBBLES)?;
+            return Err(Error::Invalid);
+        };
+        *first_out = first.wrapping_sub(b'0');
+        pack_nibbles(&mut &mut *tail, rest, false, sign, &Bcdz::NIBBLES)?;
     } else {
-        let mut tail = &mut output[prefix_bytes..];
-        let _ = pack_nibbles(&mut tail, digits, false, sign, &Bcdz::NIBBLES)?;
+        pack_nibbles(&mut &mut *tail, digits, false, sign, &Bcdz::NIBBLES)?;
     }
     Ok(())
 }
@@ -562,6 +563,8 @@ pub fn encode_decimal_ebcdic_signed_fixed(output: &mut &mut [u8], input: &[u8], 
     Ok(())
 }
 
+/// Reserve `len + 1` scratch bytes and return the canonical signed digits within
+/// that area. The returned slice may start after the beginning of the reservation.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_decimal_ebcdic_signed_fixed<'a>(input: &mut &[u8], output: &mut &'a mut [u8], len: usize) -> Result<&'a mut [u8], Error> {
@@ -569,80 +572,69 @@ pub fn decode_decimal_ebcdic_signed_fixed<'a>(input: &mut &[u8], output: &mut &'
         cold_path();
         Error::UnexpectedEof
     })?;
-    if len == 0 {
+    let Some((&last, body)) = input.split_last() else {
         cold_path();
         return Err(Error::Invalid);
-    }
-
-    let buf = output.split_off_mut(..len + 1).ok_or_else(|| {
+    };
+    let buf = output.split_off_mut(..input.len() + 1).ok_or_else(|| {
         cold_path();
         Error::BufferOverflow
     })?;
-
-    let body_len = len - 1;
-    let (negative, last_digit) = decode_overpunch_digit(input[len - 1])?;
-    let out = usize::from(negative);
-    if body_len != 0 {
-        translate_bytes(&mut buf[out..out + body_len], &input[..body_len], &EBCDIC_037_TO_ASCII)?;
-        validate_numeric(&buf[out..out + body_len], body_len, body_len)?;
-    }
-    let first_nonzero = buf[out..out + body_len].iter().position(|&byte| byte != b'0');
-    if first_nonzero.is_none() && last_digit == 0 {
-        buf[0] = b'0';
-        return Ok(&mut buf[..1]);
-    }
-    let copied = if let Some(first_nonzero) = first_nonzero {
-        buf.copy_within(out + first_nonzero..out + body_len, out);
-        body_len - first_nonzero
-    } else {
-        0
+    let (negative, last_digit) = decode_overpunch_digit(last)?;
+    let [_, digits @ .., last_out] = &mut *buf else {
+        cold_path();
+        return Err(Error::BufferOverflow);
     };
-    if negative {
-        buf[0] = b'-';
-    }
-    let last_pos = out + copied;
-    buf[last_pos] = b'0' + last_digit;
-    let total_len = last_pos + 1;
-    Ok(&mut buf[..total_len])
+    translate_bytes(digits, body, &EBCDIC_037_TO_ASCII)?;
+    validate_numeric(&*digits, body.len(), body.len())?;
+    *last_out = b'0' + last_digit;
+    Ok(canonical_signed_digits(buf, negative))
 }
 
+// The first byte is reserved for an optional minus; the rest are ASCII digits.
 #[inline(always)]
-fn unpack_decimal_packed<'a>(input: &[u8], output: &mut &'a mut [u8]) -> Result<&'a mut [u8], Error> {
-    let buf = output.split_off_mut(..input.len() * 2).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
-    let mut out = &mut *buf;
-    unpack_nibbles(&mut out, input, &Bcdz::DIGITS)
+fn canonical_signed_digits(mut buf: &mut [u8], negative: bool) -> &mut [u8] {
+    debug_assert!(buf.len() >= 2);
+    while matches!(buf, [_, b'0', _, ..]) {
+        buf = &mut buf[1..];
+    }
+    if negative && !matches!(buf, [_, b'0']) {
+        if let [sign, ..] = buf {
+            *sign = b'-';
+        }
+        buf
+    } else {
+        match buf {
+            [_, digits @ ..] => digits,
+            [] => buf,
+        }
+    }
 }
 
 #[inline(always)]
 fn decode_decimal_packed_common<'a>(input: &[u8], output: &mut &'a mut [u8], signed: bool) -> Result<&'a mut [u8], Error> {
-    if input.is_empty() {
+    let Some(&last) = input.last() else {
         cold_path();
         return Err(Error::Invalid);
-    }
-    let buf = unpack_decimal_packed(input, output)?;
-    let negative = decode_packed_sign(input[input.len() - 1] & 0x0F)?;
+    };
+    let buf = output.split_off_mut(..input.len() * 2).ok_or_else(|| {
+        cold_path();
+        Error::BufferOverflow
+    })?;
+    let sign = last & 0x0F;
+    let negative = decode_packed_sign(sign)?;
     if negative && !signed {
         cold_path();
         return Err(Error::Invalid);
     }
-    let digits_len = buf.len() - 1;
-    validate_numeric(&buf[..digits_len], digits_len, digits_len)?;
-    let first_nonzero = buf[..digits_len].iter().position(|&byte| byte != b'0');
-    if first_nonzero.is_none() {
-        buf[0] = b'0';
-        return Ok(&mut buf[..1]);
-    }
-    let offset = usize::from(negative);
-    let first_nonzero = first_nonzero.unwrap_or(0);
-    let end = digits_len;
-    buf.copy_within(first_nonzero..end, offset);
-    if negative {
-        buf[0] = b'-';
-    }
-    Ok(&mut buf[..offset + end - first_nonzero])
+    let [_, digits @ ..] = &mut *buf else {
+        cold_path();
+        return Err(Error::BufferOverflow);
+    };
+    let len = digits.len();
+    unpack_padded_nibbles(&mut &mut *digits, input, len, false, sign, &Bcdz::DIGITS)?;
+    validate_numeric(&*digits, len, len)?;
+    Ok(canonical_signed_digits(buf, negative))
 }
 
 #[inline(always)]
@@ -667,6 +659,8 @@ pub fn encode_decimal_packed_signed_fixed(output: &mut &mut [u8], input: &[u8], 
     encode_decimal_packed_digits(buf, digits, negative, true)
 }
 
+/// Reserve `2 * len` scratch bytes and return canonical unsigned digits within
+/// that area. The returned slice may start after the beginning of the reservation.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_decimal_packed_fixed<'a>(input: &mut &[u8], output: &mut &'a mut [u8], len: usize) -> Result<&'a mut [u8], Error> {
@@ -677,6 +671,8 @@ pub fn decode_decimal_packed_fixed<'a>(input: &mut &[u8], output: &mut &'a mut [
     decode_decimal_packed_common(input, output, false)
 }
 
+/// Reserve `2 * len` scratch bytes and return canonical signed digits within
+/// that area. The returned slice may start after the beginning of the reservation.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_decimal_packed_signed_fixed<'a>(input: &mut &[u8], output: &mut &'a mut [u8], len: usize) -> Result<&'a mut [u8], Error> {
@@ -833,6 +829,29 @@ mod tests {
         assert_eq!(encode_packed_sign(false, true), 0xC);
         assert_eq!(encode_packed_sign(true, true), 0xD);
         assert_eq!(encode_packed_sign(false, false), 0xF);
+    }
+
+    #[test]
+    fn test_packed_and_zoned_widths_and_signs() {
+        for sign in 0u8..=15 {
+            let expected = match sign {
+                0xA | 0xC | 0xE | 0xF => Ok(b"7".as_slice()),
+                0xB | 0xD => Ok(b"-7".as_slice()),
+                _ => Err(Error::Invalid),
+            };
+            assert_eq!(decode_signed_packed_ascii::<1>(&[0x70 | sign]).as_deref(), expected.as_deref());
+            assert_eq!(decode_signed_ebcdic_ascii::<1>(&[(sign << 4) | 7]).as_deref(), expected.as_deref());
+        }
+        for digits in ["0", "00", "7", "12", "123", "1234", "00012", "-0", "-000", "-12", "-1234"] {
+            let wire = encode_signed_packed_ascii::<3>(digits.as_bytes()).unwrap();
+            let expected = digits.parse::<i64>().unwrap().to_string().into_bytes();
+            assert_eq!(decode_signed_packed_ascii::<3>(&wire), Ok(expected.clone()));
+            let wire = encode_signed_ebcdic_ascii::<5>(digits.as_bytes()).unwrap();
+            assert_eq!(decode_signed_ebcdic_ascii::<5>(&wire), Ok(expected));
+        }
+        for wire in [[0xFA, 0x1C], [0x1A, 0x2C], [0x12, 0xFC]] {
+            assert_eq!(decode_signed_packed_ascii::<2>(&wire), Err(Error::Invalid));
+        }
     }
 
     #[test]
@@ -1045,7 +1064,7 @@ mod tests {
 
 #[cfg(test)]
 mod proptests {
-    use proptest::{prop_assert_eq, proptest};
+    use proptest::{prop_assert, prop_assert_eq, proptest};
 
     use super::{MAX_INTEGER_TEXT_LEN, decode_decimal_implied, encode_decimal_implied, format_i64, format_u64};
 
@@ -1096,6 +1115,29 @@ mod proptests {
         fn decimal_integer_parsers_roundtrip(unsigned: u64, signed: i64) {
             prop_assert_eq!(super::parse_u64(unsigned.to_string().as_bytes()), Ok(unsigned));
             prop_assert_eq!(super::parse_i64(signed.to_string().as_bytes()), Ok(signed));
+        }
+
+        #[test]
+        fn signed_decimal_wire_roundtrips(value: i64, width in 20usize..=32) {
+            let expected = value.to_string();
+            let mut packed = [0xAA; 40];
+            let mut zoned = [0xAA; 40];
+            super::encode_decimal_packed_signed_fixed(&mut packed.as_mut_slice(), expected.as_bytes(), width).unwrap();
+            super::encode_decimal_ebcdic_signed_fixed(&mut zoned.as_mut_slice(), expected.as_bytes(), width).unwrap();
+            for (is_packed, storage) in [(true, packed), (false, zoned)] {
+                let mut input = storage.as_slice();
+                let mut scratch = [0xAA; 80];
+                let mut out = scratch.as_mut_slice();
+                let decoded = if is_packed {
+                    super::decode_decimal_packed_signed_fixed(&mut input, &mut out, width)
+                } else {
+                    super::decode_decimal_ebcdic_signed_fixed(&mut input, &mut out, width)
+                }.unwrap();
+                prop_assert_eq!(&*decoded, expected.as_bytes());
+                prop_assert_eq!(input, &storage[width..]);
+                prop_assert_eq!(out.len(), 80 - if is_packed { 2 * width } else { width + 1 });
+                prop_assert!(out.iter().all(|&byte| byte == 0xAA));
+            }
         }
 
         #[test]
