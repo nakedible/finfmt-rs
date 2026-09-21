@@ -116,8 +116,13 @@ For invalid inputs that violate those assumptions, a primitive may return
 - panic in release builds,
 - read or write outside the provided slices,
 - mutate unrelated memory or unrelated cursors,
-- rely on undefined behavior,
-- silently lose structural data, such as truncating a bitmap outside its layout.
+- rely on undefined behavior.
+
+Bitmap representability is one such caller-side invariant: populated fields
+must fit the layout and decoded word width, and semantic presence bits must not
+occupy reserved continuation positions. Violating these encoding preconditions
+may discard fields in release builds; malformed wire input is still checked on
+decode.
 
 Debug builds should assert assumed invariants where practical. These assertions
 are there to catch incorrect format composition and incorrect primitive usage

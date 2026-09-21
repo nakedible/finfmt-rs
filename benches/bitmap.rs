@@ -45,6 +45,39 @@ fn bench_bitmap(suite: &mut Suite) {
         group.bench("decode_bitmap_binary_fixed2", |b| {
             b.iter(|| black_box(decode_bitmap_binary_fixed2(&mut black_box([0; 16].as_slice()), &mut [])))
         });
+        group.bench("encode_bitmap_binary_half_word", |b| {
+            let bitmap = Bitmap::new();
+            b.iter(|| {
+                let mut output = [0; 4];
+                let _ = encode_bitmap_binary_half_word(&mut output.as_mut_slice(), &mut [], black_box(&bitmap));
+                black_box(output)
+            })
+        });
+        group.bench("decode_bitmap_binary_half_word", |b| {
+            b.iter(|| black_box(decode_bitmap_binary_half_word(&mut black_box([0; 4].as_slice()), &mut [])))
+        });
+        let bitmap = sample_bitmap();
+        group.bench("bitmap_get_field2", move |b| {
+            b.iter(|| black_box(bitmap_get_field2(black_box(&bitmap))))
+        });
+        group.bench("bitmap_word1", move |b| b.iter(|| black_box(bitmap_word1(black_box(&bitmap)))));
+        group.bench("bitmap_highest_word", move |b| {
+            b.iter(|| black_box(bitmap_highest_word(black_box(&bitmap))))
+        });
+        group.bench("bitmap_set_field2", move |b| {
+            let mut bitmap = bitmap;
+            b.iter(|| {
+                bitmap_set_field2(&mut bitmap, black_box(true));
+                black_box(bitmap)
+            })
+        });
+        group.bench("bitmap_set_word1", move |b| {
+            let mut bitmap = bitmap;
+            b.iter(|| {
+                bitmap_set_word1(&mut bitmap, black_box(1));
+                black_box(bitmap)
+            })
+        });
         let bitmap = sample_bitmap();
 
         group.bench("encode_bitmap_binary_iso2", move |b| {

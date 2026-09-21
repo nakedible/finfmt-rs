@@ -15,13 +15,22 @@ mod tests {
 
     #[test]
     fn test_bitmap_bits_and_words() {
-        let mut bitmap = Bitmap::new();
-        bitmap.set(1, true);
-        bitmap.set(64, true);
-        bitmap.set(65, true);
-        bitmap.set(192, true);
-        assert!(bitmap.get(1) && bitmap.get(64) && bitmap.get(65) && bitmap.get(192));
-        assert_eq!(bitmap.highest_word(), 2);
+        for id in 1..=192 {
+            let mut bitmap = Bitmap::new();
+            assert_eq!(bitmap.highest_word(), 0);
+            bitmap.set(id, true);
+            let index = usize::from((id - 1) / 64);
+            let word = 1u64 << (63 - (id - 1) % 64);
+            assert!(bitmap.get(id));
+            assert_eq!(bitmap.word(index), word);
+            assert_eq!(bitmap.highest_word(), index);
+            bitmap.set(id, false);
+            assert_eq!(bitmap, Bitmap::new());
+            bitmap.set_word(index, word);
+            assert!(bitmap.get(id));
+            bitmap.set_word(index, 0);
+            assert_eq!(bitmap, Bitmap::new());
+        }
     }
 
     #[test]
@@ -242,24 +251,86 @@ mod tests {
         let _ = encode_bitmap::<BitmapBinaryWord>(&mut out, &mut scratch, &bitmap, layout);
     }
 
+    #[test]
+    fn test_bitmap_representability_diagnostics() {
+        for (id, layout) in [
+            (33, BitmapLayout::fixed(1)),
+            (97, BitmapLayout::fixed(2)),
+            (1, BitmapLayout::iso(1, 2)),
+            (65, BitmapLayout::iso(1, 2)),
+            (66, BitmapLayout::new(1, 2, [Some(64), None, None])),
+            (65, BitmapLayout::fixed(1)),
+        ] {
+            let result = std::panic::catch_unwind(|| {
+                let mut bitmap = Bitmap::new();
+                bitmap.set(id, true);
+                encode_bitmap::<BitmapBinaryHalfWord>(&mut [0; 24].as_mut_slice(), &mut [], &bitmap, layout)
+            });
+            assert_eq!(result.is_err(), cfg!(debug_assertions));
+        }
+        let decode = std::panic::catch_unwind(|| {
+            decode_bitmap::<BitmapBinaryHalfWord>(&mut [0; 8].as_slice(), &mut [], BitmapLayout::new(1, 2, [Some(64), None, None]))
+        });
+        assert_eq!(decode.is_err(), cfg!(debug_assertions));
+    }
+
+    #[test]
+    fn test_bitmap_narrow_word_boundaries() {
+        fn check<const N: usize>() {
+            let mut bitmap = Bitmap::new();
+            for index in 0..3 {
+                bitmap.set((index * 64 + N * 8) as u16, true);
+            }
+            for layout in [BitmapLayout::fixed(3), BitmapLayout::iso(1, 3), BitmapLayout::iso(3, 3)] {
+                assert_eq!(roundtrip::<Field<Binary<N, N>, Fixed<N>>>(&bitmap, layout, 128).1, N * 3);
+            }
+        }
+        check::<1>();
+        check::<2>();
+        check::<3>();
+        check::<4>();
+        check::<5>();
+        check::<6>();
+        check::<7>();
+        check::<8>();
+    }
+
     #[cfg(not(debug_assertions))]
     #[test]
-    fn test_bitmap_invalid_inputs_return_errors_in_release() {
-        let mut output = [0u8; 32];
-        let mut scratch = [0u8; 8];
-        let mut out = output.as_mut_slice();
-        assert_eq!(
-            encode_bitmap::<BitmapBinaryWord>(&mut out, &mut scratch, &Bitmap::new(), BitmapLayout::fixed(4)),
-            Err(crate::Error::Internal)
-        );
-
+    fn test_bitmap_malformed_parameters_do_not_panic() {
+        fn check<const N: usize>() {
+            for min in [0, 1, 2, 3, 4, 255] {
+                for max in [0, 1, 2, 3, 4, 255] {
+                    for bit in [None, Some(0), Some(1), Some(64), Some(65), Some(255)] {
+                        let layout = BitmapLayout::new(min, max, [bit; 3]);
+                        for capacity in [0, 1, 7, 8, 16, 24] {
+                            let mut bitmap = Bitmap::new();
+                            for index in 0..3 {
+                                bitmap.set_word(index, u64::MAX);
+                            }
+                            let _ = encode_bitmap::<Field<Binary<N, N>, Fixed<N>>>(&mut &mut [0; 24][..capacity], &mut [], &bitmap, layout);
+                            let _ = decode_bitmap::<Field<Binary<N, N>, Fixed<N>>>(&mut &[255; 24][..capacity], &mut [], layout);
+                        }
+                    }
+                }
+            }
+        }
+        check::<0>();
+        check::<1>();
+        check::<4>();
+        check::<8>();
+        check::<9>();
+        check::<{ usize::MAX }>();
         let mut bitmap = Bitmap::new();
-        bitmap.set(65, true);
-        let mut out = output.as_mut_slice();
-        assert_eq!(
-            encode_bitmap::<BitmapBinaryWord>(&mut out, &mut scratch, &bitmap, BitmapLayout::fixed(1)),
-            Err(crate::Error::Internal)
-        );
+        for id in [0, 193, u16::MAX] {
+            bitmap.set(id, true);
+            assert!(!bitmap.get(id));
+        }
+        for index in [3, usize::MAX] {
+            bitmap.set_word(index, u64::MAX);
+            assert_eq!(bitmap.word(index), 0);
+        }
+        assert_eq!(bitmap, Bitmap::new());
     }
 }
 

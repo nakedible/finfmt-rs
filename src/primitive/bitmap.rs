@@ -1,9 +1,13 @@
 #[cfg(all(not(debug_assertions), feature = "no-panic"))]
 use no_panic::no_panic;
 
+use super::bytes::all_bytes_eq;
 use crate::utils::cold_path;
 use crate::{Error, ScalarFmt};
 
+/// Presence bits for fields 1 through 192, stored most-significant bit first.
+///
+/// Field numbers are independent of wire width: each raw word covers 64 fields.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Bitmap([u64; 3]);
 
@@ -55,6 +59,7 @@ impl Bitmap {
         Self([0; 3])
     }
 
+    /// Set or clear a one-based field number in `1..=192`.
     #[inline(always)]
     #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
     pub fn set(&mut self, id: u16, value: bool) {
@@ -75,6 +80,7 @@ impl Bitmap {
         }
     }
 
+    /// Read a one-based field number in `1..=192`.
     #[inline(always)]
     #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
     pub fn get(&self, id: u16) -> bool {
@@ -91,6 +97,7 @@ impl Bitmap {
         }
     }
 
+    /// Read a raw word at a zero-based index in `0..3`.
     #[inline(always)]
     #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
     pub fn word(&self, index: usize) -> u64 {
@@ -104,6 +111,7 @@ impl Bitmap {
         }
     }
 
+    /// Replace a raw word at a zero-based index in `0..3`.
     #[inline(always)]
     #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
     pub fn set_word(&mut self, index: usize, word: u64) {
@@ -115,6 +123,7 @@ impl Bitmap {
         }
     }
 
+    /// Return the highest nonzero word index, or zero for an empty bitmap.
     #[inline(always)]
     #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
     pub fn highest_word(&self) -> usize {
@@ -124,7 +133,12 @@ impl Bitmap {
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-fn validate_bitmap_layout(layout: BitmapLayout) -> Result<usize, Error> {
+fn validate_bitmap_layout<F: BitmapWord>(layout: BitmapLayout) -> Result<usize, Error> {
+    debug_assert!(F::BYTES > 0 && F::BYTES <= 8, "bitmap word byte width out of range");
+    if F::BYTES == 0 || F::BYTES > 8 {
+        cold_path();
+        return Err(Error::Internal);
+    }
     let max_words = usize::from(layout.max_words);
     debug_assert!(max_words > 0 && max_words <= 3, "bitmap max_words out of range");
     if max_words == 0 || max_words > 3 {
@@ -144,6 +158,10 @@ fn validate_bitmap_layout(layout: BitmapLayout) -> Result<usize, Error> {
     while index < 3 {
         if let Some(bit) = layout.continuation_bits[index] {
             debug_assert!(bit > 0 && bit <= 64, "bitmap continuation bit out of range");
+            debug_assert!(
+                index >= max_words || usize::from(bit) <= F::BYTES * 8,
+                "bitmap continuation bit outside word width"
+            );
             if bit == 0 || bit > 64 {
                 cold_path();
                 return Err(Error::Internal);
@@ -167,21 +185,13 @@ fn continuation_mask(layout: BitmapLayout, index: usize) -> u64 {
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-fn validate_bitmap_word<F: BitmapWord>() -> Result<(), Error> {
-    debug_assert!(F::BYTES > 0 && F::BYTES <= 8, "bitmap word byte width out of range");
-    if F::BYTES == 0 || F::BYTES > 8 {
-        cold_path();
-        return Err(Error::Internal);
-    }
-    Ok(())
-}
-
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 fn encode_bitmap_word<F: BitmapWord>(output: &mut &mut [u8], scratch: &mut [u8], word: u64) -> Result<(), Error> {
-    validate_bitmap_word::<F>()?;
     let mut scratch_ptr = &mut scratch[..];
     let word = word.to_be_bytes();
+    debug_assert!(
+        word.get(F::BYTES..).is_some_and(|tail| all_bytes_eq(tail, 0)),
+        "bitmap contains bits outside word width"
+    );
     let bytes = word.get(..F::BYTES).ok_or_else(|| {
         cold_path();
         Error::Internal
@@ -192,7 +202,6 @@ fn encode_bitmap_word<F: BitmapWord>(output: &mut &mut [u8], scratch: &mut [u8],
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 fn decode_bitmap_word<F: BitmapWord>(input: &mut &[u8], scratch: &mut [u8]) -> Result<u64, Error> {
-    validate_bitmap_word::<F>()?;
     let source = *input;
     let mut input_ptr = source;
     let mut scratch_ptr = &mut scratch[..];
@@ -218,6 +227,13 @@ fn decode_bitmap_word<F: BitmapWord>(input: &mut &[u8], scratch: &mut [u8]) -> R
     Ok(u64::from_be_bytes(word))
 }
 
+/// Encode semantic presence bits through the supplied word format.
+///
+/// The bitmap must fit the layout, with all continuation positions clear and
+/// no populated bits outside each word's decoded byte width. Short words use
+/// the high bytes of each 64-field group: four-byte words cover fields 1–32,
+/// 65–96, and 129–160. Active continuation positions must fit that width.
+/// These caller/configuration preconditions are asserted in debug builds.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn encode_bitmap<F: BitmapWord>(
@@ -226,12 +242,13 @@ pub fn encode_bitmap<F: BitmapWord>(
     bitmap: &Bitmap,
     layout: BitmapLayout,
 ) -> Result<(), Error> {
-    let max_words = validate_bitmap_layout(layout)?;
-    let highest_words = bitmap.highest_word() + 1;
-    debug_assert!(highest_words <= max_words, "bitmap contains words outside layout");
-    if highest_words > max_words {
-        cold_path();
-        return Err(Error::Internal);
+    let max_words = validate_bitmap_layout::<F>(layout)?;
+    debug_assert!(bitmap.highest_word() < max_words, "bitmap contains words outside layout");
+    let mut highest_words = 1;
+    for index in 0..max_words {
+        if bitmap.word(index) != 0 {
+            highest_words = index + 1;
+        }
     }
     let required_words = highest_words.max(usize::from(layout.min_words));
     let mut words = max_words;
@@ -243,6 +260,7 @@ pub fn encode_bitmap<F: BitmapWord>(
     }
     for index in 0..words {
         let cont = continuation_mask(layout, index);
+        debug_assert_eq!(bitmap.word(index) & cont, 0, "bitmap contains reserved continuation bits");
         let mut word = bitmap.word(index) & !cont;
         if index + 1 < words {
             word |= cont;
@@ -252,10 +270,14 @@ pub fn encode_bitmap<F: BitmapWord>(
     Ok(())
 }
 
+/// Decode presence bits, removing continuation flags from the returned bitmap.
+///
+/// The word format and active continuation positions must agree on the decoded
+/// width. Scratch is reused for each word; no borrow escapes into the bitmap.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_bitmap<F: BitmapWord>(input: &mut &[u8], scratch: &mut [u8], layout: BitmapLayout) -> Result<Bitmap, Error> {
-    let max_words = validate_bitmap_layout(layout)?;
+    let max_words = validate_bitmap_layout::<F>(layout)?;
     let mut bitmap = Bitmap::new();
     for index in 0..max_words {
         let word = decode_bitmap_word::<F>(input, scratch)?;
