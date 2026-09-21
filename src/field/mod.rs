@@ -34,5 +34,5 @@ pub use numeric::{
     FixedBinaryBe, FixedComp3, FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedEbcdic, ImpliedDecimal, MinusPrefix,
     SignPrefix,
 };
-pub use step::{ByteCheck, Chain, Step};
+pub use step::{Chain, DecodeCheck, Step};
 pub use text::{Identity, PadLeft, PadLeftEven, PadRight, PadRightEven};

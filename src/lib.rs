@@ -17,12 +17,12 @@ pub use composite::{
     TrailingLengthFrame,
 };
 pub use field::{
-    Alpha, Alphanum, Ascii, AsciiLength, AsciiPrintable, AsciiWireLength, Bcd, BcdBytes, Bcdz, Binary, BlankableEbcdicLength, ByteCheck,
-    Check, DecodePlan, Ebcdic037, Ebcdic1142, Ebcdic1142Text, EbcdicLength, EbcdicPrintable, EbcdicWireLength, Field, Fixed, FixedBinaryBe,
-    FixedComp3, FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedEbcdic, Hex, HexEven, HexLower, HexLowerEven,
-    HexUpper, HexUpperEven, Identity, ImpliedDecimal, Iso88591, Length, LengthSpec, MinusPrefix, Numeric, PackNibbles, PackNibblesLeft,
-    PackNibblesRight, PadLeft, PadLeftEven, PadRight, PadRightEven, PaddedField, Rest, SignPrefix, Step, Track2, UnpackNibbles, UpperAlpha,
-    UpperAlphanum, UpperAsciiPrintable, WireFixed, WireLength,
+    Alpha, Alphanum, Ascii, AsciiLength, AsciiPrintable, AsciiWireLength, Bcd, BcdBytes, Bcdz, Binary, BlankableEbcdicLength, Check,
+    DecodeCheck, DecodePlan, Ebcdic037, Ebcdic1142, Ebcdic1142Text, EbcdicLength, EbcdicPrintable, EbcdicWireLength, Field, Fixed,
+    FixedBinaryBe, FixedComp3, FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedEbcdic, Hex, HexEven, HexLower,
+    HexLowerEven, HexUpper, HexUpperEven, Identity, ImpliedDecimal, Iso88591, Length, LengthSpec, MinusPrefix, Numeric, PackNibbles,
+    PackNibblesLeft, PackNibblesRight, PadLeft, PadLeftEven, PadRight, PadRightEven, PaddedField, Rest, SignPrefix, Step, Track2,
+    UnpackNibbles, UpperAlpha, UpperAlphanum, UpperAsciiPrintable, WireFixed, WireLength,
 };
 pub use scalarfmt::ScalarFmt;
 pub use types::{Error, StructError};

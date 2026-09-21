@@ -140,12 +140,12 @@ mod tests {
     type FixedEbcdicNumeric2 = Field<
         Numeric<1, 2>,
         crate::WireFixed<2>,
-        crate::chain!(PadLeft<2, b'0', 1>, crate::ByteCheck<crate::Ebcdic037, crate::EbcdicPrintable<2, 2>>),
+        crate::chain!(PadLeft<2, b'0', 1>, crate::DecodeCheck<crate::Ebcdic037, crate::EbcdicPrintable<2, 2>>),
     >;
     type FixedIbm1142<const N: usize> = Field<Ebcdic1142Text<0, N>, Fixed<N>, crate::chain!(Ebcdic1142, PadRight<N, 0x40>)>;
     type PaddedHex = PaddedField<crate::HexUpperEven<0, 8>, EbcdicWireLength<2>, PackNibblesRight<HexUpper, 0>, 4, 0x40>;
     type FixedAsciiViaEbcdic = Field<Ascii<1, 1>, Fixed<1>, crate::Ebcdic037>;
-    type StrictFixedAsciiViaEbcdic = Field<Ascii<1, 1>, Fixed<1>, crate::ByteCheck<crate::Ebcdic037, crate::EbcdicPrintable<1, 1>>>;
+    type StrictFixedAsciiViaEbcdic = Field<Ascii<1, 1>, Fixed<1>, crate::DecodeCheck<crate::Ebcdic037, crate::EbcdicPrintable<1, 1>>>;
 
     fn encode_field<F: ScalarFmt>(input: &[u8], out_len: usize, scratch_len: usize) -> Result<Vec<u8>, Error> {
         let mut out = vec![0u8; out_len];
@@ -311,7 +311,7 @@ mod tests {
     }
 
     #[test]
-    fn test_byte_check_strict_decode_and_encode_passthrough() {
+    fn test_decode_check_strict_decode_and_encode_passthrough() {
         assert_eq!(decode_field::<FixedAsciiViaEbcdic>(&[0x00], 4).unwrap(), b"\0");
         assert_eq!(decode_field::<StrictFixedAsciiViaEbcdic>(&[0x00], 4), Err(Error::Invalid));
         assert_eq!(

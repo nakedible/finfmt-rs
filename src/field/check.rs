@@ -6,6 +6,9 @@ use crate::primitive::validation::{
     validate_upper_ascii_printable,
 };
 
+/// Validate semantic input and return its logical length. All built-in checks
+/// return bytes except `Ebcdic1142Text`, which returns Unicode scalar values.
+/// The field's first `Step` and length spec must use the same logical units.
 pub trait Check {
     fn validate(input: &[u8]) -> Result<usize, Error>;
 }

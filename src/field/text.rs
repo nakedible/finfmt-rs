@@ -108,7 +108,10 @@ pub struct PadRightEven<const CHAR: u8 = b' '>;
 impl<const CHAR: u8> Step for PadRightEven<CHAR> {
     #[inline(always)]
     fn encoded_len(input_len: usize) -> Result<usize, Error> {
-        Ok(input_len + input_len % 2)
+        input_len.checked_add(input_len % 2).ok_or_else(|| {
+            cold_path();
+            Error::BufferOverflow
+        })
     }
 
     #[inline(always)]
@@ -118,7 +121,7 @@ impl<const CHAR: u8> Step for PadRightEven<CHAR> {
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-        encode_bytes(output, input, input.len() + input.len() % 2, false, CHAR)
+        encode_bytes(output, input, Self::encoded_len(input.len())?, false, CHAR)
     }
 
     #[inline(always)]
@@ -137,7 +140,10 @@ pub struct PadLeftEven<const CHAR: u8 = b' '>;
 impl<const CHAR: u8> Step for PadLeftEven<CHAR> {
     #[inline(always)]
     fn encoded_len(input_len: usize) -> Result<usize, Error> {
-        Ok(input_len + input_len % 2)
+        input_len.checked_add(input_len % 2).ok_or_else(|| {
+            cold_path();
+            Error::BufferOverflow
+        })
     }
 
     #[inline(always)]
@@ -147,7 +153,7 @@ impl<const CHAR: u8> Step for PadLeftEven<CHAR> {
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-        encode_bytes(output, input, input.len() + input.len() % 2, true, CHAR)
+        encode_bytes(output, input, Self::encoded_len(input.len())?, true, CHAR)
     }
 
     #[inline(always)]

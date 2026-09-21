@@ -55,10 +55,6 @@ impl<F: NibbleAlphabet> Step for UnpackNibbles<F> {
 
     #[inline(always)]
     fn decoded_max_len(input_len: usize) -> Result<usize, Error> {
-        if !input_len.is_multiple_of(2) {
-            cold_path();
-            return Err(Error::Invalid);
-        }
         Ok(input_len / 2)
     }
 
@@ -74,11 +70,36 @@ impl<F: NibbleAlphabet> Step for UnpackNibbles<F> {
         _scratch: &mut &'a mut [u8],
         output_len: Option<usize>,
     ) -> Result<&'a [u8], Error> {
-        let output_len = output_len.unwrap_or(Self::decoded_max_len(input.len())?);
-        if input.len() != output_len * 2 {
+        if let Some(output_len) = output_len
+            && output_len != input.len() / 2
+        {
             cold_path();
             return Err(Error::Invalid);
         }
         pack_expanded_nibbles(output, input, &F::NIBBLES).map(|buf| &*buf)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::primitive::nibble::HexUpper;
+
+    #[test]
+    fn unpack_decode_checks_actual_shape_and_requested_length() {
+        for (input, requested, expected) in [
+            (&b"AB"[..], None, Ok(&[0xAB][..])),
+            (b"AB", Some(1), Ok(&[0xAB][..])),
+            (b"AB", Some(2), Err(Error::Invalid)),
+            (b"A", None, Err(Error::Invalid)),
+            (b"A", Some(0), Err(Error::Invalid)),
+            (b"AG", Some(1), Err(Error::Invalid)),
+        ] {
+            let mut output = [0; 2];
+            assert_eq!(
+                UnpackNibbles::<HexUpper>::decode(input, &mut &mut output[..], &mut &mut [][..], requested),
+                expected
+            );
+        }
     }
 }
