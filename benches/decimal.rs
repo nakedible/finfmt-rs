@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use finfmt::asm::decimal::*;
-use finfmt::primitive::decimal::MAX_DECIMAL_LEN;
+use finfmt::primitive::decimal::MAX_INTEGER_TEXT_LEN;
 use zenbench::prelude::*;
 
 fn quick(group: &mut BenchGroup) {
@@ -13,14 +13,14 @@ fn bench_format(suite: &mut Suite) {
         quick(group);
         group.bench("format_u64_to_buf", |b| {
             b.iter(|| {
-                let mut buf = [0u8; MAX_DECIMAL_LEN];
+                let mut buf = [0u8; MAX_INTEGER_TEXT_LEN];
                 let _ = format_u64_to_buf(&mut buf, black_box(1_234_567_890u64));
                 black_box(buf)
             })
         });
         group.bench("format_i64_to_buf", |b| {
             b.iter(|| {
-                let mut buf = [0u8; MAX_DECIMAL_LEN];
+                let mut buf = [0u8; MAX_INTEGER_TEXT_LEN];
                 let _ = format_i64_to_buf(&mut buf, black_box(-1_234_567_890i64));
                 black_box(buf)
             })
@@ -162,11 +162,11 @@ fn bench_fixed_ebcdic(suite: &mut Suite) {
                 black_box(buf)
             })
         });
-        group.bench("encode_decimal_ebcdic_blankable_fixed_2", |b| {
+        group.bench("encode_decimal_ebcdic_blank_zero_fixed_2", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 2];
                 let mut out = &mut buf[..];
-                let _ = encode_decimal_ebcdic_blankable_fixed_2(&mut out, black_box(0));
+                let _ = encode_decimal_ebcdic_blank_zero_fixed_2(&mut out, black_box(0));
                 black_box(buf)
             })
         });
@@ -176,10 +176,10 @@ fn bench_fixed_ebcdic(suite: &mut Suite) {
                 black_box(decode_decimal_ebcdic_fixed_2(&mut input))
             })
         });
-        group.bench("decode_decimal_ebcdic_blankable_fixed_2", |b| {
+        group.bench("decode_decimal_ebcdic_blank_zero_fixed_2", |b| {
             b.iter(|| {
                 let mut input = black_box(&[0x40u8, 0x40][..]);
-                black_box(decode_decimal_ebcdic_blankable_fixed_2(&mut input))
+                black_box(decode_decimal_ebcdic_blank_zero_fixed_2(&mut input))
             })
         });
     });

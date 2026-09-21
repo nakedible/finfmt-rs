@@ -1,20 +1,20 @@
 use crate::Error;
 use crate::primitive::decimal::{
-    MAX_DECIMAL_LEN, decode_decimal_ascii_fixed, decode_decimal_ebcdic_blankable_fixed, decode_decimal_ebcdic_fixed,
+    MAX_INTEGER_TEXT_LEN, decode_decimal_ascii_fixed, decode_decimal_ebcdic_blank_zero_fixed, decode_decimal_ebcdic_fixed,
     decode_decimal_ebcdic_signed_fixed, decode_decimal_implied, decode_decimal_packed_fixed, decode_decimal_packed_signed_fixed,
     decode_negative_prefix, decode_overpunch_digit, decode_packed_sign, decode_sign, encode_decimal_ascii_fixed,
-    encode_decimal_ebcdic_blankable_fixed, encode_decimal_ebcdic_fixed, encode_decimal_ebcdic_signed_fixed, encode_decimal_implied,
+    encode_decimal_ebcdic_blank_zero_fixed, encode_decimal_ebcdic_fixed, encode_decimal_ebcdic_signed_fixed, encode_decimal_implied,
     encode_decimal_packed_fixed, encode_decimal_packed_signed_fixed, encode_negative_prefix, encode_overpunch_digit, encode_packed_sign,
     encode_sign, format_i64, format_u64, packed_decimal_max_digits, parse_i64, parse_u64, parse_usize, prepend_minus,
 };
 
 #[inline(never)]
-pub fn format_u64_to_buf(output: &mut [u8; MAX_DECIMAL_LEN], value: u64) -> &[u8] {
+pub fn format_u64_to_buf(output: &mut [u8; MAX_INTEGER_TEXT_LEN], value: u64) -> &[u8] {
     format_u64(output, value)
 }
 
 #[inline(never)]
-pub fn format_i64_to_buf(output: &mut [u8; MAX_DECIMAL_LEN], value: i64) -> &[u8] {
+pub fn format_i64_to_buf(output: &mut [u8; MAX_INTEGER_TEXT_LEN], value: i64) -> &[u8] {
     format_i64(output, value)
 }
 
@@ -109,8 +109,8 @@ pub fn encode_decimal_ebcdic_fixed_2(output: &mut &mut [u8], value: usize) -> Re
 }
 
 #[inline(never)]
-pub fn encode_decimal_ebcdic_blankable_fixed_2(output: &mut &mut [u8], value: usize) -> Result<(), Error> {
-    encode_decimal_ebcdic_blankable_fixed(output, value, 2)
+pub fn encode_decimal_ebcdic_blank_zero_fixed_2(output: &mut &mut [u8], value: usize) -> Result<(), Error> {
+    encode_decimal_ebcdic_blank_zero_fixed(output, value, 2)
 }
 
 #[inline(never)]
@@ -124,8 +124,8 @@ pub fn decode_decimal_ebcdic_fixed_2(input: &mut &[u8]) -> Result<usize, Error> 
 }
 
 #[inline(never)]
-pub fn decode_decimal_ebcdic_blankable_fixed_2(input: &mut &[u8]) -> Result<usize, Error> {
-    decode_decimal_ebcdic_blankable_fixed(input, 2)
+pub fn decode_decimal_ebcdic_blank_zero_fixed_2(input: &mut &[u8]) -> Result<usize, Error> {
+    decode_decimal_ebcdic_blank_zero_fixed(input, 2)
 }
 
 #[inline(never)]

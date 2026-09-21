@@ -2,8 +2,8 @@ use core::marker::PhantomData;
 
 use super::Step;
 use crate::primitive::decimal::{
-    decode_decimal_ascii_fixed, decode_decimal_ebcdic_blankable_fixed, decode_decimal_ebcdic_fixed, encode_decimal_ascii_fixed,
-    encode_decimal_ebcdic_blankable_fixed, encode_decimal_ebcdic_fixed,
+    decode_decimal_ascii_fixed, decode_decimal_ebcdic_blank_zero_fixed, decode_decimal_ebcdic_fixed, encode_decimal_ascii_fixed,
+    encode_decimal_ebcdic_blank_zero_fixed, encode_decimal_ebcdic_fixed,
 };
 use crate::{Error, ScalarFmt};
 
@@ -199,12 +199,12 @@ impl<const N: usize, S: Step> LengthSpec<S> for BlankableEbcdicLength<N> {
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
-        encode_decimal_ebcdic_blankable_fixed(output, semantic_len, N)
+        encode_decimal_ebcdic_blank_zero_fixed(output, semantic_len, N)
     }
 
     #[inline(always)]
     fn decode_plan<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
-        let semantic_len = decode_decimal_ebcdic_blankable_fixed(input, N)?;
+        let semantic_len = decode_decimal_ebcdic_blank_zero_fixed(input, N)?;
         let wire_len = S::encoded_len(semantic_len)?;
         Ok(DecodePlan {
             output_cap: S::decoded_max_len(wire_len)?,

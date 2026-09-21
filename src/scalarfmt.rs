@@ -1,5 +1,5 @@
 use crate::Error;
-use crate::primitive::decimal::{MAX_DECIMAL_LEN, format_i64, format_u64, parse_i64, parse_u64, parse_usize};
+use crate::primitive::decimal::{MAX_INTEGER_TEXT_LEN, format_i64, format_u64, parse_i64, parse_u64, parse_usize};
 use crate::utils::cold_path;
 
 /// Core encode/decode trait for financial message field types.
@@ -95,7 +95,7 @@ pub trait ScalarFmt {
     /// Override for binary integer encodings.
     #[inline(always)]
     fn encoded_len_u64(input: u64) -> Result<usize, Error> {
-        let mut digits = [0u8; MAX_DECIMAL_LEN];
+        let mut digits = [0u8; MAX_INTEGER_TEXT_LEN];
         Self::encoded_len(format_u64(&mut digits, input))
     }
 
@@ -114,7 +114,7 @@ pub trait ScalarFmt {
     /// Override for binary integer encodings or special sign handling.
     #[inline(always)]
     fn encoded_len_i64(input: i64) -> Result<usize, Error> {
-        let mut digits = [0u8; MAX_DECIMAL_LEN];
+        let mut digits = [0u8; MAX_INTEGER_TEXT_LEN];
         Self::encoded_len(format_i64(&mut digits, input))
     }
 
@@ -126,7 +126,7 @@ pub trait ScalarFmt {
     /// Override for binary integer encodings.
     #[inline(always)]
     fn encode_u64(output: &mut &mut [u8], scratch: &mut &mut [u8], input: u64) -> Result<(), Error> {
-        let mut digits = [0u8; MAX_DECIMAL_LEN];
+        let mut digits = [0u8; MAX_INTEGER_TEXT_LEN];
         Self::encode(output, scratch, format_u64(&mut digits, input))
     }
 
@@ -164,7 +164,7 @@ pub trait ScalarFmt {
     /// Override for binary integer encodings or special sign handling (e.g., C/D prefix).
     #[inline(always)]
     fn encode_i64(output: &mut &mut [u8], scratch: &mut &mut [u8], input: i64) -> Result<(), Error> {
-        let mut digits = [0u8; MAX_DECIMAL_LEN];
+        let mut digits = [0u8; MAX_INTEGER_TEXT_LEN];
         Self::encode(output, scratch, format_i64(&mut digits, input))
     }
 

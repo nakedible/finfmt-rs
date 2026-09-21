@@ -3,7 +3,7 @@ use core::mem::size_of;
 
 use crate::primitive::bytes::{decode_exact_bytes, encode_exact_bytes, validate_exact_length};
 use crate::primitive::decimal::{
-    MAX_DECIMAL_LEN, decode_decimal_ebcdic_signed_fixed, decode_decimal_implied, decode_decimal_packed_fixed,
+    MAX_INTEGER_TEXT_LEN, decode_decimal_ebcdic_signed_fixed, decode_decimal_implied, decode_decimal_packed_fixed,
     decode_decimal_packed_signed_fixed, decode_negative_prefix, decode_sign, encode_decimal_ebcdic_signed_fixed, encode_decimal_implied,
     encode_decimal_packed_fixed, encode_decimal_packed_signed_fixed, encode_negative_prefix, encode_sign, packed_decimal_max_digits,
     prepend_minus,
@@ -69,7 +69,7 @@ impl<F: ScalarFmt, const POS: u8, const NEG: u8> ScalarFmt for SignPrefix<F, POS
     }
 
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
-        let mut output = take_scratch(scratch, MAX_DECIMAL_LEN)?;
+        let mut output = take_scratch(scratch, MAX_INTEGER_TEXT_LEN)?;
         let negative = decode_sign(input, POS, NEG)?;
         let digits = F::decode(input, scratch)?;
         if !negative {
@@ -118,7 +118,7 @@ impl<F: ScalarFmt, const NEG: u8> ScalarFmt for MinusPrefix<F, NEG> {
     }
 
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
-        let mut output = take_scratch(scratch, MAX_DECIMAL_LEN)?;
+        let mut output = take_scratch(scratch, MAX_INTEGER_TEXT_LEN)?;
         let negative = decode_negative_prefix(input, NEG)?;
         let digits = F::decode(input, scratch)?;
         if !negative {
