@@ -77,6 +77,22 @@ pub fn truncate_bytes(input: &[u8], max_len: usize, keep_right: bool) -> &[u8] {
     if keep_right { &input[input.len() - len..] } else { &input[..len] }
 }
 
+/// Apply the same byte limit to text, rejecting a cut inside a UTF-8 character.
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub(crate) fn truncate_str_bytes(input: &str, max_len: usize, keep_right: bool) -> Result<&str, Error> {
+    let len = truncate_bytes(input.as_bytes(), max_len, keep_right).len();
+    let retained = if keep_right {
+        input.get(input.len() - len..)
+    } else {
+        input.get(..len)
+    };
+    retained.ok_or_else(|| {
+        cold_path();
+        Error::Invalid
+    })
+}
+
 /// Encode prevalidated ASCII text with byte padding, without truncation.
 /// Debug builds assert the ASCII precondition; release does not validate it.
 /// The padding byte may be non-ASCII.
@@ -112,6 +128,23 @@ pub fn decode_ascii(input: &[u8], min_len: usize, align_right: bool, padding: u8
 mod tests {
     use super::*;
     use crate::primitive::bytes::decode_exact_bytes;
+
+    #[test]
+    fn text_truncation_uses_byte_boundaries() {
+        for input in ["", "ABC", "é", "Aé€🦀Z"] {
+            for max_len in (0..=input.len() + 1).chain([usize::MAX]) {
+                for keep_right in [false, true] {
+                    let bytes = truncate_bytes(input.as_bytes(), max_len, keep_right);
+                    let expected = str::from_utf8(bytes).map_err(|_| Error::Invalid);
+                    let actual = truncate_str_bytes(input, max_len, keep_right);
+                    assert_eq!(actual, expected);
+                    if let Ok(actual) = actual {
+                        assert_eq!(actual.as_ptr(), bytes.as_ptr());
+                    }
+                }
+            }
+        }
+    }
 
     fn enc(input: &[u8], pad_to: usize, align_right: bool, padding: u8) -> Vec<u8> {
         let mut output = [0u8; 64];

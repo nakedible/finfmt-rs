@@ -8,6 +8,7 @@ mod nibble;
 mod numeric;
 mod step;
 mod text;
+mod truncate;
 
 #[macro_export]
 macro_rules! chain {
@@ -36,3 +37,4 @@ pub use numeric::{
 };
 pub use step::{Chain, DecodeCheck, Step};
 pub use text::{Identity, PadLeft, PadLeftEven, PadRight, PadRightEven};
+pub use truncate::TruncateBytes;

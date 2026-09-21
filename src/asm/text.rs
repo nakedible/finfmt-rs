@@ -57,6 +57,12 @@ pub fn truncate_bytes_right_8(input: &[u8]) -> &[u8] {
 }
 
 #[inline(never)]
+pub fn encode_truncated_ascii_4(output: &mut &mut [u8], input: &str) -> Result<(), Error> {
+    use crate::{Ascii, Field, Fixed, ScalarFmt, TruncateBytes};
+    TruncateBytes::<Field<Ascii<4, 4>, Fixed<4>>, 4>::encode_str(output, &mut &mut [][..], input)
+}
+
+#[inline(never)]
 pub fn decode_bytes_protected_6(input: &[u8; 8]) -> Result<&[u8], Error> {
     Ok(decode_bytes(input, 6, false, b' '))
 }

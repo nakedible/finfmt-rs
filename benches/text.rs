@@ -79,6 +79,13 @@ fn bench_decode_bytes(suite: &mut Suite) {
 fn bench_encode_ascii(suite: &mut Suite) {
     suite.group("encode_ascii", |group| {
         quick(group);
+        group.bench("encode_truncated_ascii_4", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 4];
+                let _ = encode_truncated_ascii_4(&mut buf.as_mut_slice(), black_box("ABCDE"));
+                black_box(buf)
+            })
+        });
         group.bench("encode_ascii_pad_right_8_space", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 16];

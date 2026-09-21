@@ -22,7 +22,7 @@ pub use field::{
     Fixed, FixedBinaryBe, FixedComp3, FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedEbcdic, Hex, HexEven,
     HexLower, HexLowerEven, HexUpper, HexUpperEven, Identity, ImpliedDecimal, Iso88591, Length, LengthSpec, MinusPrefix, Numeric,
     PackNibbles, PackNibblesLeft, PackNibblesRight, PadLeft, PadLeftEven, PadRight, PadRightEven, PaddedField, Rest, SignPrefix, Step,
-    Track2, UnpackNibbles, UpperAlpha, UpperAlphanum, UpperAsciiPrintable, WireFixed, WireLength,
+    Track2, TruncateBytes, UnpackNibbles, UpperAlpha, UpperAlphanum, UpperAsciiPrintable, WireFixed, WireLength,
 };
 pub use scalarfmt::ScalarFmt;
 pub use types::{Error, StructError};
