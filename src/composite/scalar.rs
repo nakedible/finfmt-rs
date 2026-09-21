@@ -68,6 +68,18 @@ impl ScalarValue for u64 {
     }
 }
 
+impl ScalarValue for usize {
+    #[inline(always)]
+    fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error> {
+        F::encode_usize(output, scratch, *self)
+    }
+
+    #[inline(always)]
+    fn decode_with<'de, F: ScalarFmt>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self, Error> {
+        F::decode_usize(input, scratch)
+    }
+}
+
 impl ScalarValue for i64 {
     #[inline(always)]
     fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error> {
