@@ -37,18 +37,18 @@ pub mod __private {
     }
 
     #[inline(always)]
-    pub fn encoded_berlen(len: usize) -> Result<usize, Error> {
-        crate::primitive::bertlv::encoded_berlen(len)
+    pub fn ber_length_width(len: usize) -> Result<usize, Error> {
+        crate::primitive::bertlv::ber_length_width(len)
     }
 
     #[inline(always)]
-    pub fn parse_hex_tag(tag: &str) -> Result<([u8; 4], usize), Error> {
-        crate::primitive::bertlv::parse_hex_tag(tag)
+    pub fn parse_ber_tag_hex(tag: &str) -> Result<([u8; crate::primitive::bertlv::MAX_BER_TAG_BYTES], usize), Error> {
+        crate::primitive::bertlv::parse_ber_tag_hex(tag)
     }
 
     #[inline(always)]
-    pub fn tag_eq_hex(tag_bytes: &[u8], tag_hex: &str) -> Result<bool, Error> {
-        crate::primitive::bertlv::tag_eq_hex(tag_bytes, tag_hex)
+    pub fn ber_tag_matches_hex(tag_bytes: &[u8], tag_hex: &str) -> Result<bool, Error> {
+        crate::primitive::bertlv::ber_tag_matches_hex(tag_bytes, tag_hex)
     }
 
     #[inline(always)]

@@ -2248,21 +2248,21 @@ pub fn encode_ber_tlv_field<F>(
 where
     F: FnOnce(&mut &mut [u8], &mut &mut [u8]) -> Result<(), StructError>,
 {
-    let (tag_bytes, tag_len) = crate::primitive::bertlv::parse_hex_tag(tag_hex).map_err(|error| wrap_struct_error(error, field))?;
+    let (tag_bytes, tag_len) = crate::primitive::bertlv::parse_ber_tag_hex(tag_hex).map_err(|error| wrap_struct_error(error, field))?;
     let out = core::mem::take(output);
     let total = out.len();
     let mut value_out = &mut *out;
     encode_value(&mut value_out, scratch).map_err(|error| wrap_struct_error(error, field))?;
     let used = total - value_out.len();
-    let head_len = tag_len + crate::primitive::bertlv::encoded_berlen(used).map_err(|error| wrap_struct_error(error, field))?;
+    let head_len = tag_len + crate::primitive::bertlv::ber_length_width(used).map_err(|error| wrap_struct_error(error, field))?;
     if total < head_len + used {
         crate::utils::cold_path();
         return Err(wrap_struct_error(Error::BufferOverflow, field));
     }
     out.copy_within(0..used, head_len);
     let mut head = &mut out[..head_len];
-    crate::primitive::bertlv::encode_bertag(&mut head, &tag_bytes[..tag_len]).map_err(|error| wrap_struct_error(error, field))?;
-    crate::primitive::bertlv::encode_berlen(&mut head, used).map_err(|error| wrap_struct_error(error, field))?;
+    crate::primitive::bertlv::encode_ber_tag(&mut head, &tag_bytes[..tag_len]).map_err(|error| wrap_struct_error(error, field))?;
+    crate::primitive::bertlv::encode_ber_length(&mut head, used).map_err(|error| wrap_struct_error(error, field))?;
     *output = &mut out[head_len + used..];
     Ok(())
 }
@@ -2281,7 +2281,7 @@ pub fn decode_ber_tlv_field<'a, T, D>(
 where
     D: FnOnce(&mut &'a [u8], &mut &'a mut [u8]) -> Result<T, StructError>,
 {
-    if !crate::primitive::bertlv::tag_eq_hex(tag_bytes, tag_hex).map_err(|error| wrap_struct_error(error, field))? {
+    if !crate::primitive::bertlv::ber_tag_matches_hex(tag_bytes, tag_hex).map_err(|error| wrap_struct_error(error, field))? {
         return Ok(false);
     }
     if field_value.is_some() {

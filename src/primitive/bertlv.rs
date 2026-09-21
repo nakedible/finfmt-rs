@@ -6,6 +6,11 @@ use crate::primitive::bytes::copy_bytes;
 use crate::primitive::nibble::{HexUpper, NibbleAlphabet, pack_expanded_nibbles, unpack_nibbles};
 use crate::utils::{cold_path, take_scratch};
 
+/// Maximum encoded tag size accepted by this library's tag parsers.
+pub const MAX_BER_TAG_BYTES: usize = 4;
+/// Maximum value length supported by this library's definite BER length codec.
+pub const MAX_BER_VALUE_LEN: usize = u16::MAX as usize;
+
 /// Encodes a BER tag by copying `input` into the `output` cursor.
 ///
 /// This function does not validate tag correctness; it only copies bytes.
@@ -22,7 +27,7 @@ use crate::utils::{cold_path, take_scratch};
 /// - `Error::BufferOverflow` if `output` does not have enough space.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn encode_bertag<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+pub fn encode_ber_tag<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
     copy_bytes(output, input)
 }
 
@@ -41,7 +46,7 @@ pub fn encode_bertag<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a 
 /// - `Error::UnexpectedEof` if `input` does not contain enough bytes.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn decode_bertag<'a>(input: &mut &'a [u8]) -> Result<&'a [u8], Error> {
+pub fn decode_ber_tag<'a>(input: &mut &'a [u8]) -> Result<&'a [u8], Error> {
     match *input {
         [a, ..] if *a & 0x1F != 0x1F => input.split_off(..1).ok_or_else(|| {
             cold_path();
@@ -93,11 +98,11 @@ pub fn decode_bertag<'a>(input: &mut &'a [u8]) -> Result<&'a [u8], Error> {
 /// - `Error::Invalid` if `input` requires more than 2 length octets.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn encode_berlen<'a>(output: &mut &'a mut [u8], input: usize) -> Result<&'a mut [u8], Error> {
+pub fn encode_ber_length<'a>(output: &mut &'a mut [u8], input: usize) -> Result<&'a mut [u8], Error> {
     match input {
         0..=0x7F => copy_bytes(output, &[input as u8]),
         0x80..=0xFF => copy_bytes(output, &[0x81, input as u8]),
-        0x0100..=0xFFFF => copy_bytes(output, &[0x82, (input >> 8) as u8, input as u8]),
+        0x0100..=MAX_BER_VALUE_LEN => copy_bytes(output, &[0x82, (input >> 8) as u8, input as u8]),
         _ => {
             cold_path();
             Err(Error::Invalid)
@@ -108,7 +113,7 @@ pub fn encode_berlen<'a>(output: &mut &'a mut [u8], input: usize) -> Result<&'a 
 /// Decodes a definite-form BER length from `input`, advancing the slice.
 ///
 /// Returns:
-/// - The decoded length as `usize`.
+/// - The decoded length as `usize`. Supported non-minimal long forms are accepted.
 ///
 /// Errors:
 /// - `Error::Invalid` for indefinite form (`0x80`), reserved/unsupported forms
@@ -116,7 +121,7 @@ pub fn encode_berlen<'a>(output: &mut &'a mut [u8], input: usize) -> Result<&'a 
 /// - `Error::UnexpectedEof` if `input` does not contain enough bytes.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn decode_berlen(input: &mut &[u8]) -> Result<usize, Error> {
+pub fn decode_ber_length(input: &mut &[u8]) -> Result<usize, Error> {
     match *input {
         [a @ 0x00..=0x7F, ..] => {
             input.split_off(..1).ok_or_else(|| {
@@ -125,17 +130,18 @@ pub fn decode_berlen(input: &mut &[u8]) -> Result<usize, Error> {
             })?;
             Ok(*a as usize)
         }
-        _ => decode_berlen_long(input),
+        _ => decode_ber_length_long(input),
     }
 }
 
+/// Number of octets in the shortest supported definite BER length encoding.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn encoded_berlen(len: usize) -> Result<usize, Error> {
+pub fn ber_length_width(len: usize) -> Result<usize, Error> {
     match len {
         0..=0x7F => Ok(1),
         0x80..=0xFF => Ok(2),
-        0x0100..=0xFFFF => Ok(3),
+        0x0100..=MAX_BER_VALUE_LEN => Ok(3),
         _ => {
             cold_path();
             Err(Error::Invalid)
@@ -145,13 +151,13 @@ pub fn encoded_berlen(len: usize) -> Result<usize, Error> {
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn parse_hex_tag(tag: &str) -> Result<([u8; 4], usize), Error> {
+pub fn parse_ber_tag_hex(tag: &str) -> Result<([u8; MAX_BER_TAG_BYTES], usize), Error> {
     let bytes = tag.as_bytes();
-    if bytes.is_empty() || bytes.len() > 8 || !bytes.len().is_multiple_of(2) {
+    if bytes.is_empty() || bytes.len() > 2 * MAX_BER_TAG_BYTES || !bytes.len().is_multiple_of(2) {
         cold_path();
         return Err(Error::Internal);
     }
-    let mut out = [0u8; 4];
+    let mut out = [0u8; MAX_BER_TAG_BYTES];
     let mut packed = &mut out[..];
     pack_expanded_nibbles(&mut packed, bytes, &HexUpper::NIBBLES).map_err(|_| {
         cold_path();
@@ -162,8 +168,8 @@ pub fn parse_hex_tag(tag: &str) -> Result<([u8; 4], usize), Error> {
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn tag_eq_hex(tag_bytes: &[u8], tag_hex: &str) -> Result<bool, Error> {
-    let (parsed, len) = parse_hex_tag(tag_hex)?;
+pub fn ber_tag_matches_hex(tag_bytes: &[u8], tag_hex: &str) -> Result<bool, Error> {
+    let (parsed, len) = parse_ber_tag_hex(tag_hex)?;
     Ok(tag_bytes == &parsed[..len])
 }
 
@@ -242,7 +248,7 @@ pub(crate) fn encode_unknown_tag_key_scratch<'a>(scratch: &mut &'a mut [u8], tag
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub(crate) fn parse_unknown_tag_key(key: &str) -> Result<([u8; 4], usize), Error> {
+pub(crate) fn parse_unknown_tag_key(key: &str) -> Result<([u8; MAX_BER_TAG_BYTES], usize), Error> {
     let body = key
         .strip_prefix('t')
         .and_then(|rest| rest.strip_suffix("_unknown"))
@@ -250,7 +256,7 @@ pub(crate) fn parse_unknown_tag_key(key: &str) -> Result<([u8; 4], usize), Error
             cold_path();
             Error::Invalid
         })?;
-    parse_hex_tag(body)
+    parse_ber_tag_hex(body)
 }
 
 #[inline(always)]
@@ -264,7 +270,7 @@ pub(crate) fn encode_unknown_tlv_from_key(output: &mut &mut [u8], key: &str, val
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub(crate) fn encode_unknown_tlv_from_tag(output: &mut &mut [u8], tag: &[u8], value: &str) -> Result<(), Error> {
     let used = value.len() / 2;
-    let head_len = encoded_berlen(used)? + tag.len();
+    let head_len = ber_length_width(used)? + tag.len();
     let total = head_len + used;
     let out = output.split_off_mut(..total).ok_or_else(|| {
         cold_path();
@@ -272,8 +278,8 @@ pub(crate) fn encode_unknown_tlv_from_tag(output: &mut &mut [u8], tag: &[u8], va
     })?;
     let (head_buf, body_buf) = out.split_at_mut(head_len);
     let mut head = head_buf;
-    encode_bertag(&mut head, tag)?;
-    encode_berlen(&mut head, used)?;
+    encode_ber_tag(&mut head, tag)?;
+    encode_ber_length(&mut head, used)?;
     let mut body = body_buf;
     pack_expanded_nibbles(&mut body, value.as_bytes(), &<HexUpper as NibbleAlphabet>::NIBBLES)?;
     Ok(())
@@ -291,8 +297,8 @@ pub fn decode_ber_tlv_entry<'a>(input: &mut &'a [u8]) -> Result<Option<BerTlvEnt
     if input.is_empty() {
         return Ok(None);
     }
-    let tag = decode_bertag(input)?;
-    let len = decode_berlen(input)?;
+    let tag = decode_ber_tag(input)?;
+    let len = decode_ber_length(input)?;
     let value = input.split_off(..len).ok_or_else(|| {
         cold_path();
         Error::UnexpectedEof
@@ -311,7 +317,7 @@ pub fn decode_ber_tlv_entry<'a>(input: &mut &'a [u8]) -> Result<Option<BerTlvEnt
 /// - `Error::UnexpectedEof` if `input` does not contain enough bytes.
 #[cold]
 #[inline(never)]
-fn decode_berlen_long(input: &mut &[u8]) -> Result<usize, Error> {
+fn decode_ber_length_long(input: &mut &[u8]) -> Result<usize, Error> {
     match *input {
         [0x81, b, ..] => {
             input.split_off(..2).ok_or_else(|| {
@@ -346,14 +352,14 @@ mod tests {
         let mut storage = [0u8; 8];
         let mut out = &mut storage[..buf_len];
         let initial_len = out.len();
-        let res = encode_bertag(&mut out, input)?;
+        let res = encode_ber_tag(&mut out, input)?;
         assert_eq!(out.len(), initial_len - res.len(), "cursor advancement");
         Ok(res.to_vec())
     }
 
     fn dec_tag(input: &[u8]) -> Result<(Vec<u8>, Vec<u8>), Error> {
         let mut inp = input;
-        let tag = decode_bertag(&mut inp)?;
+        let tag = decode_ber_tag(&mut inp)?;
         Ok((tag.to_vec(), inp.to_vec()))
     }
 
@@ -361,19 +367,19 @@ mod tests {
         let mut storage = [0u8; 4];
         let mut out = &mut storage[..buf_len];
         let initial_len = out.len();
-        let res = encode_berlen(&mut out, value)?;
+        let res = encode_ber_length(&mut out, value)?;
         assert_eq!(out.len(), initial_len - res.len(), "cursor advancement");
         Ok(res.to_vec())
     }
 
     fn dec_len(input: &[u8]) -> Result<(usize, Vec<u8>), Error> {
         let mut inp = input;
-        let len = decode_berlen(&mut inp)?;
+        let len = decode_ber_length(&mut inp)?;
         Ok((len, inp.to_vec()))
     }
 
     #[test]
-    fn test_encode_bertag() {
+    fn test_encode_ber_tag() {
         // Valid: 0-4 byte tags
         assert_eq!(enc_tag(b"", 4), Ok(vec![]));
         assert_eq!(enc_tag(b"\x5A", 4), Ok(vec![0x5A]));
@@ -388,7 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_bertag() {
+    fn test_decode_ber_tag() {
         // Single-byte (low 5 bits != 0x1F): boundaries
         assert_eq!(dec_tag(b"\x00"), Ok((vec![0x00], vec![])));
         assert_eq!(dec_tag(b"\x5A"), Ok((vec![0x5A], vec![])));
@@ -435,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_berlen() {
+    fn test_encode_ber_length() {
         // Short form: 0-0x7F
         assert_eq!(enc_len(0, 4), Ok(vec![0x00]));
         assert_eq!(enc_len(0x7F, 4), Ok(vec![0x7F]));
@@ -454,7 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_berlen() {
+    fn test_decode_ber_length() {
         // Short form boundaries
         assert_eq!(dec_len(b"\x00"), Ok((0, vec![])));
         assert_eq!(dec_len(b"\x7F"), Ok((0x7F, vec![])));
@@ -491,18 +497,18 @@ mod tests {
     #[test]
     fn test_sequential_decode() {
         let mut input: &[u8] = b"\x9F\x02\x02\xAB\xCD";
-        assert_eq!(decode_bertag(&mut input), Ok(&b"\x9F\x02"[..]));
-        assert_eq!(decode_berlen(&mut input), Ok(2));
+        assert_eq!(decode_ber_tag(&mut input), Ok(&b"\x9F\x02"[..]));
+        assert_eq!(decode_ber_length(&mut input), Ok(2));
         assert_eq!(input, b"\xAB\xCD");
     }
 
     #[test]
-    fn test_parse_hex_tag_uppercase_only() {
-        assert_eq!(parse_hex_tag("9F02"), Ok(([0x9F, 0x02, 0, 0], 2)));
-        assert_eq!(parse_hex_tag(""), Err(Error::Internal));
-        assert_eq!(parse_hex_tag("9f02"), Err(Error::Internal));
-        assert_eq!(parse_hex_tag("9F0"), Err(Error::Internal));
-        assert_eq!(parse_hex_tag("9G02"), Err(Error::Internal));
+    fn test_parse_ber_tag_hex_uppercase_only() {
+        assert_eq!(parse_ber_tag_hex("9F02"), Ok(([0x9F, 0x02, 0, 0], 2)));
+        assert_eq!(parse_ber_tag_hex(""), Err(Error::Internal));
+        assert_eq!(parse_ber_tag_hex("9f02"), Err(Error::Internal));
+        assert_eq!(parse_ber_tag_hex("9F0"), Err(Error::Internal));
+        assert_eq!(parse_ber_tag_hex("9G02"), Err(Error::Internal));
     }
 
     #[test]
@@ -525,7 +531,7 @@ mod proptests {
         fn bertag_encode_roundtrip(tag in prop::collection::vec(any::<u8>(), 0..8)) {
             let mut buf = [0u8; 16];
             let mut out = &mut buf[..];
-            let encoded = encode_bertag(&mut out, &tag).unwrap();
+            let encoded = encode_ber_tag(&mut out, &tag).unwrap();
             prop_assert_eq!(encoded, tag.as_slice());
         }
 
@@ -538,42 +544,43 @@ mod proptests {
                 _ => vec![first, 0x80 | (term >> 2).max(1), 0x80 | (term >> 1), term],
             };
             let mut inp = &input[..];
-            prop_assert_eq!(decode_bertag(&mut inp), Ok(&input[..]));
+            prop_assert_eq!(decode_ber_tag(&mut inp), Ok(&input[..]));
         }
 
         #[test]
         fn bertag_decode_too_long(class in 0u8..=3, c1 in 0x80u8..=0xFF, c2 in 0x80u8..=0xFF, c3 in 0x80u8..=0xFF, term in 0u8..0x80) {
             let first = (class << 6) | 0x1F;
             let mut inp: &[u8] = &[first, c1, c2, c3, term];
-            prop_assert_eq!(decode_bertag(&mut inp), Err(Error::Invalid));
+            prop_assert_eq!(decode_ber_tag(&mut inp), Err(Error::Invalid));
         }
 
         #[test]
         fn berlen_roundtrip(len in 0usize..=0xFFFF) {
             let mut buf = [0u8; 4];
             let mut out = &mut buf[..];
-            let encoded = encode_berlen(&mut out, len).unwrap();
+            let encoded = encode_ber_length(&mut out, len).unwrap();
             let mut inp = &encoded[..];
-            prop_assert_eq!(decode_berlen(&mut inp), Ok(len));
+            prop_assert_eq!(decode_ber_length(&mut inp), Ok(len));
+            prop_assert_eq!(ber_length_width(len), Ok(encoded.len()));
         }
 
         #[test]
         fn berlen_encode_rejects_large(len in 0x1_0000usize..=0xFF_FFFF) {
             let mut buf = [0u8; 8];
             let mut out = &mut buf[..];
-            prop_assert_eq!(encode_berlen(&mut out, len), Err(Error::Invalid));
+            prop_assert_eq!(encode_ber_length(&mut out, len), Err(Error::Invalid));
         }
 
         #[test]
         fn berlen_decode_non_minimal_long1(len in 0usize..=0xFF) {
             let mut inp: &[u8] = &[0x81, len as u8];
-            prop_assert_eq!(decode_berlen(&mut inp), Ok(len));
+            prop_assert_eq!(decode_ber_length(&mut inp), Ok(len));
         }
 
         #[test]
         fn berlen_decode_non_minimal_long2(len in 0usize..=0xFFFF) {
             let mut inp: &[u8] = &[0x82, (len >> 8) as u8, len as u8];
-            prop_assert_eq!(decode_berlen(&mut inp), Ok(len));
+            prop_assert_eq!(decode_ber_length(&mut inp), Ok(len));
         }
     }
 }

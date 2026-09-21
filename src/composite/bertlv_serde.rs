@@ -8,8 +8,8 @@ use serde::ser::{Impossible, SerializeMap, SerializeSeq, SerializeTuple, Seriali
 use super::*;
 use crate::Error;
 use crate::primitive::bertlv::{
-    BerTlvEntry, decode_ber_tlv_entry, encode_hex_upper_scratch, encode_unknown_tag_key_scratch, encode_unknown_tlv_from_tag,
-    parse_unknown_tag_key,
+    BerTlvEntry, MAX_BER_TAG_BYTES, decode_ber_tlv_entry, encode_hex_upper_scratch, encode_unknown_tag_key_scratch,
+    encode_unknown_tlv_from_tag, parse_unknown_tag_key,
 };
 use crate::utils::cold_path;
 
@@ -22,7 +22,7 @@ trait BerTlvTextSink {
 struct ParseUnknownTagSink;
 
 impl BerTlvTextSink for ParseUnknownTagSink {
-    type Ok = ([u8; 4], usize);
+    type Ok = ([u8; MAX_BER_TAG_BYTES], usize);
 
     #[inline(always)]
     fn accept(self, text: &str) -> Result<Self::Ok, Error> {
@@ -32,7 +32,7 @@ impl BerTlvTextSink for ParseUnknownTagSink {
 
 struct EncodeUnknownValueSink<'a, 'b> {
     output: &'a mut &'b mut [u8],
-    tag_bytes: [u8; 4],
+    tag_bytes: [u8; MAX_BER_TAG_BYTES],
     tag_len: usize,
 }
 
@@ -270,7 +270,7 @@ impl<S: BerTlvTextSink> serde::Serializer for BerTlvTextSerializer<'_, S> {
 }
 
 #[inline(always)]
-fn parse_unknown_tag_from_serialize<T: ?Sized + Serialize>(value: &T) -> Result<([u8; 4], usize), Error> {
+fn parse_unknown_tag_from_serialize<T: ?Sized + Serialize>(value: &T) -> Result<([u8; MAX_BER_TAG_BYTES], usize), Error> {
     value.serialize(BerTlvTextSerializer {
         _marker: PhantomData,
         sink: ParseUnknownTagSink,
@@ -280,7 +280,7 @@ fn parse_unknown_tag_from_serialize<T: ?Sized + Serialize>(value: &T) -> Result<
 #[inline(always)]
 fn encode_unknown_value_from_serialize<T: ?Sized + Serialize>(
     output: &mut &mut [u8],
-    tag_bytes: [u8; 4],
+    tag_bytes: [u8; MAX_BER_TAG_BYTES],
     tag_len: usize,
     value: &T,
 ) -> Result<(), Error> {
@@ -818,7 +818,7 @@ impl<'de> serde::Deserializer<'de> for BerTlvDeserializer<'_, 'de> {
 
 struct BerTlvMapSerializer<'a, 'b> {
     output: &'a mut &'b mut [u8],
-    pending_tag: Option<([u8; 4], usize)>,
+    pending_tag: Option<([u8; MAX_BER_TAG_BYTES], usize)>,
 }
 
 impl SerializeMap for BerTlvMapSerializer<'_, '_> {
@@ -860,7 +860,7 @@ struct BerTlvPairSerializer<'a, 'b> {
 
 struct BerTlvPairTupleSerializer<'a, 'b> {
     output: &'a mut &'b mut [u8],
-    pending_tag: Option<([u8; 4], usize)>,
+    pending_tag: Option<([u8; MAX_BER_TAG_BYTES], usize)>,
     index: u8,
 }
 
