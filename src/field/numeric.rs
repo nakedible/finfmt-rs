@@ -3,9 +3,10 @@ use core::mem::size_of;
 
 use crate::primitive::bytes::{decode_exact_bytes, encode_exact_bytes, validate_exact_length};
 use crate::primitive::decimal::{
-    decode_decimal_ebcdic_signed_fixed, decode_decimal_implied, decode_decimal_packed_fixed, decode_decimal_packed_signed_fixed,
-    decode_negative_prefix, decode_sign, encode_decimal_ebcdic_signed_fixed, encode_decimal_implied, encode_decimal_packed_fixed,
-    encode_decimal_packed_signed_fixed, encode_negative_prefix, encode_sign, packed_decimal_max_digits, prepend_minus,
+    decode_decimal_ebcdic_signed_fixed, decode_decimal_implied_digits, decode_decimal_packed_fixed, decode_decimal_packed_signed_fixed,
+    decode_negative_prefix, decode_sign, encode_decimal_ebcdic_signed_digits, encode_decimal_ebcdic_signed_fixed, encode_decimal_implied,
+    encode_decimal_packed_digits, encode_decimal_packed_fixed, encode_decimal_packed_signed_fixed, encode_negative_prefix, encode_sign,
+    packed_decimal_max_digits, prepend_minus,
 };
 use crate::primitive::int::{
     decode_binary_i64_be_fixed, decode_binary_u64_be_fixed, decode_nibble_int_fixed, decode_signed_magnitude_i64,
@@ -36,6 +37,7 @@ pub struct ImpliedDecimal<F, const SCALE: usize>(PhantomData<F>);
 trait FixedDecimalCodec: ScalarFmt {
     const WIRE_LEN: usize;
     fn max_digits() -> Result<usize, Error>;
+    fn encode_digits(output: &mut &mut [u8], digits: &[u8], negative: bool) -> Result<(), Error>;
     const SIGNED: bool;
 }
 
@@ -46,6 +48,10 @@ impl<const N: usize> FixedDecimalCodec for FixedComp3<N> {
         packed_decimal_max_digits(N)
     }
     const SIGNED: bool = false;
+    #[inline(always)]
+    fn encode_digits(output: &mut &mut [u8], digits: &[u8], negative: bool) -> Result<(), Error> {
+        encode_decimal_packed_digits(output, digits, negative, false, N)
+    }
 }
 
 impl<const N: usize> FixedDecimalCodec for FixedSignedComp3<N> {
@@ -55,6 +61,10 @@ impl<const N: usize> FixedDecimalCodec for FixedSignedComp3<N> {
         packed_decimal_max_digits(N)
     }
     const SIGNED: bool = true;
+    #[inline(always)]
+    fn encode_digits(output: &mut &mut [u8], digits: &[u8], negative: bool) -> Result<(), Error> {
+        encode_decimal_packed_digits(output, digits, negative, true, N)
+    }
 }
 
 impl<const N: usize> FixedDecimalCodec for FixedSignedZonedEbcdic<N> {
@@ -64,6 +74,10 @@ impl<const N: usize> FixedDecimalCodec for FixedSignedZonedEbcdic<N> {
         Ok(N)
     }
     const SIGNED: bool = true;
+    #[inline(always)]
+    fn encode_digits(output: &mut &mut [u8], digits: &[u8], negative: bool) -> Result<(), Error> {
+        encode_decimal_ebcdic_signed_digits(output, digits, negative, N)
+    }
 }
 
 impl<F, const POS: u8, const NEG: u8> SignPrefix<F, POS, NEG> {
@@ -484,13 +498,15 @@ impl<F: FixedDecimalCodec, const SCALE: usize> ScalarFmt for ImpliedDecimal<F, S
     #[inline(always)]
     fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
         let digits = encode_decimal_implied(scratch, input, SCALE, F::max_digits()?, F::SIGNED)?;
-        F::encode(output, scratch, digits)
+        let (negative, digits) = split_signed_input(digits)?;
+        F::encode_digits(output, digits, negative)
     }
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
         let digits = F::decode(input, scratch)?;
-        decode_decimal_implied(scratch, digits, SCALE).map(|buf| &*buf)
+        let (negative, digits) = split_signed_input(digits)?;
+        decode_decimal_implied_digits(scratch, digits, negative, SCALE).map(|buf| &*buf)
     }
 }
 
@@ -825,6 +841,29 @@ mod proptests {
     use crate::primitive::nibble::{HexLower, HexUpper};
 
     proptest! {
+        #[test]
+        fn implied_decimal_composition_roundtrips(value in -99_999i64..=99_999) {
+            fn check<F: ScalarFmt>(text: &str) {
+                let mut wire = [0;16];
+                let mut scratch = [0;64];
+                let mut out = wire.as_mut_slice();
+                F::encode(&mut out, &mut scratch.as_mut_slice(), text.as_bytes()).unwrap();
+                let used = 16-out.len();
+                assert_eq!(F::encoded_len(text.as_bytes()), Ok(used));
+                let mut input = &wire[..used];
+                let decoded = F::decode(&mut input, &mut scratch.as_mut_slice()).unwrap();
+                let expected = text.trim_end_matches('0').trim_end_matches('.');
+                assert_eq!(decoded, expected.as_bytes());
+                assert!(input.is_empty());
+            }
+            let magnitude = value.unsigned_abs();
+            let unsigned = format!("{}.{:02}", magnitude/100, magnitude%100);
+            let signed = format!("{}{}", if value<0 { "-" } else { "" }, unsigned);
+            check::<ImpliedDecimal<FixedComp3<3>,2>>(&unsigned);
+            check::<ImpliedDecimal<FixedSignedComp3<3>,2>>(&signed);
+            check::<ImpliedDecimal<FixedSignedZonedEbcdic<5>,2>>(&signed);
+        }
+
         #[test]
         fn numeric_lengths_match_encoding(signed: i64, unsigned: u64) {
             super::tests::numeric_roundtrip::<FixedBinaryBe<1>>(signed, unsigned);

@@ -185,8 +185,21 @@ pub fn encode_decimal_implied<'a>(
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_decimal_implied<'a>(output: &mut &'a mut [u8], input: &[u8], scale: usize) -> Result<&'a mut [u8], Error> {
-    let (negative, mut digits) = split_signed_input(input)?;
+    let (negative, digits) = split_signed_input(input)?;
     validate_numeric(digits, 1, usize::MAX)?;
+    decode_decimal_implied_digits(output, digits, negative, scale)
+}
+
+/// Place the implied decimal point in nonempty, prevalidated ASCII digits.
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub(crate) fn decode_decimal_implied_digits<'a>(
+    output: &mut &'a mut [u8],
+    mut digits: &[u8],
+    negative: bool,
+    scale: usize,
+) -> Result<&'a mut [u8], Error> {
+    debug_assert!(validate_numeric(digits, 1, usize::MAX).is_ok());
     while let Some(rest) = digits.strip_prefix(b"0") {
         digits = rest;
     }
@@ -293,9 +306,19 @@ pub fn packed_decimal_max_digits(bytes_len: usize) -> Result<usize, Error> {
     })
 }
 
+/// Encode prevalidated ASCII digits, checking they fit the zoned output width.
 #[inline(always)]
-fn encode_decimal_ebcdic_signed_digits(output: &mut [u8], digits: &[u8], negative: bool) {
-    debug_assert!(!digits.is_empty() && digits.len() <= output.len());
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub(crate) fn encode_decimal_ebcdic_signed_digits(output: &mut &mut [u8], digits: &[u8], negative: bool, len: usize) -> Result<(), Error> {
+    let output = output.split_off_mut(..len).ok_or_else(|| {
+        cold_path();
+        Error::BufferOverflow
+    })?;
+    debug_assert!(validate_numeric(digits, 1, usize::MAX).is_ok());
+    if digits.len() > output.len() {
+        cold_path();
+        return Err(Error::InvalidValueLength);
+    }
     if let ([body @ .., last], [out @ .., last_out]) = (digits, output) {
         let pad = out.len().saturating_sub(body.len());
         let (padding, target) = out.split_at_mut(pad);
@@ -305,12 +328,28 @@ fn encode_decimal_ebcdic_signed_digits(output: &mut [u8], digits: &[u8], negativ
         }
         *last_out = encode_overpunch_digit(negative, last.wrapping_sub(b'0'));
     }
+    Ok(())
 }
 
+/// Encode prevalidated ASCII digits, checking they fit the packed output width.
 #[inline(always)]
-fn encode_decimal_packed_digits(output: &mut [u8], digits: &[u8], negative: bool, signed: bool) -> Result<(), Error> {
-    debug_assert!(!digits.is_empty());
-    debug_assert!(digits.len() <= output.len().saturating_mul(2).saturating_sub(1));
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub(crate) fn encode_decimal_packed_digits(
+    output: &mut &mut [u8],
+    digits: &[u8],
+    negative: bool,
+    signed: bool,
+    len: usize,
+) -> Result<(), Error> {
+    let output = output.split_off_mut(..len).ok_or_else(|| {
+        cold_path();
+        Error::BufferOverflow
+    })?;
+    debug_assert!(validate_numeric(digits, 1, usize::MAX).is_ok());
+    if digits.len() > output.len().saturating_mul(2).saturating_sub(1) {
+        cold_path();
+        return Err(Error::InvalidValueLength);
+    }
     let used_bytes = digits.len() / 2 + 1;
     let prefix_bytes = output.len().saturating_sub(used_bytes);
     let (prefix, tail) = output.split_at_mut(prefix_bytes);
@@ -464,12 +503,7 @@ pub fn decode_decimal_ebcdic_blank_zero_fixed(input: &mut &[u8], len: usize) -> 
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn encode_decimal_ebcdic_signed_fixed(output: &mut &mut [u8], input: &[u8], len: usize) -> Result<(), Error> {
     let (negative, digits) = parse_signed_decimal(input, len)?;
-    let buf = output.split_off_mut(..len).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
-    encode_decimal_ebcdic_signed_digits(buf, digits, negative);
-    Ok(())
+    encode_decimal_ebcdic_signed_digits(output, digits, negative, len)
 }
 
 /// Reserve `len + 1` scratch bytes and return the canonical signed digits within
@@ -550,22 +584,14 @@ fn decode_decimal_packed_common<'a>(input: &[u8], output: &mut &'a mut [u8], sig
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn encode_decimal_packed_fixed(output: &mut &mut [u8], input: &[u8], len: usize) -> Result<(), Error> {
     validate_numeric(input, 1, packed_decimal_max_digits(len)?)?;
-    let buf = output.split_off_mut(..len).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
-    encode_decimal_packed_digits(buf, input, false, false)
+    encode_decimal_packed_digits(output, input, false, false, len)
 }
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn encode_decimal_packed_signed_fixed(output: &mut &mut [u8], input: &[u8], len: usize) -> Result<(), Error> {
     let (negative, digits) = parse_signed_decimal(input, packed_decimal_max_digits(len)?)?;
-    let buf = output.split_off_mut(..len).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
-    encode_decimal_packed_digits(buf, digits, negative, true)
+    encode_decimal_packed_digits(output, digits, negative, true, len)
 }
 
 /// Reserve `2 * len` scratch bytes and return canonical unsigned digits within
