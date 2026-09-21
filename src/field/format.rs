@@ -24,16 +24,6 @@ impl<C: Check, L: LengthSpec<S>, S: Step> ScalarFmt for Field<C, L, S> {
         let wire_len = S::encoded_len(semantic_len)?;
         L::encode(output, scratch, semantic_len, wire_len)?;
 
-        if S::INPLACE && semantic_len == wire_len {
-            let buf = output.split_off_mut(..wire_len).ok_or_else(|| {
-                cold_path();
-                Error::BufferOverflow
-            })?;
-            buf.copy_from_slice(input);
-            S::encode_inplace(buf)?;
-            return Ok(());
-        }
-
         S::encode(output, scratch, input)?;
         Ok(())
     }
@@ -83,11 +73,6 @@ impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> S
         L::encode(output, scratch, semantic_len, wire_len)?;
         let area = reserve_filled_area(output, PAD_TO, FILL)?;
         let (field, _tail) = area.split_at_mut(wire_len);
-        if S::INPLACE && semantic_len == wire_len {
-            field.copy_from_slice(input);
-            S::encode_inplace(field)?;
-            return Ok(());
-        }
         let mut field_out = field;
         S::encode(&mut field_out, scratch, input)?;
         if !field_out.is_empty() {

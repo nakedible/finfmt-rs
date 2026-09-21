@@ -9,7 +9,7 @@ pub struct Ebcdic037;
 pub struct Ebcdic1142;
 
 impl Step for Ebcdic037 {
-    const INPLACE: bool = true;
+    const ENCODE_IN_PLACE: bool = true;
 
     #[inline(always)]
     fn encoded_len(input_len: usize) -> Result<usize, Error> {
@@ -50,7 +50,7 @@ impl Step for Ebcdic037 {
     }
 
     #[inline(always)]
-    fn encode_inplace(buf: &mut [u8]) -> Result<(), Error> {
+    fn encode_in_place(buf: &mut [u8]) -> Result<(), Error> {
         translate_bytes_inplace(buf, &ASCII_TO_EBCDIC_037);
         Ok(())
     }

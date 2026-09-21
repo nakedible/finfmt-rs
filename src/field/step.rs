@@ -10,7 +10,7 @@ use crate::utils::{cold_path, take_scratch};
 /// Chained steps must agree on the units at each intermediate boundary.
 pub trait Step {
     /// Encoding can transform the bytes in place without changing their length.
-    const INPLACE: bool = false;
+    const ENCODE_IN_PLACE: bool = false;
 
     /// Exact encoded byte count from logical input length. Built-in steps use
     /// bytes, except `Ebcdic1142`, which uses Unicode scalar values.
@@ -34,7 +34,7 @@ pub trait Step {
     ) -> Result<&'a [u8], Error>;
 
     #[inline(always)]
-    fn encode_inplace(_buf: &mut [u8]) -> Result<(), Error> {
+    fn encode_in_place(_buf: &mut [u8]) -> Result<(), Error> {
         cold_path();
         Err(Error::Internal)
     }
@@ -50,7 +50,7 @@ pub struct Chain<A, B>(PhantomData<(A, B)>);
 pub struct DecodeCheck<S, C>(PhantomData<(S, C)>);
 
 impl<First: Step, Rest: Step> Step for Chain<First, Rest> {
-    const INPLACE: bool = First::INPLACE && Rest::INPLACE;
+    const ENCODE_IN_PLACE: bool = First::ENCODE_IN_PLACE && Rest::ENCODE_IN_PLACE;
 
     #[inline(always)]
     fn encoded_len(input_len: usize) -> Result<usize, Error> {
@@ -64,6 +64,11 @@ impl<First: Step, Rest: Step> Step for Chain<First, Rest> {
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+        if Rest::ENCODE_IN_PLACE {
+            let buf = First::encode(output, scratch, input)?;
+            Rest::encode_in_place(buf)?;
+            return Ok(buf);
+        }
         let mid_len = First::encoded_len(input.len())?;
         let mid_buf = take_scratch(scratch, mid_len)?;
         let mut mid_out = mid_buf;
@@ -93,14 +98,14 @@ impl<First: Step, Rest: Step> Step for Chain<First, Rest> {
     }
 
     #[inline(always)]
-    fn encode_inplace(buf: &mut [u8]) -> Result<(), Error> {
-        First::encode_inplace(buf)?;
-        Rest::encode_inplace(buf)
+    fn encode_in_place(buf: &mut [u8]) -> Result<(), Error> {
+        First::encode_in_place(buf)?;
+        Rest::encode_in_place(buf)
     }
 }
 
 impl<S: Step, C: Check> Step for DecodeCheck<S, C> {
-    const INPLACE: bool = S::INPLACE;
+    const ENCODE_IN_PLACE: bool = S::ENCODE_IN_PLACE;
 
     #[inline(always)]
     fn encoded_len(input_len: usize) -> Result<usize, Error> {
@@ -136,15 +141,36 @@ impl<S: Step, C: Check> Step for DecodeCheck<S, C> {
     }
 
     #[inline(always)]
-    fn encode_inplace(buf: &mut [u8]) -> Result<(), Error> {
-        S::encode_inplace(buf)
+    fn encode_in_place(buf: &mut [u8]) -> Result<(), Error> {
+        S::encode_in_place(buf)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::Chain;
     use crate::primitive::nibble::HexUpper as HexDigits;
     use crate::*;
+
+    fn encode_without_scratch<F: ScalarFmt>(input: &[u8], expected: &[u8]) {
+        let mut output = [0xEE; 16];
+        let mut out = &mut output[..];
+        F::encode(&mut out, &mut &mut [][..], input).unwrap();
+        assert_eq!(out.len(), 16 - expected.len());
+        assert_eq!(&output[..expected.len()], expected);
+    }
+
+    #[test]
+    fn in_place_encoding_composes_without_scratch() {
+        encode_without_scratch::<Field<Ascii<3, 3>, Fixed<3>>>(b"ABC", b"ABC");
+        encode_without_scratch::<Field<Ascii<3, 3>, Fixed<3>, Ebcdic037>>(b"ABC", &[0xC1, 0xC2, 0xC3]);
+        encode_without_scratch::<Field<Ascii<3, 3>, Fixed<3>, Chain<Identity, Ebcdic037>>>(b"ABC", &[0xC1, 0xC2, 0xC3]);
+        encode_without_scratch::<Field<Ascii<0, 8>, WireFixed<8>, Chain<PadRight<8>, Ebcdic037>>>(
+            b"ABC",
+            &[0xC1, 0xC2, 0xC3, 0x40, 0x40, 0x40, 0x40, 0x40],
+        );
+        encode_without_scratch::<PaddedField<Ascii<3, 3>, Fixed<3>, Ebcdic037, 5, b' '>>(b"ABC", &[0xC1, 0xC2, 0xC3, b' ', b' ']);
+    }
 
     #[test]
     fn even_size_overflow_is_reported() {

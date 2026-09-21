@@ -6,7 +6,7 @@ use crate::{Error, Step};
 pub struct Identity;
 
 impl Step for Identity {
-    const INPLACE: bool = true;
+    const ENCODE_IN_PLACE: bool = true;
 
     #[inline(always)]
     fn encoded_len(input_len: usize) -> Result<usize, Error> {
@@ -40,7 +40,7 @@ impl Step for Identity {
     }
 
     #[inline(always)]
-    fn encode_inplace(_buf: &mut [u8]) -> Result<(), Error> {
+    fn encode_in_place(_buf: &mut [u8]) -> Result<(), Error> {
         Ok(())
     }
 }
