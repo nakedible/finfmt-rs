@@ -452,22 +452,13 @@ impl<F: FixedDecimalCodec, const SCALE: usize> ScalarFmt for ImpliedDecimal<F, S
     }
 
     fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
-        let transformed_len = validate_decimal_implied(input, SCALE, F::MAX_DIGITS, F::SIGNED)?;
-        let transformed = take_scratch(scratch, transformed_len)?;
-        let mut transformed = transformed;
-        let digits = encode_decimal_implied(&mut transformed, input, SCALE, F::MAX_DIGITS, F::SIGNED)?;
+        let digits = encode_decimal_implied(scratch, input, SCALE, F::MAX_DIGITS, F::SIGNED)?;
         F::encode(output, scratch, digits)
     }
 
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
         let digits = F::decode(input, scratch)?;
-        let out_len = digits.len().checked_add(SCALE).and_then(|v| v.checked_add(2)).ok_or_else(|| {
-            cold_path();
-            Error::BufferOverflow
-        })?;
-        let output = take_scratch(scratch, out_len)?;
-        let mut output = output;
-        decode_decimal_implied(&mut output, digits, SCALE).map(|buf| &*buf)
+        decode_decimal_implied(scratch, digits, SCALE).map(|buf| &*buf)
     }
 }
 
@@ -638,6 +629,17 @@ mod tests {
         assert_eq!(decode_bytes::<F>(b"\xF0\xF0\xF1\xF2\xC0"), Ok(b"1.2".to_vec()));
         assert_eq!(encode_bytes::<F>(b"1.234"), Err(Error::Invalid));
         assert_eq!(encode_bytes::<F>(b"1234.56"), Err(Error::InvalidValueLength));
+    }
+
+    #[test]
+    fn test_implied_decimal_exact_decode_scratch() {
+        type F = ImpliedDecimal<FixedSignedZonedEbcdic<5>, 2>;
+        let mut input = &b"\xF0\xF0\xF1\xF2\xC0"[..];
+        let mut scratch = [0; 9];
+        let mut scratch = scratch.as_mut_slice();
+        assert_eq!(F::decode(&mut input, &mut scratch), Ok(&b"1.2"[..]));
+        assert!(input.is_empty());
+        assert!(scratch.is_empty());
     }
 
     #[test]

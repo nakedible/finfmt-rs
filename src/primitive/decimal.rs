@@ -165,165 +165,74 @@ pub fn encode_decimal_implied<'a>(
     max_digits: usize,
     signed: bool,
 ) -> Result<&'a mut [u8], Error> {
-    let (negative, _int_digits, frac_digits, total_digits, first_nonzero) = parse_scaled_decimal(input, scale, signed)?;
-    let digits_len = match first_nonzero {
-        Some(first_nonzero) => total_digits - first_nonzero,
-        None => 1,
-    };
-    if digits_len > max_digits {
-        cold_path();
-        return Err(Error::InvalidValueLength);
-    }
-
-    let out_len = digits_len + usize::from(negative && first_nonzero.is_some());
+    let (negative, out_len, significant) = parse_scaled_decimal(input, scale, max_digits, signed)?;
     let buf = output.split_off_mut(..out_len).ok_or_else(|| {
         cold_path();
         Error::BufferOverflow
     })?;
-    if first_nonzero.is_none() {
-        buf[0] = b'0';
-        return Ok(&mut buf[..1]);
+    let mut out = buf.iter_mut();
+    for sign in out.by_ref().take(usize::from(negative)) {
+        *sign = b'-';
     }
-
-    let mut out = 0usize;
-    if negative {
-        buf[0] = b'-';
-        out = 1;
+    let digits = significant.iter().copied().filter(|&byte| byte != b'.');
+    for (byte, out) in digits.zip(out.by_ref()) {
+        *out = byte;
     }
-    let skip = first_nonzero.unwrap_or(0);
-    let mut digit_index = 0usize;
-    for &byte in input {
-        if byte != b'.' && byte != b'-' {
-            if digit_index >= skip {
-                buf[out] = byte;
-                out += 1;
-            }
-            digit_index += 1;
-        }
-    }
-    let mut i = 0usize;
-    while i < scale - frac_digits {
-        if digit_index >= skip {
-            buf[out] = b'0';
-            out += 1;
-        }
-        digit_index += 1;
-        i += 1;
-    }
+    out.into_slice().fill(b'0');
     Ok(buf)
 }
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_decimal_implied<'a>(output: &mut &'a mut [u8], input: &[u8], scale: usize) -> Result<&'a mut [u8], Error> {
-    let Some((&first, rest)) = input.split_first() else {
-        cold_path();
-        return Err(Error::Invalid);
-    };
-    let (negative, digits) = match first {
-        b'-' => (true, rest),
-        b'+' => {
-            cold_path();
-            return Err(Error::Invalid);
-        }
-        _ => (false, input),
-    };
+    let (negative, mut digits) = split_signed_input(input)?;
     validate_numeric(digits, 1, usize::MAX)?;
-
-    let mut first_nonzero = digits.len();
-    let mut i = 0usize;
-    while i < digits.len() {
-        if digits[i] != b'0' {
-            first_nonzero = i;
-            break;
-        }
-        i += 1;
+    while let Some(rest) = digits.strip_prefix(b"0") {
+        digits = rest;
     }
-    if first_nonzero == digits.len() {
-        let buf = output.split_off_mut(..1).ok_or_else(|| {
+    if digits.is_empty() {
+        return crate::primitive::bytes::copy_bytes(output, b"0");
+    }
+    let (integer, mut fraction) = digits.split_at(digits.len().saturating_sub(scale));
+    while let Some(rest) = fraction.strip_suffix(b"0") {
+        fraction = rest;
+    }
+    let integer = if integer.is_empty() { b"0" } else { integer };
+    let prefix_zeros = scale.saturating_sub(digits.len());
+    let fraction_len = prefix_zeros.checked_add(fraction.len()).ok_or_else(|| {
+        cold_path();
+        Error::Internal
+    })?;
+    let out_len = integer
+        .len()
+        .checked_add(usize::from(negative))
+        .and_then(|len| len.checked_add(usize::from(fraction_len != 0)))
+        .and_then(|len| len.checked_add(fraction_len))
+        .ok_or_else(|| {
             cold_path();
-            Error::BufferOverflow
+            Error::Internal
         })?;
-        buf[0] = b'0';
-        return Ok(buf);
-    }
-
-    let digits = &digits[first_nonzero..];
-    let out_len = if scale == 0 {
-        digits.len() + usize::from(negative)
-    } else if digits.len() > scale {
-        let int_len = digits.len() - scale;
-        let mut frac_len = scale;
-        while frac_len > 0 && digits[int_len + frac_len - 1] == b'0' {
-            frac_len -= 1;
-        }
-        usize::from(negative) + if frac_len == 0 { int_len } else { int_len + 1 + frac_len }
-    } else {
-        let prefix_zeros = scale - digits.len();
-        let mut frac_len = digits.len();
-        while frac_len > 0 && digits[frac_len - 1] == b'0' {
-            frac_len -= 1;
-        }
-        usize::from(negative) + if frac_len == 0 { 1 } else { 2 + prefix_zeros + frac_len }
-    };
     let buf = output.split_off_mut(..out_len).ok_or_else(|| {
         cold_path();
         Error::BufferOverflow
     })?;
-
-    let mut out = 0usize;
-    if negative {
-        buf[out] = b'-';
-        out += 1;
+    let mut out = buf.iter_mut();
+    for sign in out.by_ref().take(usize::from(negative)) {
+        *sign = b'-';
     }
-
-    if scale == 0 {
-        buf[out..out + digits.len()].copy_from_slice(digits);
-        out += digits.len();
-        return Ok(&mut buf[..out]);
+    for (&digit, out) in integer.iter().zip(out.by_ref()) {
+        *out = digit;
     }
-
-    if digits.len() > scale {
-        let int_len = digits.len() - scale;
-        buf[out..out + int_len].copy_from_slice(&digits[..int_len]);
-        out += int_len;
-        let frac = &digits[int_len..];
-        let mut frac_len = frac.len();
-        while frac_len > 0 && frac[frac_len - 1] == b'0' {
-            frac_len -= 1;
-        }
-        if frac_len == 0 {
-            return Ok(&mut buf[..out]);
-        }
-        buf[out] = b'.';
-        out += 1;
-        buf[out..out + frac_len].copy_from_slice(&frac[..frac_len]);
-        out += frac_len;
-        return Ok(&mut buf[..out]);
+    for dot in out.by_ref().take(usize::from(fraction_len != 0)) {
+        *dot = b'.';
     }
-
-    let prefix_zeros = scale - digits.len();
-    let mut frac_len = digits.len();
-    while frac_len > 0 && digits[frac_len - 1] == b'0' {
-        frac_len -= 1;
+    for zero in out.by_ref().take(prefix_zeros) {
+        *zero = b'0';
     }
-    if frac_len == 0 {
-        buf[out] = b'0';
-        out += 1;
-        return Ok(&mut buf[..out]);
+    for (&digit, out) in fraction.iter().zip(out) {
+        *out = digit;
     }
-    buf[out] = b'0';
-    buf[out + 1] = b'.';
-    out += 2;
-    let mut i = 0usize;
-    while i < prefix_zeros {
-        buf[out] = b'0';
-        out += 1;
-        i += 1;
-    }
-    buf[out..out + frac_len].copy_from_slice(&digits[..frac_len]);
-    out += frac_len;
-    Ok(&mut buf[..out])
+    Ok(buf)
 }
 
 /// Encode a prevalidated decimal digit (0-9) with its EBCDIC sign zone.
@@ -1043,6 +952,62 @@ mod tests {
     }
 
     #[test]
+    fn test_implied_decimal_capacity_and_scale_limits() {
+        for (input, wire, canonical, scale) in [
+            (&b"-0.00"[..], &b"0"[..], &b"0"[..], 2),
+            (b"0001.200", b"1200", b"1.2", 3),
+            (b"-0.00100", b"-100", b"-0.001", 5),
+            (b"-0012", b"-12", b"-12", 0),
+        ] {
+            assert_eq!(validate_decimal_implied(input, scale, 20, true), Ok(wire.len()));
+            let mut encoded = [0xAA; 24];
+            let mut out = &mut encoded[..wire.len() + 1];
+            assert_eq!(encode_decimal_implied(&mut out, input, scale, 20, true).map(|s| &*s), Ok(wire));
+            assert_eq!(out, [0xAA]);
+            let mut out = &mut encoded[..wire.len() - 1];
+            assert_eq!(encode_decimal_implied(&mut out, input, scale, 20, true), Err(Error::BufferOverflow));
+            let mut decoded = [0xAA; 24];
+            let mut out = &mut decoded[..canonical.len() + 1];
+            assert_eq!(decode_decimal_implied(&mut out, wire, scale).map(|s| &*s), Ok(canonical));
+            assert_eq!(out, [0xAA]);
+            let mut out = &mut decoded[..canonical.len() - 1];
+            assert_eq!(decode_decimal_implied(&mut out, wire, scale), Err(Error::BufferOverflow));
+        }
+        let mut output = [0; 4];
+        for input in [&b"1"[..], b"-1"] {
+            assert_eq!(validate_decimal_implied(input, usize::MAX, usize::MAX, true), Err(Error::Internal));
+            assert_eq!(
+                encode_decimal_implied(&mut output.as_mut_slice(), input, usize::MAX, usize::MAX, true),
+                Err(Error::Internal)
+            );
+            assert_eq!(
+                decode_decimal_implied(&mut output.as_mut_slice(), input, usize::MAX),
+                Err(Error::Internal)
+            );
+        }
+        assert_eq!(
+            validate_decimal_implied(b"-1", usize::MAX - 1, usize::MAX, true),
+            Err(Error::Internal)
+        );
+        assert_eq!(
+            encode_decimal_implied(&mut output.as_mut_slice(), b"-1", usize::MAX - 1, usize::MAX, true),
+            Err(Error::Internal)
+        );
+        assert_eq!(
+            decode_decimal_implied(&mut output.as_mut_slice(), b"1", usize::MAX - 1),
+            Err(Error::Internal)
+        );
+        assert_eq!(
+            decode_decimal_implied(&mut output.as_mut_slice(), b"1", usize::MAX - 2),
+            Err(Error::BufferOverflow)
+        );
+        assert_eq!(
+            decode_decimal_implied(&mut output.as_mut_slice(), b"-0", usize::MAX).map(|s| &*s),
+            Ok(&b"0"[..])
+        );
+    }
+
+    #[test]
     fn test_implied_decimal_ascii_codecs() {
         assert_eq!(encode_implied_ascii(b"123.45", 2, 5, false), Ok(b"12345".to_vec()));
         assert_eq!(encode_implied_ascii(b"1", 2, 5, false), Ok(b"100".to_vec()));
@@ -1057,6 +1022,7 @@ mod tests {
         assert_eq!(decode_implied_ascii(b"5", 2), Ok(b"0.05".to_vec()));
         assert_eq!(decode_implied_ascii(b"0", 2), Ok(b"0".to_vec()));
         assert_eq!(decode_implied_ascii(b"-5", 2), Ok(b"-0.05".to_vec()));
+        assert_eq!(decode_implied_ascii(b"-", 2), Err(Error::Invalid));
         assert_eq!(decode_implied_ascii(b"+5", 2), Err(Error::Invalid));
         assert_eq!(decode_implied_ascii(b"12A", 2), Err(Error::Invalid));
     }

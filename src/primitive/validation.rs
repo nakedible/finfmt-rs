@@ -92,35 +92,29 @@ pub fn parse_signed_decimal(input: &[u8], max_digits: usize) -> Result<(bool, &[
     Ok((negative, digits))
 }
 
+/// Return the normalized sign, output length, and significant source suffix,
+/// which may still contain the decimal point.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub(crate) fn parse_scaled_decimal(input: &[u8], scale: usize, signed: bool) -> Result<(bool, usize, usize, usize, Option<usize>), Error> {
-    let Some((&first, rest)) = input.split_first() else {
+pub(crate) fn parse_scaled_decimal(input: &[u8], scale: usize, max_digits: usize, signed: bool) -> Result<(bool, usize, &[u8]), Error> {
+    let (negative, input) = split_signed_input(input)?;
+    if negative && !signed {
         cold_path();
         return Err(Error::Invalid);
-    };
-    let (negative, input) = match first {
-        b'-' if signed => (true, rest),
-        b'-' => {
-            cold_path();
-            return Err(Error::Invalid);
-        }
-        b'+' => {
-            cold_path();
-            return Err(Error::Invalid);
-        }
-        _ => (false, input),
-    };
+    }
     let mut int_digits = 0usize;
     let mut frac_digits = 0usize;
     let mut seen_dot = false;
     let mut first_nonzero = None;
     let mut digit_index = 0usize;
-    for &byte in input {
+    let mut significant = &b""[..];
+    let mut remaining = input;
+    while let Some((&byte, rest)) = remaining.split_first() {
         match byte {
             b'0'..=b'9' => {
                 if byte != b'0' && first_nonzero.is_none() {
                     first_nonzero = Some(digit_index);
+                    significant = remaining;
                 }
                 if seen_dot {
                     frac_digits += 1;
@@ -135,6 +129,7 @@ pub(crate) fn parse_scaled_decimal(input: &[u8], scale: usize, signed: bool) -> 
                 return Err(Error::Invalid);
             }
         }
+        remaining = rest;
     }
     if int_digits == 0 || (seen_dot && frac_digits == 0) || frac_digits > scale {
         cold_path();
@@ -142,24 +137,25 @@ pub(crate) fn parse_scaled_decimal(input: &[u8], scale: usize, signed: bool) -> 
     }
     let total_digits = int_digits.checked_add(scale).ok_or_else(|| {
         cold_path();
-        Error::Invalid
+        Error::Internal
     })?;
-    Ok((negative, int_digits, frac_digits, total_digits, first_nonzero))
+    let digits_len = first_nonzero.map_or(1, |first| total_digits - first);
+    if digits_len > max_digits {
+        cold_path();
+        return Err(Error::InvalidValueLength);
+    }
+    let negative = negative && first_nonzero.is_some();
+    let out_len = digits_len.checked_add(usize::from(negative)).ok_or_else(|| {
+        cold_path();
+        Error::Internal
+    })?;
+    Ok((negative, out_len, significant))
 }
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn validate_decimal_implied(input: &[u8], scale: usize, max_digits: usize, signed: bool) -> Result<usize, Error> {
-    let (negative, _int_digits, _frac_digits, total_digits, first_nonzero) = parse_scaled_decimal(input, scale, signed)?;
-    let digits_len = match first_nonzero {
-        Some(first_nonzero) => total_digits - first_nonzero,
-        None => 1,
-    };
-    if digits_len > max_digits {
-        cold_path();
-        return Err(Error::InvalidValueLength);
-    }
-    Ok(digits_len + usize::from(negative && first_nonzero.is_some()))
+    parse_scaled_decimal(input, scale, max_digits, signed).map(|(_, out_len, _)| out_len)
 }
 
 #[inline(always)]
