@@ -306,6 +306,26 @@ mod tests {
     }
 
     #[test]
+    fn cp037_strict_decoding_is_opt_in() {
+        type Permissive = Field<Ascii<0, 99>, crate::Rest, crate::Ebcdic037>;
+        type Strict = Field<Ascii<0, 99>, crate::Rest, crate::DecodeCheck<crate::Ebcdic037, crate::Ebcdic037Ascii<0, 99>>>;
+        for (wire, ascii) in [
+            (&b""[..], &b""[..]),
+            (&b"\xC1\xF1\x40"[..], &b"A1 "[..]),
+            (&b"\0\x3F"[..], &b"\0\x1A"[..]),
+        ] {
+            assert_eq!(decode_field::<Strict>(wire, 128), Ok(ascii.to_vec()));
+            assert_eq!(decode_field::<Permissive>(wire, 128), Ok(ascii.to_vec()));
+            assert_eq!(encode_field::<Strict>(ascii, 128, 128), Ok(wire.to_vec()));
+            assert_eq!(encode_field::<Permissive>(ascii, 128, 128), Ok(wire.to_vec()));
+        }
+        assert_eq!(decode_field_str::<Permissive>(&[0xC1, 0x4A], 128), Ok("A\x1A".to_owned()));
+        assert_eq!(decode_field_str::<Strict>(&[0xC1, 0x4A], 128), Err(Error::Invalid));
+        assert_eq!(encode_field_str::<Permissive>("¢", 128, 128), Err(Error::Invalid));
+        assert_eq!(encode_field_str::<Strict>("¢", 128, 128), Err(Error::Invalid));
+    }
+
+    #[test]
     fn test_ibm1142_string_field_roundtrip() {
         let text = "ABCÆØÅæøå€";
         let encoded = encode_field_str::<FixedIbm1142<10>>(text, FixedIbm1142::<10>::encoded_len_str(text).unwrap(), 64).unwrap();

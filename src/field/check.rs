@@ -1,9 +1,9 @@
 use crate::Error;
 use crate::primitive::validation::{
     validate_alpha, validate_alphanum, validate_ascii, validate_ascii_printable, validate_bcd_bytes, validate_bcdz, validate_byte_length,
-    validate_ebcdic_1142_text, validate_ebcdic_printable, validate_hex, validate_hex_even, validate_hex_lower, validate_hex_lower_even,
-    validate_hex_upper, validate_hex_upper_even, validate_numeric, validate_track2_chars, validate_upper_alpha, validate_upper_alphanum,
-    validate_upper_ascii_printable,
+    validate_ebcdic_037_ascii, validate_ebcdic_1142_text, validate_ebcdic_printable, validate_hex, validate_hex_even, validate_hex_lower,
+    validate_hex_lower_even, validate_hex_upper, validate_hex_upper_even, validate_numeric, validate_track2_chars, validate_upper_alpha,
+    validate_upper_alphanum, validate_upper_ascii_printable,
 };
 
 /// Validate semantic input and return its logical length. All built-in checks
@@ -170,6 +170,16 @@ impl<const MIN: usize, const MAX: usize> Check for Iso88591<MIN, MAX> {
     #[inline(always)]
     fn validate(input: &[u8]) -> Result<usize, Error> {
         validate_byte_length(input, MIN, MAX)
+    }
+}
+
+/// CP037 wire bytes representing ASCII, including controls. Combine with
+/// `DecodeCheck<Ebcdic037, Ebcdic037Ascii<MIN, MAX>>` for strict ASCII decoding.
+pub struct Ebcdic037Ascii<const MIN: usize, const MAX: usize>;
+impl<const MIN: usize, const MAX: usize> Check for Ebcdic037Ascii<MIN, MAX> {
+    #[inline(always)]
+    fn validate(input: &[u8]) -> Result<usize, Error> {
+        validate_ebcdic_037_ascii(input, MIN, MAX)
     }
 }
 

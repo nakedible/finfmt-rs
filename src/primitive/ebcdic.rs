@@ -6,6 +6,8 @@ use crate::utils::cold_path;
 
 /// ASCII to EBCDIC conversion table (IBM Code Page 037).
 /// Non-ASCII bytes (0x80-0xFF) map to 0x3F (substitute).
+/// Validate ASCII before translation when substitution is unwanted. This maps
+/// individual bytes and does not decode UTF-8 characters.
 #[rustfmt::skip]
 pub const ASCII_TO_EBCDIC_037: [u8; 256] = [
     0x00, 0x01, 0x02, 0x03, 0x37, 0x2D, 0x2E, 0x2F, 0x16, 0x05, 0x25, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
@@ -27,7 +29,9 @@ pub const ASCII_TO_EBCDIC_037: [u8; 256] = [
 ];
 
 /// EBCDIC to ASCII conversion table (IBM Code Page 037).
-/// Unmapped EBCDIC bytes become 0x1A (substitute).
+/// CP037 bytes outside the ASCII repertoire become 0x1A (substitute).
+/// Validate with `super::validation::validate_ebcdic_037_ascii` before translation
+/// when substitution is unwanted. Canonical CP037 SUB (0x3F) also maps to 0x1A.
 #[rustfmt::skip]
 pub const EBCDIC_037_TO_ASCII: [u8; 256] = [
     0x00, 0x01, 0x02, 0x03, 0x1A, 0x09, 0x1A, 0x7F, 0x1A, 0x1A, 0x1A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,

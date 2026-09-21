@@ -8,7 +8,7 @@ use std::ops::RangeBounds;
 use no_panic::no_panic;
 
 use crate::Error;
-use crate::primitive::ebcdic::encode_ebcdic_1142_char;
+use crate::primitive::ebcdic::{EBCDIC_037_TO_ASCII, encode_ebcdic_1142_char};
 use crate::utils::cold_path;
 
 #[inline(always)]
@@ -297,6 +297,18 @@ pub fn validate_ebcdic_1142_text(input: impl AsRef<[u8]>, minlen: usize, maxlen:
     validate_chars(text, minlen, maxlen, |ch| encode_ebcdic_1142_char(ch).is_some())
 }
 
+/// Validate CP037 wire bytes representing ASCII characters, including controls,
+/// and return their byte count. Use before lossy CP037-to-ASCII conversion when
+/// unsupported characters must be rejected instead of replaced with SUB.
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub fn validate_ebcdic_037_ascii(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
+    validate_bytes(input, minlen, maxlen, |&byte| {
+        // Only canonical CP037 SUB may map to ASCII SUB without substitution.
+        EBCDIC_037_TO_ASCII[byte as usize] != 0x1A || byte == 0x3F
+    })
+}
+
 /// Validate the EBCDIC byte range 0x40..=0xFE, returning the byte count. For
 /// CP037 and IBM1142 this is the non-control repertoire, including space,
 /// non-breaking space and soft hyphen; it does not imply ASCII representability.
@@ -558,6 +570,32 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_ebcdic_037_ascii() {
+        use crate::primitive::ebcdic::ASCII_TO_EBCDIC_037;
+
+        for byte in 0..=u8::MAX {
+            let expected = if ASCII_TO_EBCDIC_037[..128].contains(&byte) {
+                Ok(1)
+            } else {
+                Err(Error::Invalid)
+            };
+            assert_eq!(validate_ebcdic_037_ascii([byte], 1, 1), expected, "wire byte {byte:02X}");
+        }
+        assert_eq!(validate_ebcdic_037_ascii([0xC1, 0xF1, 0x40], 3, 3), Ok(3));
+        assert_eq!(validate_ebcdic_037_ascii("\0\x3F", 2, 2), Ok(2));
+        assert_eq!(validate_ebcdic_037_ascii(b"\0\x3F", 2, 2), Ok(2));
+        assert_eq!(validate_ebcdic_037_ascii(b"", 0, 0), Ok(0));
+        assert_eq!(validate_ebcdic_037_ascii(b"", 1, 1), Err(Error::InvalidValueLength));
+        assert_eq!(validate_ebcdic_037_ascii([0xC1], 2, 2), Err(Error::InvalidValueLength));
+        assert_eq!(validate_ebcdic_037_ascii([0xC1], 0, 0), Err(Error::InvalidValueLength));
+        for input in [[0x4A, 0xC1], [0xC1, 0x4A]] {
+            for (min, max) in [(0, 0), (2, 2), (3, 3)] {
+                assert_eq!(validate_ebcdic_037_ascii(input, min, max), Err(Error::Invalid));
+            }
+        }
+    }
+
+    #[test]
     fn test_validate_ebcdic_printable() {
         // Range: 0x40-0xFE
         assert_eq!(validate_ebcdic_printable(b"\x40", 0, 99), Ok(1)); // min
@@ -736,6 +774,20 @@ mod proptests {
         fn iso8859_1_char_counting(v in proptest::collection::vec(0u8..=255, 0..100)) {
             let s: String = v.iter().map(|&b| b as char).collect();
             prop_assert_eq!(validate_iso8859_1_str(&s, 0, usize::MAX), Ok(s.chars().count()));
+        }
+
+        #[test]
+        fn ebcdic_037_ascii_validation(v in prop::collection::vec(any::<u8>(), 0..100), min in 0usize..=100, extra in 0usize..=100) {
+            use crate::primitive::ebcdic::ASCII_TO_EBCDIC_037;
+            let max = min + extra;
+            let expected = if !v.iter().all(|b| ASCII_TO_EBCDIC_037[..128].contains(b)) {
+                Err(Error::Invalid)
+            } else if !(min..=max).contains(&v.len()) {
+                Err(Error::InvalidValueLength)
+            } else {
+                Ok(v.len())
+            };
+            prop_assert_eq!(validate_ebcdic_037_ascii(&v, min, max), expected);
         }
 
         // EBCDIC printable range: 0x40-0xFE

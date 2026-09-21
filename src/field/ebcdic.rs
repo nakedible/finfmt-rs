@@ -5,6 +5,15 @@ use crate::primitive::ebcdic::{
 use crate::utils::cold_path;
 use crate::{Error, Step};
 
+/// Permissive conversion between ASCII bytes and their CP037 counterparts.
+/// Supported characters, including ASCII controls, round-trip exactly. Encoding
+/// replaces each non-ASCII byte with CP037 SUB (0x3F); decoding replaces each
+/// CP037 byte outside the ASCII repertoire with ASCII SUB (0x1A).
+/// This is byte conversion, not UTF-8 character decoding.
+///
+/// Strict callers validate before conversion: use an `Ascii` field check on
+/// encode and `DecodeCheck<Ebcdic037, Ebcdic037Ascii<MIN, MAX>>` on decode.
+/// Validation after conversion cannot distinguish replacements from genuine SUB.
 pub struct Ebcdic037;
 pub struct Ebcdic1142;
 

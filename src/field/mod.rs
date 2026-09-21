@@ -20,8 +20,8 @@ macro_rules! chain {
 }
 
 pub use check::{
-    Alpha, Alphanum, Ascii, AsciiPrintable, Bcd, BcdBytes, Bcdz, Binary, Check, Ebcdic1142Text, EbcdicPrintable, Hex, HexEven, HexLower,
-    HexLowerEven, HexUpper, HexUpperEven, Iso88591, Numeric, Track2, UpperAlpha, UpperAlphanum, UpperAsciiPrintable,
+    Alpha, Alphanum, Ascii, AsciiPrintable, Bcd, BcdBytes, Bcdz, Binary, Check, Ebcdic037Ascii, Ebcdic1142Text, EbcdicPrintable, Hex,
+    HexEven, HexLower, HexLowerEven, HexUpper, HexUpperEven, Iso88591, Numeric, Track2, UpperAlpha, UpperAlphanum, UpperAsciiPrintable,
 };
 pub use ebcdic::{Ebcdic037, Ebcdic1142};
 pub use format::{Field, PaddedField};
