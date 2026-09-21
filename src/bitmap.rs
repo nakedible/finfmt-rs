@@ -2,7 +2,7 @@ pub use crate::primitive::bitmap::{Bitmap, BitmapLayout, BitmapWord, decode_bitm
 use crate::{Binary, Field, Fixed, Step};
 
 impl<S: Step, const N: usize> BitmapWord for Field<Binary<N, N>, Fixed<N>, S> {
-    const BYTES: usize = N;
+    const DECODED_BYTES: usize = N;
 }
 
 #[cfg(test)]
@@ -229,7 +229,7 @@ mod tests {
     struct ScratchWord<const OUTPUT_BYTES: usize>;
 
     impl<const N: usize> BitmapWord for ScratchWord<N> {
-        const BYTES: usize = 8;
+        const DECODED_BYTES: usize = 8;
     }
 
     impl<const N: usize> crate::ScalarFmt for ScratchWord<N> {

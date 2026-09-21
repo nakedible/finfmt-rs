@@ -22,8 +22,18 @@ pub struct BitmapLayout {
     pub continuation_bits: [Option<u8>; 3],
 }
 
+/// A scalar codec for the semantic bytes of one bitmap word.
+///
+/// Encoding receives exactly [`Self::DECODED_BYTES`] high-order bytes of a
+/// 64-field word. The codec must preserve those bytes, and successful decoding
+/// must return exactly that byte count. Wire framing, validation, and cursor
+/// advancement follow [`ScalarFmt`]. Scratch may hold the decoded bytes until
+/// they are copied into the owned bitmap.
+///
+/// Wire size can differ: eight decoded bytes become sixteen hexadecimal wire bytes.
 pub trait BitmapWord: ScalarFmt {
-    const BYTES: usize;
+    /// Number of semantic bytes per word, in `1..=8`, before wire transforms.
+    const DECODED_BYTES: usize;
 }
 
 impl BitmapLayout {
@@ -134,8 +144,8 @@ impl Bitmap {
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 fn validate_bitmap_layout<F: BitmapWord>(layout: BitmapLayout) -> Result<usize, Error> {
-    debug_assert!(F::BYTES > 0 && F::BYTES <= 8, "bitmap word byte width out of range");
-    if F::BYTES == 0 || F::BYTES > 8 {
+    debug_assert!(F::DECODED_BYTES > 0 && F::DECODED_BYTES <= 8, "bitmap word byte width out of range");
+    if F::DECODED_BYTES == 0 || F::DECODED_BYTES > 8 {
         cold_path();
         return Err(Error::Internal);
     }
@@ -159,7 +169,7 @@ fn validate_bitmap_layout<F: BitmapWord>(layout: BitmapLayout) -> Result<usize, 
         if let Some(bit) = layout.continuation_bits[index] {
             debug_assert!(bit > 0 && bit <= 64, "bitmap continuation bit out of range");
             debug_assert!(
-                index >= max_words || usize::from(bit) <= F::BYTES * 8,
+                index >= max_words || usize::from(bit) <= F::DECODED_BYTES * 8,
                 "bitmap continuation bit outside word width"
             );
             if bit == 0 || bit > 64 {
@@ -189,10 +199,10 @@ fn encode_bitmap_word<F: BitmapWord>(output: &mut &mut [u8], scratch: &mut [u8],
     let mut scratch_ptr = &mut scratch[..];
     let word = word.to_be_bytes();
     debug_assert!(
-        word.get(F::BYTES..).is_some_and(|tail| all_bytes_eq(tail, 0)),
+        word.get(F::DECODED_BYTES..).is_some_and(|tail| all_bytes_eq(tail, 0)),
         "bitmap contains bits outside word width"
     );
-    let bytes = word.get(..F::BYTES).ok_or_else(|| {
+    let bytes = word.get(..F::DECODED_BYTES).ok_or_else(|| {
         cold_path();
         Error::Internal
     })?;
@@ -207,13 +217,13 @@ fn decode_bitmap_word<F: BitmapWord>(input: &mut &[u8], scratch: &mut [u8]) -> R
     let mut input_ptr = source;
     let mut scratch_ptr = &mut scratch[..];
     let bytes = F::decode(&mut input_ptr, &mut scratch_ptr)?;
-    debug_assert_eq!(bytes.len(), F::BYTES, "bitmap word decoder returned incorrect length");
-    if bytes.len() != F::BYTES {
+    debug_assert_eq!(bytes.len(), F::DECODED_BYTES, "bitmap word decoder returned incorrect length");
+    if bytes.len() != F::DECODED_BYTES {
         cold_path();
         return Err(Error::Internal);
     }
     let mut word = [0u8; 8];
-    let dst = word.get_mut(..F::BYTES).ok_or_else(|| {
+    let dst = word.get_mut(..F::DECODED_BYTES).ok_or_else(|| {
         cold_path();
         Error::Internal
     })?;
