@@ -134,6 +134,27 @@ fn bench_overpunch_packed_sign(suite: &mut Suite) {
 fn bench_fixed_ascii(suite: &mut Suite) {
     suite.group("fixed_ascii", |group| {
         quick(group);
+        group.bench("encode_decimal_ascii_fixed_3", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 3];
+                let _ = encode_decimal_ascii_fixed_3(&mut buf.as_mut_slice(), black_box(123));
+                black_box(buf)
+            })
+        });
+        group.bench("encode_ascii_ll_field", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 34];
+                let _ = encode_ascii_ll_field(&mut buf.as_mut_slice(), black_box(&[b'7'; 32]));
+                black_box(buf)
+            })
+        });
+        group.bench("encode_ascii_lll_field", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 131];
+                let _ = encode_ascii_lll_field(&mut buf.as_mut_slice(), black_box(&[b'7'; 128]));
+                black_box(buf)
+            })
+        });
         group.bench("encode_decimal_ascii_fixed_2", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 2];
@@ -154,6 +175,13 @@ fn bench_fixed_ascii(suite: &mut Suite) {
 fn bench_fixed_ebcdic(suite: &mut Suite) {
     suite.group("fixed_ebcdic", |group| {
         quick(group);
+        group.bench("encode_decimal_ebcdic_fixed_3", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 3];
+                let _ = encode_decimal_ebcdic_fixed_3(&mut buf.as_mut_slice(), black_box(123));
+                black_box(buf)
+            })
+        });
         group.bench("encode_decimal_ebcdic_fixed_2", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 2];

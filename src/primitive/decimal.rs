@@ -428,10 +428,9 @@ pub fn encode_decimal_ebcdic_fixed(output: &mut &mut [u8], value: usize, len: us
 }
 
 #[inline(always)]
-fn encode_decimal_fixed(output: &mut &mut [u8], value: usize, len: usize, zero: u8) -> Result<(), Error> {
-    let mut digits_buf = [0u8; MAX_INTEGER_TEXT_LEN];
-    let digits = format_u64(&mut digits_buf, value as u64);
-    if digits.len() > len {
+fn encode_decimal_fixed(output: &mut &mut [u8], mut value: usize, len: usize, zero: u8) -> Result<(), Error> {
+    let limit = u32::try_from(len).ok().and_then(|len| 10usize.checked_pow(len));
+    if len == 0 || limit.is_some_and(|limit| value >= limit) {
         cold_path();
         return Err(Error::Invalid);
     }
@@ -439,10 +438,9 @@ fn encode_decimal_fixed(output: &mut &mut [u8], value: usize, len: usize, zero: 
         cold_path();
         Error::BufferOverflow
     })?;
-    let pad = len - digits.len();
-    buf[..pad].fill(zero);
-    for (out, &digit) in buf[pad..].iter_mut().zip(digits) {
-        *out = digit - b'0' + zero;
+    for byte in buf.iter_mut().rev() {
+        *byte = zero + (value % 10) as u8;
+        value /= 10;
     }
     Ok(())
 }
@@ -732,6 +730,57 @@ mod tests {
             assert_eq!(
                 super::decode_decimal_fixed(&mut &[zero.wrapping_sub(1)][..], 1, zero),
                 Err(Error::Invalid)
+            );
+        }
+    }
+
+    pub(super) fn check_fixed_decimal(value: usize, width: usize, capacity: usize) {
+        let digits = value.to_string();
+        for zero in [b'0', 0xF0] {
+            let mut storage = [0xAA; 66];
+            let mut out = &mut storage[..capacity];
+            let result = super::encode_decimal_fixed(&mut out, value, width, zero);
+            let expected = if digits.len() > width {
+                Err(Error::Invalid)
+            } else if width > capacity {
+                Err(Error::BufferOverflow)
+            } else {
+                Ok(())
+            };
+            assert_eq!(result, expected, "value={value}, width={width}, capacity={capacity}");
+            let written = if result.is_ok() { width } else { 0 };
+            assert_eq!(out.len(), capacity - written);
+            assert!(storage[written..].iter().all(|&byte| byte == 0xAA));
+            if result.is_ok() {
+                let expected: Vec<_> = format!("{value:0width$}").bytes().map(|digit| digit - b'0' + zero).collect();
+                assert_eq!(&storage[..width], expected);
+                let mut wire = &storage[..width];
+                assert_eq!(super::decode_decimal_fixed(&mut wire, width, zero), Ok(value));
+                assert!(wire.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_decimal_boundaries() {
+        let mut values = vec![0, 1, usize::MAX];
+        for exponent in 1..=20 {
+            if let Some(power) = 10usize.checked_pow(exponent) {
+                values.extend([power - 1, power, power + 1]);
+            }
+        }
+        for value in values {
+            for width in 0usize..=32 {
+                for capacity in [0, width.saturating_sub(1), width, 34] {
+                    check_fixed_decimal(value, width, capacity);
+                }
+            }
+        }
+        for width in [usize::MAX, usize::MAX - 1] {
+            assert_eq!(encode_decimal_ascii_fixed(&mut &mut [][..], 0, width), Err(Error::BufferOverflow));
+            assert_eq!(
+                encode_decimal_ebcdic_fixed(&mut &mut [][..], usize::MAX, width),
+                Err(Error::BufferOverflow)
             );
         }
     }
@@ -1103,6 +1152,11 @@ mod proptests {
     }
 
     proptest! {
+        #[test]
+        fn fixed_decimal_matches_std(value: usize, width in 0usize..=32, capacity in 0usize..=34) {
+            super::tests::check_fixed_decimal(value, width, capacity);
+        }
+
         #[test]
         fn decimal_integer_parsers_roundtrip(unsigned: u64, signed: i64) {
             prop_assert_eq!(super::parse_u64(unsigned.to_string().as_bytes()), Ok(unsigned));
