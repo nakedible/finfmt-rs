@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use serde::de::value::StrDeserializer;
+use serde::de::value::BorrowedStrDeserializer;
 use serde::de::{self, DeserializeOwned, Visitor};
 use serde::ser::{self, Impossible};
 use serde::{Deserialize, Serialize};
@@ -587,7 +587,7 @@ impl<'de, F: ScalarFmt> serde::Deserializer<'de> for ScalarValueDeserializer<'_,
     where
         V: Visitor<'de>,
     {
-        visitor.visit_enum(StrDeserializer::<Error>::new(self.decode_str()?))
+        visitor.visit_enum(BorrowedStrDeserializer::<Error>::new(self.decode_str()?))
     }
 
     #[inline(always)]
@@ -723,6 +723,76 @@ mod tests {
         let value = Counted(core::cell::Cell::new(0));
         assert_eq!(encode_display::<A4>(&value, 4, 4), Ok(b"ABCD".to_vec()));
         assert_eq!(value.0.get(), 1);
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct BorrowedIdentifier<'a>(&'a str);
+
+    impl<'de: 'a, 'a> Deserialize<'de> for BorrowedIdentifier<'a> {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct IdentifierVisitor;
+
+            impl<'de> Visitor<'de> for IdentifierVisitor {
+                type Value = &'de str;
+
+                fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    formatter.write_str("a borrowed unit enum identifier")
+                }
+
+                fn visit_enum<A: de::EnumAccess<'de>>(self, access: A) -> Result<Self::Value, A::Error> {
+                    use de::VariantAccess;
+                    let (name, variant) = access.variant::<&str>()?;
+                    variant.unit_variant()?;
+                    Ok(name)
+                }
+            }
+
+            Ok(Self(deserializer.deserialize_enum("BorrowedIdentifier", &[], IdentifierVisitor)?))
+        }
+    }
+
+    #[test]
+    fn enum_identifiers_borrow_input_or_scratch() {
+        let wire = b"ABCD!";
+        let mut input = wire.as_slice();
+        let decoded = decode_serde_scalar::<BorrowedIdentifier<'_>, A4>(&mut input, &mut &mut [][..]).unwrap();
+        assert_eq!(decoded.0, "ABCD");
+        assert_eq!(decoded.0.as_ptr(), wire.as_ptr());
+        assert_eq!(input, b"!");
+
+        type E4 = Field<Ascii<4, 4>, Fixed<4>, Ebcdic037>;
+        let mut scratch = [0u8; 4];
+        let scratch_start = scratch.as_ptr();
+        let mut space = scratch.as_mut_slice();
+        let mut input = &b"\xC1\xC2\xC3\xC4!"[..];
+        let decoded = decode_serde_scalar::<BorrowedIdentifier<'_>, E4>(&mut input, &mut space).unwrap();
+        assert_eq!(decoded.0, "ABCD");
+        assert_eq!(decoded.0.as_ptr(), scratch_start);
+        assert!(space.is_empty());
+        assert_eq!(input, b"!");
+    }
+
+    #[test]
+    fn unit_enum_scalar_keeps_variant_names() {
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        enum Code {
+            #[serde(rename = "ABCD")]
+            Value,
+        }
+
+        let mut output = [0u8; 4];
+        let mut out = output.as_mut_slice();
+        encode_serde_scalar::<_, A4>(&Code::Value, &mut out, &mut &mut [][..]).unwrap();
+        assert!(out.is_empty());
+        assert_eq!(&output, b"ABCD");
+        assert_eq!(
+            decode_serde_scalar::<Code, A4>(&mut output.as_slice(), &mut &mut [][..]),
+            Ok(Code::Value)
+        );
+        assert_eq!(
+            decode_serde_scalar::<Code, A4>(&mut b"WXYZ".as_slice(), &mut &mut [][..]),
+            Err(Error::Invalid)
+        );
     }
 
     mod proptests {
