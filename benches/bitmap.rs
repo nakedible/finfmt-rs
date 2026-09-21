@@ -21,6 +21,30 @@ fn sample_bitmap() -> Bitmap {
 fn bench_bitmap(suite: &mut Suite) {
     suite.group("bitmap", |group| {
         quick(group);
+        group.bench("encode_bitmap_binary_iso2_required", |b| {
+            let bitmap = Bitmap::new();
+            b.iter(|| {
+                let mut output = [0; 16];
+                let _ = encode_bitmap_binary_iso2_required(&mut output.as_mut_slice(), &mut [], black_box(&bitmap));
+                black_box(output)
+            })
+        });
+        group.bench("decode_bitmap_binary_iso2_required", |b| {
+            let mut wire = [0; 16];
+            wire[0] = 0x80;
+            b.iter(|| black_box(decode_bitmap_binary_iso2_required(&mut black_box(wire.as_slice()), &mut [])))
+        });
+        group.bench("encode_bitmap_binary_fixed2", |b| {
+            let bitmap = Bitmap::new();
+            b.iter(|| {
+                let mut output = [0; 16];
+                let _ = encode_bitmap_binary_fixed2(&mut output.as_mut_slice(), &mut [], black_box(&bitmap));
+                black_box(output)
+            })
+        });
+        group.bench("decode_bitmap_binary_fixed2", |b| {
+            b.iter(|| black_box(decode_bitmap_binary_fixed2(&mut black_box([0; 16].as_slice()), &mut [])))
+        });
         let bitmap = sample_bitmap();
 
         group.bench("encode_bitmap_binary_iso2", move |b| {

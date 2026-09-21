@@ -106,7 +106,7 @@ pub struct AuthorizationRequest0100 {
 }
 
 finfmt::bitmap_format! {
-    pub struct AuthorizationRequest0100BodyFmt for AuthorizationRequest0100, finfmt::bitmap::BitmapLayout::iso(2), BitmapAsciiHexWord {
+    pub struct AuthorizationRequest0100BodyFmt for AuthorizationRequest0100, finfmt::bitmap::BitmapLayout::iso(1, 2), BitmapAsciiHexWord {
         2 => f002_primary_account_number: LlvarAsciiNumeric<1, 19>,
         3 => f003_processing_code: FixedAsciiAlphanum<6>,
         4 => f004_amount_transaction: FixedAsciiAmount<12>,
@@ -163,7 +163,7 @@ pub struct AuthorizationResponse0110 {
 }
 
 finfmt::bitmap_format! {
-    pub struct AuthorizationResponse0110BodyFmt for AuthorizationResponse0110, finfmt::bitmap::BitmapLayout::iso(2), BitmapAsciiHexWord {
+    pub struct AuthorizationResponse0110BodyFmt for AuthorizationResponse0110, finfmt::bitmap::BitmapLayout::iso(1, 2), BitmapAsciiHexWord {
         3 => f003_processing_code: FixedAsciiAlphanum<6>,
         4 => f004_amount_transaction: FixedAsciiAmount<12>,
         7 => f007_transmission_date_time_utc: FixedAsciiNumeric<10>,
@@ -208,7 +208,7 @@ pub struct FlatNibssMessage {
 }
 
 finfmt::bitmap_format! {
-    pub struct FlatNibssMessageFmt for FlatNibssMessage, finfmt::bitmap::BitmapLayout::iso(1), BitmapAsciiHexWord {
+    pub struct FlatNibssMessageFmt for FlatNibssMessage, finfmt::bitmap::BitmapLayout::iso(1, 1), BitmapAsciiHexWord {
         head: {
             mti: FixedAscii<4>,
         }

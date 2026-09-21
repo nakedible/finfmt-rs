@@ -202,7 +202,7 @@ mod tests {
     }
 
     crate::bitmap_format! {
-        struct BorrowedBitmapFmt for<'a> BorrowedBitmap<'a>, crate::bitmap::BitmapLayout::new(1, [None, None, None]), BitmapBinaryHalfWord {
+        struct BorrowedBitmapFmt for<'a> BorrowedBitmap<'a>, crate::bitmap::BitmapLayout::fixed(1), BitmapBinaryHalfWord {
             2 => required: A4,
             3 => optional: Option<A4>,
             4 => ebcdic: Option<A4Ebcdic>,
@@ -394,7 +394,7 @@ mod tests {
 
     crate::bitmap_format! {
         #[doc = "Test format for a nested BER-TLV field inside a bitmap."]
-        struct WithBitmapTlvFmt for WithBitmapTlv, crate::bitmap::BitmapLayout::iso(1), BitmapBinaryWord {
+        struct WithBitmapTlvFmt for WithBitmapTlv, crate::bitmap::BitmapLayout::iso(1, 1), BitmapBinaryWord {
             3 => f003_processing_code: N6,
             48 => f048_details: Option<Composite<TlvDataFmt>>,
         }
@@ -410,7 +410,7 @@ mod tests {
     }
 
     crate::bitmap_format! {
-        struct Auth1100Fmt for Auth1100, crate::bitmap::BitmapLayout::iso(2), BitmapBinaryWord {
+        struct Auth1100Fmt for Auth1100, crate::bitmap::BitmapLayout::iso(1, 2), BitmapBinaryWord {
             3 => f003_processing_code: N6,
             11 => f011_stan: N6,
             35 => f035_track2_data: Option<Track2Fmt>,
@@ -426,7 +426,7 @@ mod tests {
     }
 
     crate::bitmap_format! {
-        struct LocalBitmapDataFmt for LocalBitmapData, crate::bitmap::BitmapLayout::new(1, [None, None, None]), BitmapBinaryHalfWord {
+        struct LocalBitmapDataFmt for LocalBitmapData, crate::bitmap::BitmapLayout::fixed(1), BitmapBinaryHalfWord {
             head: {
                 _: A4 = b"HEAD",
             }
@@ -443,7 +443,7 @@ mod tests {
     }
 
     crate::bitmap_format! {
-        struct BitmapNoDefaultFmt for BitmapNoDefault, crate::bitmap::BitmapLayout::new(1, [None, None, None]), BitmapBinaryHalfWord {
+        struct BitmapNoDefaultFmt for BitmapNoDefault, crate::bitmap::BitmapLayout::fixed(1), BitmapBinaryHalfWord {
             head: {
                 head_code: N2,
                 _: A4 = b"HEAD",
@@ -468,7 +468,7 @@ mod tests {
     }
 
     crate::bitmap_format! {
-        struct SerdeScalarBitmapDataFmt for SerdeScalarBitmapData, crate::bitmap::BitmapLayout::iso(1), BitmapBinaryWord {
+        struct SerdeScalarBitmapDataFmt for SerdeScalarBitmapData, crate::bitmap::BitmapLayout::iso(1, 1), BitmapBinaryWord {
             3 => f003_processing_code: N6,
             11 => f011_stan: Option<N6>,
         }
@@ -508,7 +508,7 @@ mod tests {
     }
 
     crate::bitmap_format! {
-        struct ManualScalarBitmapDataFmt for ManualScalarBitmapData, crate::bitmap::BitmapLayout::iso(1), BitmapBinaryWord {
+        struct ManualScalarBitmapDataFmt for ManualScalarBitmapData, crate::bitmap::BitmapLayout::iso(1, 1), BitmapBinaryWord {
             3 => f003_processing_code: DirectScalar<N6>,
             11 => f011_stan: Option<DirectScalar<N6>>,
         }
@@ -553,7 +553,7 @@ mod tests {
     }
 
     crate::bitmap_format! {
-        struct FieldSyntaxBitmapFmt for FieldSyntaxRecord, crate::bitmap::BitmapLayout::iso(1), BitmapBinaryWord {
+        struct FieldSyntaxBitmapFmt for FieldSyntaxRecord, crate::bitmap::BitmapLayout::iso(1, 1), BitmapBinaryWord {
             2 => serde_value: N2,
             3 => direct_value: DirectScalar<N2>,
             4 => nested_value: Composite<FixedTailFmt>,
@@ -606,13 +606,13 @@ mod tests {
     }
 
     crate::bitmap_format! {
-        struct SerdeDualStanDataFmt for SerdeDualStanData, crate::bitmap::BitmapLayout::iso(1), BitmapBinaryWord {
+        struct SerdeDualStanDataFmt for SerdeDualStanData, crate::bitmap::BitmapLayout::iso(1, 1), BitmapBinaryWord {
             11 => f011_stan: N2,
         }
     }
 
     crate::bitmap_format! {
-        struct ManualDualStanDataFmt for ManualDualStanData, crate::bitmap::BitmapLayout::iso(1), BitmapBinaryWord {
+        struct ManualDualStanDataFmt for ManualDualStanData, crate::bitmap::BitmapLayout::iso(1, 1), BitmapBinaryWord {
             11 => f011_stan: DirectScalar<N2>,
         }
     }

@@ -7,8 +7,13 @@ use crate::{Error, ScalarFmt};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Bitmap([u64; 3]);
 
+/// Bitmap word counts and one-based, MSB-first continuation positions.
+///
+/// A clear continuation bit ends the bitmap, provided `min_words` have been
+/// read. With no continuation bit, the next configured word is mandatory.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BitmapLayout {
+    pub min_words: u8,
     pub max_words: u8,
     pub continuation_bits: [Option<u8>; 3],
 }
@@ -18,17 +23,29 @@ pub trait BitmapWord: ScalarFmt {
 }
 
 impl BitmapLayout {
+    /// Configure one to three words with custom continuation positions.
+    ///
+    /// Requires `1 <= min_words <= max_words <= 3`. Continuation positions
+    /// must be in `1..=64`; entries beyond `max_words` do not affect framing.
     #[inline(always)]
-    pub const fn new(max_words: u8, continuation_bits: [Option<u8>; 3]) -> Self {
+    pub const fn new(min_words: u8, max_words: u8, continuation_bits: [Option<u8>; 3]) -> Self {
         Self {
+            min_words,
             max_words,
             continuation_bits,
         }
     }
 
+    /// Use ISO continuation bits with the given minimum and maximum word counts.
     #[inline(always)]
-    pub const fn iso(max_words: u8) -> Self {
-        Self::new(max_words, [Some(1), Some(1), None])
+    pub const fn iso(min_words: u8, max_words: u8) -> Self {
+        Self::new(min_words, max_words, [Some(1), Some(1), None])
+    }
+
+    /// Always encode and decode exactly `words` words, without continuation bits.
+    #[inline(always)]
+    pub const fn fixed(words: u8) -> Self {
+        Self::new(words, words, [None; 3])
     }
 }
 
@@ -111,6 +128,14 @@ fn validate_bitmap_layout(layout: BitmapLayout) -> Result<usize, Error> {
     let max_words = usize::from(layout.max_words);
     debug_assert!(max_words > 0 && max_words <= 3, "bitmap max_words out of range");
     if max_words == 0 || max_words > 3 {
+        cold_path();
+        return Err(Error::Internal);
+    }
+    debug_assert!(
+        layout.min_words > 0 && layout.min_words <= layout.max_words,
+        "bitmap min_words out of range"
+    );
+    if layout.min_words == 0 || layout.min_words > layout.max_words {
         cold_path();
         return Err(Error::Internal);
     }
@@ -208,16 +233,18 @@ pub fn encode_bitmap<F: BitmapWord>(
         cold_path();
         return Err(Error::Internal);
     }
-    let has_continuation = layout.continuation_bits.iter().any(Option::is_some);
-    let words = if has_continuation { highest_words } else { max_words };
+    let required_words = highest_words.max(usize::from(layout.min_words));
+    let mut words = max_words;
+    for index in 0..max_words {
+        if index + 1 >= required_words && continuation_mask(layout, index) != 0 {
+            words = index + 1;
+            break;
+        }
+    }
     for index in 0..words {
-        let mut word = bitmap.word(index) & !continuation_mask(layout, index);
+        let cont = continuation_mask(layout, index);
+        let mut word = bitmap.word(index) & !cont;
         if index + 1 < words {
-            let cont = continuation_mask(layout, index);
-            if cont == 0 && has_continuation {
-                cold_path();
-                return Err(Error::Internal);
-            }
             word |= cont;
         }
         encode_bitmap_word::<F>(output, scratch, word)?;
@@ -236,6 +263,10 @@ pub fn decode_bitmap<F: BitmapWord>(input: &mut &[u8], scratch: &mut [u8], layou
         bitmap.set_word(index, word & !cont);
         if cont != 0 {
             if word & cont == 0 {
+                if index + 1 < usize::from(layout.min_words) {
+                    cold_path();
+                    return Err(Error::Invalid);
+                }
                 return Ok(bitmap);
             }
         } else if index + 1 == max_words {
