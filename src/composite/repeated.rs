@@ -246,7 +246,7 @@ where
         if input.is_empty() {
             return Ok(());
         }
-        for slot in input.chunks_exact(Self::WIRE_LEN) {
+        for slot in input.as_chunks::<N>().0 {
             if !Absent::is_absent(slot, &mut &mut **scratch)? {
                 crate::utils::cold_path();
                 return Err(Error::Invalid.into());
