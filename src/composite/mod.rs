@@ -987,6 +987,52 @@ mod tests {
     }
 
     #[test]
+    fn test_delimited_output_and_workspace() {
+        #[derive(Debug)]
+        struct Record {
+            first: String,
+            second: String,
+        }
+        crate::delimited_format! { struct Format for Record, b'|' { first: A2, second: DirectScalar<A2>, } }
+        let value = Record {
+            first: "AB".into(),
+            second: "CD".into(),
+        };
+        for capacity in 0..=6 {
+            let mut output = [0xFF; 6];
+            let mut out = &mut output[..capacity];
+            let result = error_kind(Format::encode(&mut out, &mut [], &value));
+            if capacity < 5 {
+                assert_eq!(result, Err(Error::BufferOverflow));
+            } else {
+                assert_eq!(result, Ok(()));
+                assert_eq!(out.len(), capacity - 5);
+                assert_eq!(&output[..5], b"AB|CD");
+                assert_eq!(output[5], 0xFF);
+            }
+        }
+        type Compressed = Field<Numeric<1, 4>, WireFixed<2>, crate::chain!(PadLeft<4, b'0'>, crate::PackNibblesRight<Bcdz, 0>)>;
+        for capacity in 0..=5 {
+            let mut output = [0xFF; 3];
+            let mut scratch = [0; 5];
+            let mut out = output.as_mut_slice();
+            let result = error_kind(encode_delimited_value::<_, DirectScalar<Compressed>>(
+                &mut out,
+                &mut &mut scratch[..capacity],
+                &"1".to_owned(),
+                b'|',
+            ));
+            if capacity < 4 {
+                assert_eq!(result, Err(Error::BufferOverflow));
+            } else {
+                assert_eq!(result, Ok(()));
+                assert_eq!(out, &[0xFF]);
+                assert_eq!(&output[..2], &[0, 1]);
+            }
+        }
+    }
+
+    #[test]
     fn test_delimited_field_boundaries() {
         for (wire, required, expected, rest) in [
             (b"".as_slice(), true, Err(Error::Invalid), b"".as_slice()),
@@ -2594,19 +2640,23 @@ fn encode_delimited_segment<E>(output: &mut &mut [u8], scratch: &mut &mut [u8], 
 where
     E: FnOnce(&mut &mut [u8], &mut &mut [u8]) -> Result<(), CompositeError>,
 {
-    let scratch_len = scratch.len();
+    let available = output.len();
     let used = {
-        let mut segment_out = &mut **scratch;
-        let mut nested_scratch = &mut output[..];
-        encode(&mut segment_out, &mut nested_scratch)?;
-        scratch_len - segment_out.len()
+        let mut segment_out = &mut **output;
+        encode(&mut segment_out, scratch)?;
+        available.checked_sub(segment_out.len()).ok_or_else(|| {
+            crate::utils::cold_path();
+            Error::Internal
+        })?
     };
-    let segment = take_scratch(scratch, used)?;
+    let segment = output.split_off_mut(..used).ok_or_else(|| {
+        crate::utils::cold_path();
+        Error::Internal
+    })?;
     if contains_byte(segment, separator) {
         crate::utils::cold_path();
         return Err(Error::Invalid.into());
     }
-    copy_bytes(output, segment)?;
     Ok(())
 }
 
