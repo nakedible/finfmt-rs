@@ -325,22 +325,22 @@ macro_rules! __finfmt_ber_tlv_finish_fields_as {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __finfmt_ber_tlv_decode_construct {
-    ($input:expr, $scratch:expr, $ty:path; extras: $extras:ident, $($fields:tt)*) => {{
-        $crate::__finfmt_ber_tlv_decode_construct_as!($input, $scratch, $ty, $ty; extras: $extras, $($fields)*)
+    ($input:expr, $scratch:expr, $padding:expr, $ty:path; extras: $extras:ident, $($fields:tt)*) => {{
+        $crate::__finfmt_ber_tlv_decode_construct_as!($input, $scratch, $padding, $ty, $ty; extras: $extras, $($fields)*)
     }};
-    ($input:expr, $scratch:expr, $ty:path; $($fields:tt)*) => {{
-        $crate::__finfmt_ber_tlv_decode_construct_as!($input, $scratch, $ty, $ty; $($fields)*)
+    ($input:expr, $scratch:expr, $padding:expr, $ty:path; $($fields:tt)*) => {{
+        $crate::__finfmt_ber_tlv_decode_construct_as!($input, $scratch, $padding, $ty, $ty; $($fields)*)
     }};
 }
 
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __finfmt_ber_tlv_decode_construct_as {
-    ($input:expr, $scratch:expr, $result_ty:ty, $ctor:path; extras: $extras:ident, $($fields:tt)*) => {{
+    ($input:expr, $scratch:expr, $padding:expr, $result_ty:ty, $ctor:path; extras: $extras:ident, $($fields:tt)*) => {{
         let mut $extras = ::core::default::Default::default();
         $crate::__finfmt_ber_tlv_init_fields!($($fields)*);
 
-        while let Some(entry) = $crate::primitive::bertlv::decode_ber_tlv_entry($input).map_err($crate::CompositeError::from)? {
+        while let Some(entry) = $crate::composite::decode_ber_tlv_collection_entry::<{ $padding }>($input).map_err($crate::CompositeError::from)? {
             let mut value_input = entry.value;
             let mut matched = false;
             $crate::__finfmt_ber_tlv_match_fields!(entry.tag, &mut value_input, $scratch, matched; $($fields)*);
@@ -352,10 +352,10 @@ macro_rules! __finfmt_ber_tlv_decode_construct_as {
 
         $crate::__finfmt_ber_tlv_finish_fields_as!($result_ty, $ctor; [$extras: $extras,]; $($fields)*)
     }};
-    ($input:expr, $scratch:expr, $result_ty:ty, $ctor:path; $($fields:tt)*) => {{
+    ($input:expr, $scratch:expr, $padding:expr, $result_ty:ty, $ctor:path; $($fields:tt)*) => {{
         $crate::__finfmt_ber_tlv_init_fields!($($fields)*);
 
-        while let Some(entry) = $crate::primitive::bertlv::decode_ber_tlv_entry($input).map_err($crate::CompositeError::from)? {
+        while let Some(entry) = $crate::composite::decode_ber_tlv_collection_entry::<{ $padding }>($input).map_err($crate::CompositeError::from)? {
             let mut value_input = entry.value;
             let mut matched = false;
             $crate::__finfmt_ber_tlv_match_fields!(entry.tag, &mut value_input, $scratch, matched; $($fields)*);
@@ -375,11 +375,16 @@ macro_rules! __finfmt_ber_tlv_known_tags {
     ($($tag:expr => $field:ident : $fmt:ty),* $(,)?) => { &[$($tag),*] };
 }
 
+/// Define a named BER-TLV format. Decoding rejects padding by default.
+///
+/// Add `, allow_zero_padding = true` after the target type and before `{` to
+/// accept `00` bytes between entries and at either end. Each nested format has
+/// its own setting. Encoding never adds padding; value bytes are not trimmed.
 #[macro_export]
 macro_rules! ber_tlv_format {
     (
         $(#[$attr:meta])*
-        $vis:vis struct $name:ident for<$lt:lifetime> $ty:ident < $ty_lt:lifetime > {
+        $vis:vis struct $name:ident for<$lt:lifetime> $ty:ident < $ty_lt:lifetime > $(, allow_zero_padding = $padding:tt)? {
             extras: $extras:ident,
             $($fields:tt)*
         }
@@ -400,13 +405,13 @@ macro_rules! ber_tlv_format {
 
             #[inline(always)]
             fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
-                $crate::__finfmt_ber_tlv_decode_construct_as!(input, scratch, $ty<'de>, $ty; extras: $extras, $($fields)*)
+                $crate::__finfmt_ber_tlv_decode_construct_as!(input, scratch, false $(|| $padding)?, $ty<'de>, $ty; extras: $extras, $($fields)*)
             }
         }
     };
     (
         $(#[$attr:meta])*
-        $vis:vis struct $name:ident for<$lt:lifetime> $ty:ident < $ty_lt:lifetime > {
+        $vis:vis struct $name:ident for<$lt:lifetime> $ty:ident < $ty_lt:lifetime > $(, allow_zero_padding = $padding:tt)? {
             $($fields:tt)*
         }
     ) => {
@@ -424,13 +429,13 @@ macro_rules! ber_tlv_format {
 
             #[inline(always)]
             fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
-                $crate::__finfmt_ber_tlv_decode_construct_as!(input, scratch, $ty<'de>, $ty; $($fields)*)
+                $crate::__finfmt_ber_tlv_decode_construct_as!(input, scratch, false $(|| $padding)?, $ty<'de>, $ty; $($fields)*)
             }
         }
     };
     (
         $(#[$attr:meta])*
-        $vis:vis struct $name:ident for $ty:path {
+        $vis:vis struct $name:ident for $ty:path $(, allow_zero_padding = $padding:tt)? {
             extras: $extras:ident,
             $($fields:tt)*
         }
@@ -451,13 +456,13 @@ macro_rules! ber_tlv_format {
 
             #[inline(always)]
             fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
-                $crate::__finfmt_ber_tlv_decode_construct!(input, scratch, $ty; extras: $extras, $($fields)*)
+                $crate::__finfmt_ber_tlv_decode_construct!(input, scratch, false $(|| $padding)?, $ty; extras: $extras, $($fields)*)
             }
         }
     };
     (
         $(#[$attr:meta])*
-        $vis:vis struct $name:ident for $ty:path {
+        $vis:vis struct $name:ident for $ty:path $(, allow_zero_padding = $padding:tt)? {
             $($fields:tt)*
         }
     ) => {
@@ -475,7 +480,7 @@ macro_rules! ber_tlv_format {
 
             #[inline(always)]
             fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
-                $crate::__finfmt_ber_tlv_decode_construct!(input, scratch, $ty; $($fields)*)
+                $crate::__finfmt_ber_tlv_decode_construct!(input, scratch, false $(|| $padding)?, $ty; $($fields)*)
             }
         }
     };

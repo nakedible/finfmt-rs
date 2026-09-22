@@ -90,8 +90,10 @@ pub struct Empty<T>(PhantomData<T>);
 /// such as `t9F02_unknown`; values use even-length uppercase hex, including `""`.
 ///
 /// Order and duplicates are preserved if the chosen collection type preserves
-/// them.
-pub struct BerTlvList<T>(PhantomData<T>);
+/// them. Decoding is strict by default. Set `ALLOW_ZERO_PADDING` to accept `00`
+/// bytes before, between and after entries. Values are never trimmed, and
+/// encoding never emits padding.
+pub struct BerTlvList<T, const ALLOW_ZERO_PADDING: bool = false>(PhantomData<T>);
 /// A list with an optional count and optional byte separators, bounded by `MAX` items.
 ///
 /// Use `()` for no count, [`FixedCount`] for a fixed count, or a numeric
@@ -122,6 +124,8 @@ pub struct Separator<const BYTE: u8>;
 pub type FixedCountList<T, Item, const COUNT: usize> = BoundedList<T, FixedCount<COUNT>, Item, (), COUNT>;
 
 mod bertlv;
+#[doc(hidden)]
+pub use bertlv::decode_ber_tlv_collection_entry;
 mod bertlv_macros;
 mod bertlv_serde;
 mod bitmap_macros;
@@ -1978,6 +1982,80 @@ mod tests {
             total - out_ptr.len()
         };
         assert_eq!(&output[..used], bytes);
+    }
+
+    #[test]
+    fn test_named_ber_padding_is_local_and_opt_in() {
+        crate::ber_tlv_format! { struct Padded for TlvData, allow_zero_padding = true {
+            "59" => t59_code: A4, "DF23" => tdf23_tail: Option<Composite<FixedTailFmt>>,
+        } }
+        crate::ber_tlv_format! { struct Strict for TlvData, allow_zero_padding = false {
+            "59" => t59_code: A4, "DF23" => tdf23_tail: Option<Composite<FixedTailFmt>>,
+        } }
+        crate::ber_tlv_format! { struct PaddedExtras for TlvWithExtras, allow_zero_padding = true {
+            extras: extras, "59" => t59_code: A4,
+        } }
+        #[derive(Debug, PartialEq, Serialize)]
+        struct Borrowed<'a> {
+            code: &'a str,
+        }
+        #[derive(Debug, PartialEq, Serialize)]
+        struct BorrowedExtras<'a> {
+            code: &'a str,
+            extras: BTreeMap<String, String>,
+        }
+        crate::ber_tlv_format! { struct BorrowedFmt for<'a> Borrowed<'a>, allow_zero_padding = true { "59" => code: A4, } }
+        crate::ber_tlv_format! { struct BorrowedExtrasFmt for<'a> BorrowedExtras<'a>, allow_zero_padding = true { extras: extras, "59" => code: A4, } }
+        for bytes in [b"\0\x59\x04ABCD".as_slice(), b"\x59\x04ABCD\0", b"\0\x59\x04ABCD\0\0"] {
+            let expected = TlvData {
+                t59_code: "ABCD".into(),
+                tdf23_tail: None,
+            };
+            assert_eq!(Padded::decode(&mut &*bytes, &mut [0; 64]).unwrap(), expected);
+            assert_eq!(error_kind(Strict::decode(&mut &*bytes, &mut [0; 64])), Err(Error::Invalid));
+            assert_eq!(error_kind(TlvDataFmt::decode(&mut &*bytes, &mut [0; 64])), Err(Error::Invalid));
+            assert_eq!(BorrowedFmt::decode(&mut &*bytes, &mut []).unwrap(), Borrowed { code: "ABCD" });
+            let mut output = [0; 16];
+            let mut out = output.as_mut_slice();
+            Padded::encode(&mut out, &mut [], &expected).unwrap();
+            let used = 16 - out.len();
+            assert_eq!(&output[..used], b"\x59\x04ABCD");
+        }
+        let wire = b"\0\x59\x04ABCD\0\xFF\x01\x02\0\xFF\0";
+        let extras = BTreeMap::from([("tFF01_unknown".into(), "00FF".into())]);
+        assert_eq!(
+            PaddedExtras::decode(&mut wire.as_slice(), &mut [0; 64]).unwrap(),
+            TlvWithExtras {
+                t59_code: "ABCD".into(),
+                extras: extras.clone()
+            }
+        );
+        assert_eq!(
+            BorrowedExtrasFmt::decode(&mut wire.as_slice(), &mut [0; 64]).unwrap(),
+            BorrowedExtras { code: "ABCD", extras }
+        );
+        assert_eq!(error_kind(Padded::decode(&mut b"\0\0".as_slice(), &mut [])), Err(Error::Invalid));
+
+        #[derive(Debug, PartialEq, Serialize)]
+        struct Outer {
+            inner: TlvData,
+        }
+        crate::ber_tlv_format! { struct StrictInner for Outer, allow_zero_padding = true { "E1" => inner: Composite<TlvDataFmt>, } }
+        crate::ber_tlv_format! { struct PaddedInner for Outer, allow_zero_padding = true { "E1" => inner: Composite<Padded>, } }
+        let nested = b"\0\xE1\x07\0\x59\x04ABCD\0";
+        assert_eq!(
+            error_kind(StrictInner::decode(&mut nested.as_slice(), &mut [0; 64])),
+            Err(Error::Invalid)
+        );
+        assert_eq!(
+            PaddedInner::decode(&mut nested.as_slice(), &mut [0; 64]).unwrap(),
+            Outer {
+                inner: TlvData {
+                    t59_code: "ABCD".into(),
+                    tdf23_tail: None
+                }
+            }
+        );
     }
 
     #[test]

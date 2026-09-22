@@ -152,6 +152,18 @@ pub(super) fn encode_unknown_tlv_from_tag(output: &mut &mut [u8], tag: &[u8], va
     Ok(())
 }
 
+#[doc(hidden)]
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub fn decode_ber_tlv_collection_entry<'a, const ALLOW_ZERO_PADDING: bool>(
+    input: &mut &'a [u8],
+) -> Result<Option<crate::primitive::bertlv::BerTlvEntry<'a>>, Error> {
+    if ALLOW_ZERO_PADDING {
+        *input = crate::primitive::text::decode_bytes(input, 0, true, 0);
+    }
+    crate::primitive::bertlv::decode_ber_tlv_entry(input)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

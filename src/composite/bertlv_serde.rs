@@ -6,7 +6,7 @@ use serde::ser::{Impossible, SerializeMap, SerializeSeq, SerializeTuple, Seriali
 use super::bertlv::{encode_hex_upper, encode_unknown_tag_key, encode_unknown_tlv_from_tag, parse_unknown_tag_key};
 use super::*;
 use crate::Error;
-use crate::primitive::bertlv::{BerTlvEntry, MAX_BER_TAG_BYTES, decode_ber_tlv_entry};
+use crate::primitive::bertlv::{BerTlvEntry, MAX_BER_TAG_BYTES};
 use crate::utils::cold_path;
 
 trait BerTlvTextSink {
@@ -725,12 +725,12 @@ impl<'de> serde::Deserializer<'de> for BerTlvPairDeserializer<'de> {
     }
 }
 
-struct BerTlvSeqDeserializer<'a, 'de> {
+struct BerTlvSeqDeserializer<'a, 'de, const ALLOW_ZERO_PADDING: bool> {
     input: &'a mut &'de [u8],
     scratch: &'a mut &'de mut [u8],
 }
 
-impl<'de> SeqAccess<'de> for BerTlvSeqDeserializer<'_, 'de> {
+impl<'de, const ALLOW_ZERO_PADDING: bool> SeqAccess<'de> for BerTlvSeqDeserializer<'_, 'de, ALLOW_ZERO_PADDING> {
     type Error = Error;
 
     #[inline(always)]
@@ -738,7 +738,7 @@ impl<'de> SeqAccess<'de> for BerTlvSeqDeserializer<'_, 'de> {
     where
         T: DeserializeSeed<'de>,
     {
-        let Some(entry) = decode_ber_tlv_entry(self.input)? else {
+        let Some(entry) = decode_ber_tlv_collection_entry::<ALLOW_ZERO_PADDING>(self.input)? else {
             return Ok(None);
         };
         let key = encode_unknown_tag_key(self.scratch, entry.tag)?;
@@ -747,13 +747,13 @@ impl<'de> SeqAccess<'de> for BerTlvSeqDeserializer<'_, 'de> {
     }
 }
 
-struct BerTlvMapDeserializer<'a, 'de> {
+struct BerTlvMapDeserializer<'a, 'de, const ALLOW_ZERO_PADDING: bool> {
     input: &'a mut &'de [u8],
     scratch: &'a mut &'de mut [u8],
     pending: Option<BerTlvEntry<'de>>,
 }
 
-impl<'de> MapAccess<'de> for BerTlvMapDeserializer<'_, 'de> {
+impl<'de, const ALLOW_ZERO_PADDING: bool> MapAccess<'de> for BerTlvMapDeserializer<'_, 'de, ALLOW_ZERO_PADDING> {
     type Error = Error;
 
     #[inline(always)]
@@ -761,7 +761,7 @@ impl<'de> MapAccess<'de> for BerTlvMapDeserializer<'_, 'de> {
     where
         K: DeserializeSeed<'de>,
     {
-        let Some(entry) = decode_ber_tlv_entry(self.input)? else {
+        let Some(entry) = decode_ber_tlv_collection_entry::<ALLOW_ZERO_PADDING>(self.input)? else {
             return Ok(None);
         };
         self.pending = Some(entry);
@@ -783,20 +783,23 @@ impl<'de> MapAccess<'de> for BerTlvMapDeserializer<'_, 'de> {
     }
 }
 
-struct BerTlvDeserializer<'a, 'de> {
+struct BerTlvDeserializer<'a, 'de, const ALLOW_ZERO_PADDING: bool> {
     input: &'a mut &'de [u8],
     scratch: &'a mut &'de mut [u8],
 }
 
 #[inline(always)]
-pub(crate) fn decode_ber_tlv_serde<'de, T>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<T, Error>
+pub(crate) fn decode_ber_tlv_serde<'de, T, const ALLOW_ZERO_PADDING: bool>(
+    input: &mut &'de [u8],
+    scratch: &mut &'de mut [u8],
+) -> Result<T, Error>
 where
     T: DeserializeOwned,
 {
-    T::deserialize(BerTlvDeserializer { input, scratch })
+    T::deserialize(BerTlvDeserializer::<ALLOW_ZERO_PADDING> { input, scratch })
 }
 
-impl<'de> serde::Deserializer<'de> for BerTlvDeserializer<'_, 'de> {
+impl<'de, const ALLOW_ZERO_PADDING: bool> serde::Deserializer<'de> for BerTlvDeserializer<'_, 'de, ALLOW_ZERO_PADDING> {
     type Error = Error;
 
     #[inline(always)]
@@ -813,7 +816,7 @@ impl<'de> serde::Deserializer<'de> for BerTlvDeserializer<'_, 'de> {
     where
         V: Visitor<'de>,
     {
-        visitor.visit_seq(BerTlvSeqDeserializer {
+        visitor.visit_seq(BerTlvSeqDeserializer::<ALLOW_ZERO_PADDING> {
             input: self.input,
             scratch: self.scratch,
         })
@@ -824,7 +827,7 @@ impl<'de> serde::Deserializer<'de> for BerTlvDeserializer<'_, 'de> {
     where
         V: Visitor<'de>,
     {
-        let mut access = BerTlvMapDeserializer {
+        let mut access = BerTlvMapDeserializer::<ALLOW_ZERO_PADDING> {
             input: self.input,
             scratch: self.scratch,
             pending: None,
@@ -1249,7 +1252,7 @@ pub(crate) fn encode_ber_tlv_serde<T: ?Sized + Serialize>(output: &mut &mut [u8]
     value.serialize(BerTlvSerializer { output, scratch })
 }
 
-impl<T> CompositeFmt<T> for BerTlvList<T>
+impl<T, const ALLOW_ZERO_PADDING: bool> CompositeFmt<T> for BerTlvList<T, ALLOW_ZERO_PADDING>
 where
     T: Serialize + DeserializeOwned,
 {
@@ -1263,7 +1266,10 @@ where
 
     #[inline(always)]
     fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<T, CompositeError> {
-        let value = decode_ber_tlv_serde::<T>(input, scratch)?;
+        let value = decode_ber_tlv_serde::<T, ALLOW_ZERO_PADDING>(input, scratch)?;
+        if ALLOW_ZERO_PADDING {
+            *input = crate::primitive::text::decode_bytes(input, 0, true, 0);
+        }
         if !input.is_empty() {
             cold_path();
             return Err(Error::Invalid.into());
@@ -1630,16 +1636,102 @@ mod tests {
             assert_eq!(pair.deserialize_seq(ReadEntry(complete)), expected);
             let mut input = b"\x59\x02\xAB\xCD".as_slice();
             let mut scratch = [0; 32];
-            let map = BerTlvDeserializer {
+            let map = BerTlvDeserializer::<false> {
                 input: &mut input,
                 scratch: &mut scratch.as_mut_slice(),
             };
             assert_eq!(map.deserialize_map(ReadEntry(complete)), expected);
         }
         let values =
-            decode_ber_tlv_serde::<Vec<(String, IgnoredAny)>>(&mut b"\x59\x02\xAB\xCD".as_slice(), &mut [0; 32].as_mut_slice()).unwrap();
+            decode_ber_tlv_serde::<Vec<(String, IgnoredAny)>, false>(&mut b"\x59\x02\xAB\xCD".as_slice(), &mut [0; 32].as_mut_slice())
+                .unwrap();
         assert_eq!(values.len(), 1);
         assert_eq!(values[0].0, "t59_unknown");
+    }
+
+    #[test]
+    fn collection_padding_is_opt_in_and_preserves_values() {
+        type Pairs = Vec<(String, String)>;
+        type Map = std::collections::BTreeMap<String, String>;
+        let wire = b"\0\x59\x02\0\xFF\0\0\xFF\x01\0\0";
+        let expected = vec![("t59_unknown".into(), "00FF".into()), ("tFF01_unknown".into(), "".into())];
+        let decoded = BerTlvList::<Pairs, true>::decode(&mut wire.as_slice(), &mut [0; 64]).unwrap();
+        assert_eq!(decoded, expected);
+        assert_eq!(
+            BerTlvList::<Map, true>::decode(&mut wire.as_slice(), &mut [0; 64]).unwrap(),
+            expected.into_iter().collect()
+        );
+        assert_eq!(
+            BerTlvList::<Pairs>::decode(&mut wire.as_slice(), &mut [0; 64]).unwrap_err().kind,
+            Error::Invalid
+        );
+        let mut output = [0; 16];
+        let mut out = output.as_mut_slice();
+        BerTlvList::<Pairs, true>::encode(&mut out, &mut [], &decoded).unwrap();
+        let used = 16 - out.len();
+        assert_eq!(&output[..used], b"\x59\x02\0\xFF\xFF\x01\0");
+        assert!(
+            BerTlvList::<Pairs, true>::decode(&mut b"\0\0".as_slice(), &mut [])
+                .unwrap()
+                .is_empty()
+        );
+        assert!(BerTlvList::<Pairs>::decode(&mut b"".as_slice(), &mut []).unwrap().is_empty());
+        for (bytes, error) in [
+            (b"\0\x59\x02\0".as_slice(), Error::UnexpectedEof),
+            (b"\0\x59\x80\0", Error::Invalid),
+            (b"\0\xFF", Error::UnexpectedEof),
+        ] {
+            assert_eq!(
+                BerTlvList::<Pairs, true>::decode(&mut &*bytes, &mut [0; 64]).unwrap_err().kind,
+                error
+            );
+        }
+    }
+
+    #[test]
+    fn complete_visitors_allow_only_configured_trailing_padding() {
+        #[derive(Debug, PartialEq)]
+        struct One((String, String));
+        impl Serialize for One {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.collect_seq([&self.0])
+            }
+        }
+        impl<'de> serde::Deserialize<'de> for One {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                struct ReadOne;
+                impl<'de> Visitor<'de> for ReadOne {
+                    type Value = One;
+                    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                        formatter.write_str("one entry")
+                    }
+                    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<One, A::Error> {
+                        seq.next_element()?
+                            .map(One)
+                            .ok_or_else(|| serde::de::Error::custom("missing entry"))
+                    }
+                }
+                deserializer.deserialize_seq(ReadOne)
+            }
+        }
+        for bytes in [b"\x59\x01\xAB".as_slice(), b"\x59\x01\xAB\0\0"] {
+            assert_eq!(
+                BerTlvList::<One, true>::decode(&mut &*bytes, &mut [0; 32]).unwrap(),
+                One(("t59_unknown".into(), "AB".into()))
+            );
+        }
+        assert_eq!(
+            BerTlvList::<One>::decode(&mut b"\x59\x01\xAB\0".as_slice(), &mut [0; 32])
+                .unwrap_err()
+                .kind,
+            Error::Invalid
+        );
+        assert_eq!(
+            BerTlvList::<One, true>::decode(&mut b"\x59\x01\xAB\0\x5A\0".as_slice(), &mut [0; 32])
+                .unwrap_err()
+                .kind,
+            Error::Invalid
+        );
     }
 
     mod proptests {
@@ -1648,6 +1740,25 @@ mod tests {
         use super::*;
 
         proptest! {
+            #[test]
+            fn padding_is_ignored_only_at_entry_boundaries(bytes in prop::collection::vec(any::<u8>(), 0..32), padding in prop::array::uniform3(0usize..8)) {
+                type Pairs = Vec<(String, String)>;
+                let mut wire = vec![0; padding[0]];
+                wire.extend_from_slice(&[0x59, bytes.len() as u8]);
+                wire.extend_from_slice(&bytes);
+                wire.extend(std::iter::repeat_n(0, padding[1]));
+                wire.extend_from_slice(&[0x59, 0]);
+                wire.extend(std::iter::repeat_n(0, padding[2]));
+                let hex: String = bytes.iter().map(|byte| format!("{byte:02X}")).collect();
+                let expected = vec![("t59_unknown".into(), hex), ("t59_unknown".into(), "".into())];
+                let mut input = wire.as_slice();
+                let mut scratch = [0;128];
+                prop_assert_eq!(BerTlvList::<Pairs, true>::decode(&mut input, &mut scratch).unwrap(), expected.clone());
+                prop_assert!(input.is_empty());
+                let strict = BerTlvList::<Pairs>::decode(&mut wire.as_slice(), &mut [0;128]).map_err(|error| error.kind);
+                prop_assert_eq!(strict, if padding == [0;3] { Ok(expected) } else { Err(Error::Invalid) });
+            }
+
             #[test]
             fn formatted_hex_matches_plain_strings(value in "([0-9A-F]{2}){0,16}") {
                 let capacity = 11.max(value.len());
