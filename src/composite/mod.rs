@@ -84,6 +84,17 @@ pub struct Empty<T>(PhantomData<T>);
 /// Order and duplicates are preserved if the chosen collection type preserves
 /// them.
 pub struct BerTlvList<T>(PhantomData<T>);
+/// A list with an optional count and optional byte separators, bounded by `MAX` items.
+///
+/// Use `()` for no count, [`FixedCount`] for a fixed count, or a numeric
+/// [`crate::LengthSpec`] prefix for a variable count. [`crate::Rest`] measures
+/// remaining bytes and does not carry an item count.
+///
+/// Without separators, items must provide their own boundaries; uncounted items
+/// must consume at least one byte. With separators, the input must be bounded
+/// externally: the last item consumes the remainder. Only the final counted
+/// item may contain the separator. An uncounted empty input means an empty
+/// list, so a singleton item that encodes to no bytes is rejected.
 pub struct BoundedList<T, Count, Item, Sep, const MAX: usize>(PhantomData<(T, Count, Item, Sep)>);
 pub struct FixedCount<const COUNT: usize>;
 /// Encode `None` as an explicit absent byte encoding and decode matching bytes
@@ -2206,6 +2217,10 @@ pub use scalar_serde::SerdeScalar;
 pub use scalar_serde::{decode_serde_scalar, encode_serde_scalar};
 
 pub trait ListCountPolicy {
+    /// Whether decoding supplies a count, either from a prefix or statically.
+    /// `decode_count` must return `Some` exactly when this is true.
+    const HAS_COUNT: bool;
+
     fn encode_count(output: &mut &mut [u8], scratch: &mut &mut [u8], len: usize) -> Result<(), Error>;
     fn decode_count<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Option<usize>, Error>;
 }
