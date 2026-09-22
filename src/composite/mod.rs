@@ -75,6 +75,12 @@ pub trait AbsentFmt {
 
 /// Encode/decode an inner composite through an outer scalar field.
 pub struct Frame<F, S>(PhantomData<(F, S)>);
+/// A fixed physical body whose length prefix excludes absent trailing fields.
+///
+/// `Len` describes the used body extent in bytes, through either a semantic- or
+/// wire-length policy. The full body, including absent filler, remains on the
+/// wire. The declared extent must end at a field boundary, and excluded fields
+/// must match their absent encoding.
 pub struct TrailingLengthFrame<T, Len, Body, Tails, const BASE_LEN: usize>(PhantomData<(T, Len, Body, Tails)>);
 pub struct TrailingField<Field, Rest = NoTrailingFields>(PhantomData<(Field, Rest)>);
 pub struct NoTrailingFields;
@@ -1300,8 +1306,10 @@ mod tests {
         assert!(input.is_empty());
     }
 
-    #[test]
-    fn test_trailing_length_frame_roundtrip_and_validation() {
+    fn check_trailing_length_frame<F>()
+    where
+        F: for<'de> CompositeFmt<TrailingLengthData, Decoded<'de> = TrailingLengthData>,
+    {
         let mut output = [0u8; 32];
         let mut scratch = [0u8; 64];
         for (value, expected) in [
@@ -1329,28 +1337,50 @@ mod tests {
                 },
                 &b"08AB   XYZ"[..],
             ),
+            (
+                TrailingLengthData {
+                    base: "AB".into(),
+                    tail1: Some("CDE".into()),
+                    tail2: Some("XYZ".into()),
+                },
+                &b"08ABCDEXYZ"[..],
+            ),
         ] {
             let total = output.len();
             let encoded = {
                 let mut out = output.as_mut_slice();
-                TrailingLengthDataFmt::encode(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
+                F::encode(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
             }
             .unwrap();
             assert_eq!(&output[..encoded], expected);
 
-            let mut input = &output[..encoded];
-            let decoded = TrailingLengthDataFmt::decode(&mut input, scratch.as_mut_slice()).unwrap();
+            output[encoded..encoded + 4].copy_from_slice(b"TAIL");
+            let mut input = &output[..encoded + 4];
+            let decoded = F::decode(&mut input, scratch.as_mut_slice()).unwrap();
             assert_eq!(decoded, value);
-            assert!(input.is_empty());
+            assert_eq!(input, b"TAIL");
         }
 
-        for invalid in [&b"03AB      "[..], &b"02ABCDE   "[..]] {
+        for (invalid, error) in [
+            (&b"01AB      "[..], Error::Invalid),
+            (b"03AB      ", Error::Invalid),
+            (b"09AB      ", Error::Invalid),
+            (b"02ABCDE   ", Error::Invalid),
+            (b"05ABCDEXYZ", Error::Invalid),
+            (b"02AB     ", Error::UnexpectedEof),
+            (b"0", Error::UnexpectedEof),
+        ] {
             let mut input = invalid;
-            assert_eq!(
-                error_kind(TrailingLengthDataFmt::decode(&mut input, scratch.as_mut_slice())),
-                Err(Error::Invalid)
-            );
+            assert_eq!(error_kind(F::decode(&mut input, scratch.as_mut_slice())), Err(error));
         }
+    }
+
+    #[test]
+    fn test_trailing_length_frame_roundtrip_and_validation() {
+        check_trailing_length_frame::<TrailingLengthDataFmt>();
+        check_trailing_length_frame::<
+            TrailingLengthFrame<TrailingLengthData, crate::AsciiWireLength<2>, TrailingLengthBodyFmt, TrailingLengthTails, 2>,
+        >();
     }
 
     #[test]

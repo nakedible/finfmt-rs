@@ -235,10 +235,7 @@ where
     #[inline(always)]
     fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
         let plan = Len::decode_plan(input, scratch)?;
-        let logical_len = plan.semantic_len.ok_or_else(|| {
-            crate::utils::cold_path();
-            CompositeError::from(Error::Internal)
-        })?;
+        let logical_len = plan.semantic_len.unwrap_or(plan.wire_len);
         if logical_len < BASE_LEN {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());
