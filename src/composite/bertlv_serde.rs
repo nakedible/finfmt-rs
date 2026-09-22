@@ -3,12 +3,10 @@ use serde::de::value::StrDeserializer;
 use serde::de::{DeserializeOwned, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::ser::{Impossible, SerializeMap, SerializeSeq, SerializeTuple, SerializeTupleStruct};
 
+use super::bertlv::{encode_hex_upper, encode_unknown_tag_key, encode_unknown_tlv_from_tag, parse_unknown_tag_key};
 use super::*;
 use crate::Error;
-use crate::primitive::bertlv::{
-    BerTlvEntry, MAX_BER_TAG_BYTES, decode_ber_tlv_entry, encode_hex_upper_scratch, encode_unknown_tag_key_scratch,
-    encode_unknown_tlv_from_tag, parse_unknown_tag_key,
-};
+use crate::primitive::bertlv::{BerTlvEntry, MAX_BER_TAG_BYTES, decode_ber_tlv_entry};
 use crate::utils::cold_path;
 
 trait BerTlvTextSink {
@@ -743,8 +741,8 @@ impl<'de> SeqAccess<'de> for BerTlvSeqDeserializer<'_, 'de> {
         let Some(entry) = decode_ber_tlv_entry(self.input)? else {
             return Ok(None);
         };
-        let key = encode_unknown_tag_key_scratch(self.scratch, entry.tag)?;
-        let value = encode_hex_upper_scratch(self.scratch, entry.value)?;
+        let key = encode_unknown_tag_key(self.scratch, entry.tag)?;
+        let value = encode_hex_upper(self.scratch, entry.value)?;
         seed.deserialize(BerTlvPairDeserializer { key, value }).map(Some)
     }
 }
@@ -767,7 +765,7 @@ impl<'de> MapAccess<'de> for BerTlvMapDeserializer<'_, 'de> {
             return Ok(None);
         };
         self.pending = Some(entry);
-        let key = encode_unknown_tag_key_scratch(self.scratch, entry.tag)?;
+        let key = encode_unknown_tag_key(self.scratch, entry.tag)?;
         seed.deserialize(BerTlvTextDeserializer { text: key }).map(Some)
     }
 
@@ -780,7 +778,7 @@ impl<'de> MapAccess<'de> for BerTlvMapDeserializer<'_, 'de> {
             cold_path();
             Error::Internal
         })?;
-        let value = encode_hex_upper_scratch(self.scratch, entry.value)?;
+        let value = encode_hex_upper(self.scratch, entry.value)?;
         seed.deserialize(BerTlvTextDeserializer { text: value })
     }
 }

@@ -1,7 +1,14 @@
 use core::str::FromStr;
 
+#[cfg(all(not(debug_assertions), feature = "no-panic"))]
+use no_panic::no_panic;
+
 use super::*;
-use crate::primitive::bertlv::{encode_hex_upper_scratch, encode_unknown_tag_key_scratch, encode_unknown_tlv_from_key};
+use crate::primitive::bertlv::{
+    MAX_BER_TAG_BYTES, ber_length_width, ber_tag_matches_hex, encode_ber_length, encode_ber_tag, parse_ber_tag_hex,
+};
+use crate::primitive::nibble::{HexUpper, NibbleAlphabet, pack_expanded_nibbles, unpack_nibbles};
+use crate::utils::cold_path;
 
 #[inline(always)]
 fn decode_unknown_entry<K, V>(tag: &[u8], value: &[u8], scratch: &mut &mut [u8]) -> Result<(K, V), Error>
@@ -9,12 +16,12 @@ where
     K: FromStr,
     V: FromStr,
 {
-    let key = encode_unknown_tag_key_scratch(scratch, tag)?;
+    let key = encode_unknown_tag_key(scratch, tag)?;
     let key = key.parse::<K>().map_err(|_| {
         crate::utils::cold_path();
         Error::Invalid
     })?;
-    let value = encode_hex_upper_scratch(scratch, value)?;
+    let value = encode_hex_upper(scratch, value)?;
     let value = value.parse::<V>().map_err(|_| {
         crate::utils::cold_path();
         Error::Invalid
@@ -58,5 +65,216 @@ where
         }
         self.extend(core::iter::once((key, value)));
         Ok(())
+    }
+}
+
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub(super) fn encode_hex_upper<'a>(scratch: &mut &'a mut [u8], bytes: &[u8]) -> Result<&'a str, Error> {
+    let out = unpack_nibbles(scratch, bytes, &HexUpper::DIGITS)?;
+    core::str::from_utf8(out).map_err(|_| {
+        cold_path();
+        Error::Internal
+    })
+}
+
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub(super) fn encode_unknown_tag_key<'a>(scratch: &mut &'a mut [u8], tag: &[u8]) -> Result<&'a str, Error> {
+    let needed = tag
+        .len()
+        .checked_mul(2)
+        .and_then(|len| len.checked_add(1 + "_unknown".len()))
+        .ok_or_else(|| {
+            cold_path();
+            Error::BufferOverflow
+        })?;
+    let out = take_scratch(scratch, needed)?;
+    let mut cursor = &mut *out;
+    copy_bytes(&mut cursor, b"t")?;
+    unpack_nibbles(&mut cursor, tag, &HexUpper::DIGITS)?;
+    copy_bytes(&mut cursor, b"_unknown")?;
+    core::str::from_utf8(out).map_err(|_| {
+        cold_path();
+        Error::Internal
+    })
+}
+
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub(super) fn parse_unknown_tag_key(key: &str) -> Result<([u8; MAX_BER_TAG_BYTES], usize), Error> {
+    let body = key
+        .strip_prefix('t')
+        .and_then(|rest| rest.strip_suffix("_unknown"))
+        .ok_or_else(|| {
+            cold_path();
+            Error::Invalid
+        })?;
+    parse_ber_tag_hex(body)
+}
+
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub(super) fn encode_unknown_tlv_from_key(output: &mut &mut [u8], key: &str, value: &str, known_tags: &[&str]) -> Result<(), Error> {
+    let (tag_bytes, tag_len) = parse_unknown_tag_key(key)?;
+    let tag = tag_bytes.get(..tag_len).ok_or_else(|| {
+        cold_path();
+        Error::Internal
+    })?;
+    for known in known_tags {
+        if ber_tag_matches_hex(tag, known).map_err(|_| {
+            cold_path();
+            Error::Internal
+        })? {
+            cold_path();
+            return Err(Error::Invalid);
+        }
+    }
+    encode_unknown_tlv_from_tag(output, tag, value)
+}
+
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub(super) fn encode_unknown_tlv_from_tag(output: &mut &mut [u8], tag: &[u8], value: &str) -> Result<(), Error> {
+    let used = value.len() / 2;
+    let head_len = ber_length_width(used)? + tag.len();
+    let total = head_len + used;
+    let out = output.split_off_mut(..total).ok_or_else(|| {
+        cold_path();
+        Error::BufferOverflow
+    })?;
+    let (head_buf, body_buf) = out.split_at_mut(head_len);
+    let mut head = head_buf;
+    encode_ber_tag(&mut head, tag)?;
+    encode_ber_length(&mut head, used)?;
+    let mut body = body_buf;
+    pack_expanded_nibbles(&mut body, value.as_bytes(), &<HexUpper as NibbleAlphabet>::NIBBLES)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::primitive::bertlv::{BerTlvEntry, MAX_BER_VALUE_LEN, decode_ber_tlv_entry};
+
+    #[test]
+    fn test_parse_unknown_tag_key_uppercase_only() {
+        assert_eq!(parse_unknown_tag_key("t9F02_unknown"), Ok(([0x9F, 0x02, 0, 0], 2)));
+        assert_eq!(parse_unknown_tag_key("t00_unknown"), Err(Error::Invalid));
+        assert_eq!(parse_unknown_tag_key("t9f02_unknown"), Err(Error::Invalid));
+        assert_eq!(parse_unknown_tag_key("9F02_unknown"), Err(Error::Invalid));
+        assert_eq!(parse_unknown_tag_key("t9F02"), Err(Error::Invalid));
+    }
+
+    #[test]
+    fn test_unknown_encoding_boundaries() {
+        for len in [0, 1, 127, 128, 255, 256, MAX_BER_VALUE_LEN] {
+            let value = "AB".repeat(len);
+            let total = 2 + ber_length_width(len).unwrap() + len;
+            let mut storage = vec![0xEE; total + 1];
+            for capacity in [0, 1, 2, total - 1, total, total + 1] {
+                let mut output = &mut storage[..capacity];
+                let result = encode_unknown_tlv_from_key(&mut output, "t9F02_unknown", &value, &[]);
+                if capacity < total {
+                    assert_eq!(result, Err(Error::BufferOverflow));
+                } else {
+                    assert_eq!(result, Ok(()));
+                    assert_eq!(output.len(), capacity - total);
+                    let mut wire = &storage[..total];
+                    assert_eq!(
+                        decode_ber_tlv_entry(&mut wire),
+                        Ok(Some(BerTlvEntry {
+                            tag: &[0x9F, 0x02],
+                            value: &vec![0xAB; len]
+                        }))
+                    );
+                    assert!(wire.is_empty());
+                }
+            }
+        }
+        let mut output = [0u8; 16];
+        for key in [
+            "t00_unknown",
+            "t9F_unknown",
+            "t5A5B_unknown",
+            "t9f02_unknown",
+            "t9F02",
+            "9F02_unknown",
+        ] {
+            assert_eq!(encode_unknown_tlv_from_key(&mut &mut output[..], key, "", &[]), Err(Error::Invalid));
+        }
+        for (value, error) in [("aB", Error::Invalid), ("GG", Error::Invalid), ("A", Error::Invalid)] {
+            assert_eq!(
+                encode_unknown_tlv_from_key(&mut &mut output[..], "t5A_unknown", value, &[]),
+                Err(error)
+            );
+        }
+        assert_eq!(
+            encode_unknown_tlv_from_key(&mut &mut [][..], "t5A_unknown", &"00".repeat(MAX_BER_VALUE_LEN + 1), &[]),
+            Err(Error::Invalid)
+        );
+    }
+
+    #[test]
+    fn textual_formatting_uses_exact_scratch_and_canonical_hex() {
+        for (bytes, expected) in [(b"".as_slice(), ""), (b"\0\xFF", "00FF"), (b"\x12\xAB", "12AB")] {
+            let mut storage = [0xEE; 16];
+            let mut scratch = storage.as_mut_slice();
+            assert_eq!(encode_hex_upper(&mut scratch, bytes), Ok(expected));
+            assert_eq!(scratch, &[0xEE; 16][expected.len()..]);
+            assert_eq!(encode_hex_upper(&mut &mut storage[..expected.len()], bytes), Ok(expected));
+            if !expected.is_empty() {
+                assert_eq!(
+                    encode_hex_upper(&mut &mut storage[..expected.len() - 1], bytes),
+                    Err(Error::BufferOverflow)
+                );
+            }
+        }
+        for text in ["5A", "9F02", "9F8101", "9F818001"] {
+            let (tag, len) = parse_ber_tag_hex(text).unwrap();
+            let expected = format!("t{text}_unknown");
+            let mut storage = [0xEE; 32];
+            for capacity in [expected.len() - 1, expected.len(), storage.len()] {
+                let mut scratch = &mut storage[..capacity];
+                let result = encode_unknown_tag_key(&mut scratch, &tag[..len]);
+                if capacity < expected.len() {
+                    assert_eq!(result, Err(Error::BufferOverflow));
+                } else {
+                    let key = result.unwrap();
+                    assert_eq!(key, expected);
+                    assert_eq!(parse_unknown_tag_key(key), Ok((tag, len)));
+                    assert_eq!(scratch, &[0xEE; 32][..capacity - expected.len()]);
+                }
+            }
+        }
+        for key in ["t_unknown", "T5A_unknown", "t5A_UNKNOWN", "t5_unknown", "t5A_unknown_more"] {
+            assert_eq!(parse_unknown_tag_key(key), Err(Error::Invalid));
+        }
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use proptest::prelude::*;
+
+    use super::*;
+
+    proptest! {
+        #[test]
+        fn formatted_values_roundtrip(bytes in prop::collection::vec(any::<u8>(), 0..64)) {
+            let expected: String = bytes.iter().map(|byte| format!("{byte:02X}")).collect();
+            let mut storage = [0; 128];
+            let text = encode_hex_upper(&mut storage.as_mut_slice(), &bytes).unwrap();
+            prop_assert_eq!(text, expected);
+            let mut output = [0; 128];
+            let mut cursor = output.as_mut_slice();
+            encode_unknown_tlv_from_key(&mut cursor, "t5A_unknown", text, &[]).unwrap();
+            let used = 128 - cursor.len();
+            let mut input = &output[..used];
+            let entry = crate::primitive::bertlv::decode_ber_tlv_entry(&mut input).unwrap().unwrap();
+            prop_assert_eq!(entry.tag, &[0x5A]);
+            prop_assert_eq!(entry.value, bytes);
+            prop_assert!(input.is_empty());
+        }
     }
 }

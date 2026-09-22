@@ -86,7 +86,8 @@ pub struct TrailingField<Field, Rest = NoTrailingFields>(PhantomData<(Field, Res
 pub struct NoTrailingFields;
 pub struct Empty<T>(PhantomData<T>);
 /// Structural BER-TLV representation as a Serde map or sequence of
-/// `(tag_hex, value_hex)` pairs.
+/// `(tag_key, value_hex)` pairs. Keys use `t{TAG}_unknown` with uppercase tag hex,
+/// such as `t9F02_unknown`; values use even-length uppercase hex, including `""`.
 ///
 /// Order and duplicates are preserved if the chosen collection type preserves
 /// them.
