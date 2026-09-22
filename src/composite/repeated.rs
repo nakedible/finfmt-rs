@@ -110,15 +110,14 @@ where
     fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
         let expected = Count::decode_count(input, scratch)?;
         debug_assert_eq!(expected.is_some(), Count::HAS_COUNT);
-        let initial_capacity = expected.unwrap_or(0).min(MAX);
-        let mut values = Vec::with_capacity(initial_capacity);
+        if expected.is_some_and(|count| count > MAX) {
+            crate::utils::cold_path();
+            return Err(Error::Invalid.into());
+        }
+        let mut values = Vec::with_capacity(expected.unwrap_or(0));
 
         match (expected, Sep::BYTE) {
             (Some(count), Some(separator)) => {
-                if count > MAX {
-                    crate::utils::cold_path();
-                    return Err(Error::Invalid.into());
-                }
                 for index in 0..count {
                     let mut segment = decode_delimited_field(input, separator, index + 1 != count)?;
                     let value = Item::decode_cursor(&mut segment, scratch)?;
@@ -147,10 +146,6 @@ where
                 }
             }
             (Some(count), None) => {
-                if count > MAX {
-                    crate::utils::cold_path();
-                    return Err(Error::Invalid.into());
-                }
                 for _ in 0..count {
                     values.push(Item::decode_cursor(input, scratch)?);
                 }
@@ -464,6 +459,24 @@ mod tests {
         assert_eq!(values[1].as_ptr(), start.wrapping_add(1));
         assert!(input.is_empty());
         assert!(workspace.is_empty());
+    }
+
+    #[test]
+    fn count_limits_are_checked_before_reservation() {
+        type Huge = BoundedList<String, crate::Length<crate::FixedBinaryBe<8>>, One, (), { usize::MAX - 1 }>;
+        let count = (usize::MAX as u64).to_be_bytes();
+        assert_eq!(decode::<Huge>(&count), Err(Error::Invalid));
+
+        type Small = BoundedList<String, crate::Length<crate::FixedBinaryBe<8>>, One, (), 3>;
+        assert_eq!(decode::<Small>(&count), Err(Error::Invalid));
+        type Plain = BoundedList<String, AsciiLength<1>, One, (), 4>;
+        type NoItems = BoundedList<String, AsciiLength<1>, One, (), 0>;
+        assert_eq!(decode::<Counted>(b"5"), Err(Error::Invalid));
+        assert_eq!(decode::<Plain>(b"5"), Err(Error::Invalid));
+        assert_eq!(decode::<NoItems>(b"1"), Err(Error::Invalid));
+        assert_eq!(decode::<NoItems>(b"0TAIL"), Ok((vec![], b"TAIL".to_vec())));
+        roundtrip::<Plain>(&["A", "B", "C", "D"], b"4ABCD");
+        assert_eq!(decode::<Plain>(b"4A"), Err(Error::UnexpectedEof));
     }
 }
 
