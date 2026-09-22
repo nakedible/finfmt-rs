@@ -3,6 +3,7 @@
 //! Record macros parse field entries syntactically:
 //! - `field: Fmt` uses the serde-backed scalar path with `Fmt: ScalarFmt`.
 //! - `field: DirectScalar<Fmt>` uses `ScalarValue` directly instead of serde.
+//!   Use `DirectScalar<Fmt, &str>` for a borrowed string.
 //! - `field: Composite<Fmt>` nests another `CompositeFmt`.
 //! - `field: Option<...>` means the wire container can omit that field.
 //!
@@ -252,6 +253,53 @@ mod tests {
             "5A" => ebcdic: A4Ebcdic,
             "DF23" => tail: Option<Composite<BorrowedConcatFmt>>,
         }
+    }
+
+    #[test]
+    fn test_direct_borrowed_record_syntax() {
+        #[derive(Debug, PartialEq)]
+        struct Record<'a> {
+            ascii: &'a str,
+            ebcdic: Option<&'a str>,
+        }
+        crate::concat_format! { struct Concat for<'a> Record<'a> {
+            ascii: DirectScalar<A4, &'a str>, ebcdic: Option<DirectScalar<A4Ebcdic, &str>>,
+        } }
+        crate::delimited_format! { struct Delimited for<'a> Record<'a>, b'|' {
+            ascii: DirectScalar<A4, &str>, ebcdic: Option<DirectScalar<A4Ebcdic, &'a str> >,
+        } }
+        crate::bitmap_format! { struct Bitmap for<'a> Record<'a>, crate::bitmap::BitmapLayout::iso(1, 1), BitmapBinaryWord {
+            head: { ascii: DirectScalar<A4, &str>, }
+            3 => ebcdic: Option<DirectScalar<A4Ebcdic, &'a str>>,
+        } }
+        crate::ber_tlv_format! { struct Ber for<'a> Record<'a> {
+            "59" => ascii: DirectScalar<A4, &'a str>, "5A" => ebcdic: Option<DirectScalar<A4Ebcdic, &str> >,
+        } }
+        fn check<F: for<'a, 'de> CompositeFmt<Record<'a>, Decoded<'de> = Record<'de>>>() {
+            for ebcdic in [None, Some("WXYZ")] {
+                let value = Record { ascii: "ABCD", ebcdic };
+                let mut output = [0; 32];
+                let mut scratch = [0; 32];
+                let used = {
+                    let mut out = output.as_mut_slice();
+                    F::encode(&mut out, &mut scratch, &value).unwrap();
+                    32 - out.len()
+                };
+                let mut input = &output[..used];
+                let decoded = F::decode(&mut input, &mut scratch).unwrap();
+                assert_eq!(decoded, value);
+                assert!(input.is_empty());
+                assert!((output.as_ptr_range()).contains(&decoded.ascii.as_ptr()));
+                if let Some(text) = decoded.ebcdic {
+                    let ptr = text.as_ptr();
+                    assert!((scratch.as_ptr_range()).contains(&ptr));
+                }
+            }
+        }
+        check::<Concat>();
+        check::<Delimited>();
+        check::<Bitmap>();
+        check::<Ber>();
     }
 
     type FramedFixedTailFmt = Frame<Field<Ascii<0, 12>, AsciiLength<2>>, FixedTailFmt>;

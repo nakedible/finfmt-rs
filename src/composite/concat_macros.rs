@@ -9,8 +9,8 @@ macro_rules! __finfmt_concat_encode_field {
         $crate::composite::encode_nested_value::<_, $crate::composite::Composite<$fmt>>(&$value.$field, $output, $scratch)
             .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
     }};
-    ($value:expr, $output:expr, $scratch:expr, $field:ident : DirectScalar<$fmt:ty>) => {{
-        <$crate::composite::DirectScalar<$fmt> as $crate::composite::CompositeFmt<_>>::encode_cursor($output, $scratch, &$value.$field)
+    ($value:expr, $output:expr, $scratch:expr, $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?>) => {{
+        <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::encode_cursor($output, $scratch, &$value.$field)
             .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
     }};
     ($value:expr, $output:expr, $scratch:expr, $field:ident : Composite<$fmt:ty>::with($context:ident)) => {{
@@ -135,24 +135,24 @@ macro_rules! __finfmt_concat_encode_fields {
             $field : Option<Composite<$fmt> > $(, $($rest)*)?
         );
     }};
-    ($value:expr, $output:expr, $scratch:expr; $field:ident : Option<DirectScalar<$fmt:ty>> $(, $($rest:tt)*)?) => {{
+    ($value:expr, $output:expr, $scratch:expr; $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>> $(, $($rest:tt)*)?) => {{
         let mut __finfmt_omitted_tail = false;
         $crate::__finfmt_concat_encode_tail_fields!(
             $value,
             $output,
             $scratch,
             __finfmt_omitted_tail;
-            $field : Option<DirectScalar<$fmt>> $(, $($rest)*)?
+            $field : Option<DirectScalar<$fmt $(, $value_ty)?>> $(, $($rest)*)?
         );
     }};
-    ($value:expr, $output:expr, $scratch:expr; $field:ident : Option<DirectScalar<$fmt:ty> > $(, $($rest:tt)*)?) => {{
+    ($value:expr, $output:expr, $scratch:expr; $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> > $(, $($rest:tt)*)?) => {{
         let mut __finfmt_omitted_tail = false;
         $crate::__finfmt_concat_encode_tail_fields!(
             $value,
             $output,
             $scratch,
             __finfmt_omitted_tail;
-            $field : Option<DirectScalar<$fmt> > $(, $($rest)*)?
+            $field : Option<DirectScalar<$fmt $(, $value_ty)?> > $(, $($rest)*)?
         );
     }};
     ($value:expr, $output:expr, $scratch:expr; $field:ident : Option<$fmt:ty> $(, $($rest:tt)*)?) => {{
@@ -173,8 +173,8 @@ macro_rules! __finfmt_concat_encode_fields {
         $crate::__finfmt_concat_encode_field!($value, $output, $scratch, $field : Composite<$fmt>::with($context))?;
         $crate::__finfmt_concat_encode_fields!($value, $output, $scratch; $($($rest)*)?);
     }};
-    ($value:expr, $output:expr, $scratch:expr; $field:ident : DirectScalar<$fmt:ty> $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_concat_encode_field!($value, $output, $scratch, $field : DirectScalar<$fmt>)?;
+    ($value:expr, $output:expr, $scratch:expr; $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?> $(, $($rest:tt)*)?) => {{
+        $crate::__finfmt_concat_encode_field!($value, $output, $scratch, $field : DirectScalar<$fmt $(, $value_ty)?>)?;
         $crate::__finfmt_concat_encode_fields!($value, $output, $scratch; $($($rest)*)?);
     }};
     ($value:expr, $output:expr, $scratch:expr; $field:ident : $fmt:ty $(, $($rest:tt)*)?) => {{
@@ -221,14 +221,14 @@ macro_rules! __finfmt_concat_encode_tail_fields {
         }
         $crate::__finfmt_concat_encode_tail_fields!($value, $output, $scratch, $omitted; $($($rest)*)?);
     }};
-    ($value:expr, $output:expr, $scratch:expr, $omitted:ident; $field:ident : Option<DirectScalar<$fmt:ty>> $(, $($rest:tt)*)?) => {{
+    ($value:expr, $output:expr, $scratch:expr, $omitted:ident; $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>> $(, $($rest:tt)*)?) => {{
         match ($omitted, $value.$field.as_ref()) {
             (true, Some(_)) => {
                 $crate::__private::cold_path();
                 Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)))?;
             }
             (false, Some(inner)) => {
-                <$crate::composite::DirectScalar<$fmt> as $crate::composite::CompositeFmt<_>>::encode_cursor($output, $scratch, inner)
+                <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::encode_cursor($output, $scratch, inner)
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
             }
             (false, None) => {
@@ -238,14 +238,14 @@ macro_rules! __finfmt_concat_encode_tail_fields {
         }
         $crate::__finfmt_concat_encode_tail_fields!($value, $output, $scratch, $omitted; $($($rest)*)?);
     }};
-    ($value:expr, $output:expr, $scratch:expr, $omitted:ident; $field:ident : Option<DirectScalar<$fmt:ty> > $(, $($rest:tt)*)?) => {{
+    ($value:expr, $output:expr, $scratch:expr, $omitted:ident; $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> > $(, $($rest:tt)*)?) => {{
         match ($omitted, $value.$field.as_ref()) {
             (true, Some(_)) => {
                 $crate::__private::cold_path();
                 Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)))?;
             }
             (false, Some(inner)) => {
-                <$crate::composite::DirectScalar<$fmt> as $crate::composite::CompositeFmt<_>>::encode_cursor($output, $scratch, inner)
+                <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::encode_cursor($output, $scratch, inner)
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
             }
             (false, None) => {
@@ -327,24 +327,24 @@ macro_rules! __finfmt_concat_decode_build {
             $field : Option<Composite<$fmt> > $(, $($rest)*)?
         )
     }};
-    ($input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : Option<DirectScalar<$fmt:ty>> $(, $($rest:tt)*)?) => {{
+    ($input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>> $(, $($rest:tt)*)?) => {{
         $crate::__finfmt_concat_decode_tail_build!(
             $input,
             $scratch,
             $result_ty,
             $ctor;
             [$($built)*];
-            $field : Option<DirectScalar<$fmt>> $(, $($rest)*)?
+            $field : Option<DirectScalar<$fmt $(, $value_ty)?>> $(, $($rest)*)?
         )
     }};
-    ($input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : Option<DirectScalar<$fmt:ty> > $(, $($rest:tt)*)?) => {{
+    ($input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> > $(, $($rest:tt)*)?) => {{
         $crate::__finfmt_concat_decode_tail_build!(
             $input,
             $scratch,
             $result_ty,
             $ctor;
             [$($built)*];
-            $field : Option<DirectScalar<$fmt> > $(, $($rest)*)?
+            $field : Option<DirectScalar<$fmt $(, $value_ty)?> > $(, $($rest)*)?
         )
     }};
     ($input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : Option<$fmt:ty> $(, $($rest:tt)*)?) => {{
@@ -367,8 +367,8 @@ macro_rules! __finfmt_concat_decode_build {
             .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
         $crate::__finfmt_concat_decode_build!($input, $scratch, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
-    ($input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : DirectScalar<$fmt:ty> $(, $($rest:tt)*)?) => {{
-        let $field = <$crate::composite::DirectScalar<$fmt> as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch)
+    ($input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?> $(, $($rest:tt)*)?) => {{
+        let $field = <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch)
             .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
         $crate::__finfmt_concat_decode_build!($input, $scratch, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
@@ -407,23 +407,23 @@ macro_rules! __finfmt_concat_decode_tail_build {
         };
         $crate::__finfmt_concat_decode_tail_build!($input, $scratch, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
-    ($input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : Option<DirectScalar<$fmt:ty>> $(, $($rest:tt)*)?) => {{
+    ($input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>> $(, $($rest:tt)*)?) => {{
         let $field = if $input.is_empty() {
             None
         } else {
             Some(
-                <$crate::composite::DirectScalar<$fmt> as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch)
+                <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch)
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
             )
         };
         $crate::__finfmt_concat_decode_tail_build!($input, $scratch, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
-    ($input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : Option<DirectScalar<$fmt:ty> > $(, $($rest:tt)*)?) => {{
+    ($input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> > $(, $($rest:tt)*)?) => {{
         let $field = if $input.is_empty() {
             None
         } else {
             Some(
-                <$crate::composite::DirectScalar<$fmt> as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch)
+                <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch)
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
             )
         };

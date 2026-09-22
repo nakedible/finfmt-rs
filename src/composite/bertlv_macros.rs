@@ -15,17 +15,17 @@ macro_rules! __finfmt_ber_tlv_encode_field {
             })?;
         }
     }};
-    ($value:expr, $output:expr, $scratch:expr, $tag:expr, $field:ident : Option<DirectScalar<$fmt:ty>>) => {{
+    ($value:expr, $output:expr, $scratch:expr, $tag:expr, $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>>) => {{
         if let Some(inner) = $value.$field.as_ref() {
             $crate::composite::encode_ber_tlv_field($output, $scratch, $tag, stringify!($field), |value_out, scratch| {
-                <$crate::composite::DirectScalar<$fmt> as $crate::composite::CompositeFmt<_>>::encode_cursor(value_out, scratch, inner)
+                <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::encode_cursor(value_out, scratch, inner)
             })?;
         }
     }};
-    ($value:expr, $output:expr, $scratch:expr, $tag:expr, $field:ident : Option<DirectScalar<$fmt:ty> >) => {{
+    ($value:expr, $output:expr, $scratch:expr, $tag:expr, $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> >) => {{
         if let Some(inner) = $value.$field.as_ref() {
             $crate::composite::encode_ber_tlv_field($output, $scratch, $tag, stringify!($field), |value_out, scratch| {
-                <$crate::composite::DirectScalar<$fmt> as $crate::composite::CompositeFmt<_>>::encode_cursor(value_out, scratch, inner)
+                <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::encode_cursor(value_out, scratch, inner)
             })?;
         }
     }};
@@ -41,9 +41,9 @@ macro_rules! __finfmt_ber_tlv_encode_field {
             $crate::composite::encode_nested_value::<_, $crate::composite::Composite<$fmt>>(&$value.$field, value_out, scratch)
         })?;
     }};
-    ($value:expr, $output:expr, $scratch:expr, $tag:expr, $field:ident : DirectScalar<$fmt:ty>) => {{
+    ($value:expr, $output:expr, $scratch:expr, $tag:expr, $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?>) => {{
         $crate::composite::encode_ber_tlv_field($output, $scratch, $tag, stringify!($field), |value_out, scratch| {
-            <$crate::composite::DirectScalar<$fmt> as $crate::composite::CompositeFmt<_>>::encode_cursor(value_out, scratch, &$value.$field)
+            <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::encode_cursor(value_out, scratch, &$value.$field)
         })?;
     }};
     ($value:expr, $output:expr, $scratch:expr, $tag:expr, $field:ident : $fmt:ty) => {{
@@ -75,12 +75,12 @@ macro_rules! __finfmt_ber_tlv_encode_fields {
         $crate::__finfmt_ber_tlv_encode_field!($value, $output, $scratch, $tag, $field : Option<Composite<$fmt> >);
         $crate::__finfmt_ber_tlv_encode_fields!($value, $output, $scratch; $($($rest)*)?);
     }};
-    ($value:expr, $output:expr, $scratch:expr; $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty>> $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_ber_tlv_encode_field!($value, $output, $scratch, $tag, $field : Option<DirectScalar<$fmt>>);
+    ($value:expr, $output:expr, $scratch:expr; $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>> $(, $($rest:tt)*)?) => {{
+        $crate::__finfmt_ber_tlv_encode_field!($value, $output, $scratch, $tag, $field : Option<DirectScalar<$fmt $(, $value_ty)?>>);
         $crate::__finfmt_ber_tlv_encode_fields!($value, $output, $scratch; $($($rest)*)?);
     }};
-    ($value:expr, $output:expr, $scratch:expr; $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty> > $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_ber_tlv_encode_field!($value, $output, $scratch, $tag, $field : Option<DirectScalar<$fmt> >);
+    ($value:expr, $output:expr, $scratch:expr; $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> > $(, $($rest:tt)*)?) => {{
+        $crate::__finfmt_ber_tlv_encode_field!($value, $output, $scratch, $tag, $field : Option<DirectScalar<$fmt $(, $value_ty)?> >);
         $crate::__finfmt_ber_tlv_encode_fields!($value, $output, $scratch; $($($rest)*)?);
     }};
     ($value:expr, $output:expr, $scratch:expr; $tag:expr => $field:ident : Option<$fmt:ty> $(, $($rest:tt)*)?) => {{
@@ -91,8 +91,8 @@ macro_rules! __finfmt_ber_tlv_encode_fields {
         $crate::__finfmt_ber_tlv_encode_field!($value, $output, $scratch, $tag, $field : Composite<$fmt>);
         $crate::__finfmt_ber_tlv_encode_fields!($value, $output, $scratch; $($($rest)*)?);
     }};
-    ($value:expr, $output:expr, $scratch:expr; $tag:expr => $field:ident : DirectScalar<$fmt:ty> $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_ber_tlv_encode_field!($value, $output, $scratch, $tag, $field : DirectScalar<$fmt>);
+    ($value:expr, $output:expr, $scratch:expr; $tag:expr => $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?> $(, $($rest:tt)*)?) => {{
+        $crate::__finfmt_ber_tlv_encode_field!($value, $output, $scratch, $tag, $field : DirectScalar<$fmt $(, $value_ty)?>);
         $crate::__finfmt_ber_tlv_encode_fields!($value, $output, $scratch; $($($rest)*)?);
     }};
     ($value:expr, $output:expr, $scratch:expr; $tag:expr => $field:ident : $fmt:ty $(, $($rest:tt)*)?) => {{
@@ -134,7 +134,7 @@ macro_rules! __finfmt_ber_tlv_match_field {
             )?;
         }
     }};
-    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident, $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty>>) => {{
+    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident, $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>>) => {{
         if !$matched {
             $matched = $crate::composite::decode_ber_tlv_field(
                 $tag_bytes,
@@ -144,12 +144,12 @@ macro_rules! __finfmt_ber_tlv_match_field {
                 &mut $field,
                 stringify!($field),
                 |value_input, scratch| {
-                    <$crate::composite::DirectScalar<$fmt> as $crate::composite::CompositeFmt<_>>::decode_cursor(value_input, scratch)
+                    <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode_cursor(value_input, scratch)
                 },
             )?;
         }
     }};
-    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident, $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty> >) => {{
+    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident, $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> >) => {{
         if !$matched {
             $matched = $crate::composite::decode_ber_tlv_field(
                 $tag_bytes,
@@ -159,7 +159,7 @@ macro_rules! __finfmt_ber_tlv_match_field {
                 &mut $field,
                 stringify!($field),
                 |value_input, scratch| {
-                    <$crate::composite::DirectScalar<$fmt> as $crate::composite::CompositeFmt<_>>::decode_cursor(value_input, scratch)
+                    <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode_cursor(value_input, scratch)
                 },
             )?;
         }
@@ -194,7 +194,7 @@ macro_rules! __finfmt_ber_tlv_match_field {
             )?;
         }
     }};
-    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident, $tag:expr => $field:ident : DirectScalar<$fmt:ty>) => {{
+    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident, $tag:expr => $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?>) => {{
         if !$matched {
             $matched = $crate::composite::decode_ber_tlv_field(
                 $tag_bytes,
@@ -204,7 +204,7 @@ macro_rules! __finfmt_ber_tlv_match_field {
                 &mut $field,
                 stringify!($field),
                 |value_input, scratch| {
-                    <$crate::composite::DirectScalar<$fmt> as $crate::composite::CompositeFmt<_>>::decode_cursor(value_input, scratch)
+                    <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode_cursor(value_input, scratch)
                 },
             )?;
         }
@@ -238,12 +238,12 @@ macro_rules! __finfmt_ber_tlv_match_fields {
         $crate::__finfmt_ber_tlv_match_field!($tag_bytes, $value_input, $scratch, $matched, $tag => $field : Option<Composite<$fmt> >);
         $crate::__finfmt_ber_tlv_match_fields!($tag_bytes, $value_input, $scratch, $matched; $($($rest)*)?);
     }};
-    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident; $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty>> $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_ber_tlv_match_field!($tag_bytes, $value_input, $scratch, $matched, $tag => $field : Option<DirectScalar<$fmt>>);
+    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident; $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>> $(, $($rest:tt)*)?) => {{
+        $crate::__finfmt_ber_tlv_match_field!($tag_bytes, $value_input, $scratch, $matched, $tag => $field : Option<DirectScalar<$fmt $(, $value_ty)?>>);
         $crate::__finfmt_ber_tlv_match_fields!($tag_bytes, $value_input, $scratch, $matched; $($($rest)*)?);
     }};
-    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident; $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty> > $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_ber_tlv_match_field!($tag_bytes, $value_input, $scratch, $matched, $tag => $field : Option<DirectScalar<$fmt> >);
+    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident; $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> > $(, $($rest:tt)*)?) => {{
+        $crate::__finfmt_ber_tlv_match_field!($tag_bytes, $value_input, $scratch, $matched, $tag => $field : Option<DirectScalar<$fmt $(, $value_ty)?> >);
         $crate::__finfmt_ber_tlv_match_fields!($tag_bytes, $value_input, $scratch, $matched; $($($rest)*)?);
     }};
     ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident; $tag:expr => $field:ident : Option<$fmt:ty> $(, $($rest:tt)*)?) => {{
@@ -254,8 +254,8 @@ macro_rules! __finfmt_ber_tlv_match_fields {
         $crate::__finfmt_ber_tlv_match_field!($tag_bytes, $value_input, $scratch, $matched, $tag => $field : Composite<$fmt>);
         $crate::__finfmt_ber_tlv_match_fields!($tag_bytes, $value_input, $scratch, $matched; $($($rest)*)?);
     }};
-    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident; $tag:expr => $field:ident : DirectScalar<$fmt:ty> $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_ber_tlv_match_field!($tag_bytes, $value_input, $scratch, $matched, $tag => $field : DirectScalar<$fmt>);
+    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident; $tag:expr => $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?> $(, $($rest:tt)*)?) => {{
+        $crate::__finfmt_ber_tlv_match_field!($tag_bytes, $value_input, $scratch, $matched, $tag => $field : DirectScalar<$fmt $(, $value_ty)?>);
         $crate::__finfmt_ber_tlv_match_fields!($tag_bytes, $value_input, $scratch, $matched; $($($rest)*)?);
     }};
     ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident; $tag:expr => $field:ident : $fmt:ty $(, $($rest:tt)*)?) => {{
@@ -278,11 +278,11 @@ macro_rules! __finfmt_ber_tlv_finish_fields_as {
         let $field = $field;
         $crate::__finfmt_ber_tlv_finish_fields_as!($result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
-    ($result_ty:ty, $ctor:path; [$($built:tt)*]; $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty>> $(, $($rest:tt)*)?) => {{
+    ($result_ty:ty, $ctor:path; [$($built:tt)*]; $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>> $(, $($rest:tt)*)?) => {{
         let $field = $field;
         $crate::__finfmt_ber_tlv_finish_fields_as!($result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
-    ($result_ty:ty, $ctor:path; [$($built:tt)*]; $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty> > $(, $($rest:tt)*)?) => {{
+    ($result_ty:ty, $ctor:path; [$($built:tt)*]; $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> > $(, $($rest:tt)*)?) => {{
         let $field = $field;
         $crate::__finfmt_ber_tlv_finish_fields_as!($result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
@@ -300,7 +300,7 @@ macro_rules! __finfmt_ber_tlv_finish_fields_as {
         };
         $crate::__finfmt_ber_tlv_finish_fields_as!($result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
-    ($result_ty:ty, $ctor:path; [$($built:tt)*]; $tag:expr => $field:ident : DirectScalar<$fmt:ty> $(, $($rest:tt)*)?) => {{
+    ($result_ty:ty, $ctor:path; [$($built:tt)*]; $tag:expr => $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?> $(, $($rest:tt)*)?) => {{
         let $field = match $field {
             Some(value) => value,
             None => {
