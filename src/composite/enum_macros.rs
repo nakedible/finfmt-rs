@@ -1,25 +1,29 @@
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __finfmt_tagged_const_decode_arm {
-    ($input:expr, $scratch:expr, $ty:ident, $variant:ident, $fmt:ty, $literal_fmt:ty, $literal_bytes:expr) => {{
-        let expected: &[u8] = $literal_bytes;
-        if $crate::composite::match_literal::<$literal_fmt>($input, $scratch, expected).map_err($crate::CompositeError::from)? {
-            return $crate::__private::decode_variant::<_, _, $fmt, _>($input, $scratch, $ty::$variant);
-        }
-    }};
-    ($input:expr, $scratch:expr, $ty:ident, $variant:ident, $fmt:ty, $literal_fmt:ty, $literal_bytes:expr, if |$remaining_len:ident| $pred:expr) => {{
+    ($input:expr, $scratch:expr, $eof:ident, $ty:ident, $variant:ident, $fmt:ty, $literal_fmt:ty, $literal_bytes:expr $(, if |$remaining_len:ident| $pred:expr)?) => {{
         let source = *$input;
         let expected: &[u8] = $literal_bytes;
-        if $crate::composite::match_literal::<$literal_fmt>($input, $scratch, expected).map_err($crate::CompositeError::from)? {
-            let $remaining_len = $input.len();
-            if $pred {
-                return $crate::__private::decode_variant::<_, _, $fmt, _>($input, $scratch, $ty::$variant);
+        match $crate::composite::match_literal::<$literal_fmt>($input, $scratch, expected) {
+            Ok(true) => {
+                let selected = true $(&& { let $remaining_len = $input.len(); $pred })?;
+                if selected {
+                    return $crate::__private::decode_variant::<_, _, $fmt, _>($input, $scratch, $ty::$variant);
+                }
+                *$input = source;
             }
-            *$input = source;
+            Ok(false) | Err($crate::Error::Invalid | $crate::Error::InvalidValueLength) => {}
+            Err($crate::Error::UnexpectedEof) => $eof = true,
+            Err(error) => return Err($crate::CompositeError::from(error)),
         }
     }};
 }
 
+/// Define a tagged enum. Literals are compared with decoded semantic values,
+/// so numeric literals must use their decoder's canonical spelling (for example
+/// `b"1"`, not `b"01"`, when leading zeroes are stripped). Unmatched or incomplete
+/// tags allow later candidates; after tag and guard selection, body errors return
+/// immediately. Guards inspect the remaining bounded decode input.
 #[macro_export]
 macro_rules! tagged_format {
     (
@@ -51,10 +55,12 @@ macro_rules! tagged_format {
 
             #[inline(always)]
             fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
+                let mut saw_eof = false;
                 $(
                     $crate::__finfmt_tagged_const_decode_arm!(
                         input,
                         scratch,
+                        saw_eof,
                         $ty,
                         $variant,
                         $fmt,
@@ -64,7 +70,7 @@ macro_rules! tagged_format {
                     );
                 )+
                 $crate::__private::cold_path();
-                Err($crate::Error::Invalid.into())
+                Err(if saw_eof { $crate::Error::UnexpectedEof } else { $crate::Error::Invalid }.into())
             }
         }
     };
@@ -97,10 +103,12 @@ macro_rules! tagged_format {
 
             #[inline(always)]
             fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
+                let mut saw_eof = false;
                 $(
                     $crate::__finfmt_tagged_const_decode_arm!(
                         input,
                         scratch,
+                        saw_eof,
                         $ty,
                         $variant,
                         $fmt,
@@ -110,7 +118,7 @@ macro_rules! tagged_format {
                     );
                 )+
                 $crate::__private::cold_path();
-                Err($crate::Error::Invalid.into())
+                Err(if saw_eof { $crate::Error::UnexpectedEof } else { $crate::Error::Invalid }.into())
             }
         }
     };

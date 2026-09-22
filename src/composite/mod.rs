@@ -2815,55 +2815,22 @@ pub fn decode_literal<'a, F: ScalarFmt>(input: &mut &'a [u8], scratch: &mut &'a 
     Ok(())
 }
 
+/// Trial-decode a literal in its decoded semantic representation. Input advances
+/// only on a match; temporary scratch use is not retained. Decode errors are
+/// returned to the caller so a dispatcher can distinguish EOF and resource errors.
 #[inline]
 pub fn match_literal<'a, F: ScalarFmt>(input: &mut &'a [u8], scratch: &mut &'a mut [u8], expected: &[u8]) -> Result<bool, Error> {
-    let encoded_len = F::encoded_len(expected)?;
-
-    let mut stack = [0u8; 64];
-    if encoded_len <= stack.len() {
-        let encoded = stack.get_mut(..encoded_len).ok_or_else(|| {
-            crate::utils::cold_path();
-            Error::Internal
-        })?;
-        let mut encoded_out = &mut encoded[..];
-        let mut scratch_ptr = &mut **scratch;
-        F::encode(&mut encoded_out, &mut scratch_ptr, expected)?;
-        if !encoded_out.is_empty() {
-            crate::utils::cold_path();
-            return Err(Error::Internal);
-        }
-        return match_encoded_literal(input, encoded);
-    }
-
-    let mut scratch_ptr = &mut **scratch;
-    let encoded = take_scratch(&mut scratch_ptr, encoded_len)?;
-    let mut encoded_out = &mut encoded[..];
-    F::encode(&mut encoded_out, &mut scratch_ptr, expected)?;
-    if !encoded_out.is_empty() {
-        crate::utils::cold_path();
-        return Err(Error::Internal);
-    }
-    match_encoded_literal(input, encoded)
-}
-
-#[inline]
-fn match_encoded_literal(input: &mut &[u8], encoded: &[u8]) -> Result<bool, Error> {
-    if input.len() < encoded.len() {
-        if encoded.starts_with(input) {
-            crate::utils::cold_path();
-            return Err(Error::UnexpectedEof);
-        }
+    let source = *input;
+    let mut trial = source;
+    let mut workspace = &mut **scratch;
+    if F::decode(&mut trial, &mut workspace)? != expected {
         return Ok(false);
     }
-
-    let head = input.get(..encoded.len()).ok_or_else(|| {
+    let consumed = source.len().checked_sub(trial.len()).ok_or_else(|| {
         crate::utils::cold_path();
         Error::Internal
     })?;
-    if head != encoded {
-        return Ok(false);
-    }
-    advance_input(input, encoded.len())?;
+    advance_input(input, consumed)?;
     Ok(true)
 }
 
@@ -2949,5 +2916,118 @@ mod delimited_proptests {
         fn final_segment_roundtrip(first in "[A-Za-z0-9]{0,32}", tail in prop::option::of("[A-Za-z0-9|]{0,32}")) {
             roundtrip(first, tail);
         }
+    }
+}
+
+#[cfg(test)]
+mod tagged_tests {
+    use super::*;
+    use crate::{Ascii, Field, Fixed, FixedSignedComp3, Rest};
+    type A1 = Field<Ascii<1, 1>, Fixed<1>>;
+    type A2 = Field<Ascii<2, 2>, Fixed<2>>;
+    #[derive(Debug, PartialEq)]
+    enum Value {
+        Long(()),
+        Short(()),
+    }
+    crate::tagged_format! { struct Prefix for Value {
+        _: A2 = b"AB" => Long(Empty<()>),
+        _: A1 = b"A" => Short(Empty<()>),
+    } }
+    crate::tagged_format! { struct Guard for Value {
+        _: A1 = b"A" => Long(Empty<()>) if |remaining| remaining == 1,
+        _: A1 = b"A" => Short(Empty<()>),
+    } }
+    #[test]
+    fn partial_tags_and_guards_try_later_arms() {
+        for (wire, expected, rest) in [
+            (&b"A"[..], Ok(Value::Short(())), &b""[..]),
+            (b"AB", Ok(Value::Long(())), b""),
+            (b"ABC", Ok(Value::Long(())), b"C"),
+            (b"", Err(Error::UnexpectedEof), b""),
+            (b"ZZ", Err(Error::Invalid), b"ZZ"),
+        ] {
+            let mut input = wire;
+            assert_eq!(Prefix::decode(&mut input, &mut []).map_err(|e| e.kind), expected);
+            assert_eq!(input, rest);
+        }
+        assert_eq!(Guard::decode(&mut &b"A"[..], &mut []).unwrap(), Value::Short(()));
+        assert_eq!(Guard::decode(&mut &b"AB"[..], &mut []).unwrap(), Value::Long(()));
+    }
+    struct Reject<const CODE: u8>;
+    impl<const CODE: u8> ScalarFmt for Reject<CODE> {
+        fn encoded_len(value: &[u8]) -> Result<usize, Error> {
+            A1::encoded_len(value)
+        }
+        fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &[u8]) -> Result<(), Error> {
+            A1::encode(output, scratch, value)
+        }
+        fn decode<'a>(_input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
+            Err(match CODE {
+                0 => Error::Invalid,
+                1 => Error::InvalidValueLength,
+                2 => Error::UnexpectedEof,
+                3 => Error::BufferOverflow,
+                _ => Error::Internal,
+            })
+        }
+    }
+    #[test]
+    fn tag_errors_retry_but_resource_and_selected_body_errors_do_not() {
+        macro_rules! check {
+            ($code:literal, $expected:expr) => {{
+                crate::tagged_format! { struct Format for Value {
+                    _: Reject<$code> = b"A" => Long(Empty<()>),
+                    _: A1 = b"A" => Short(Empty<()>),
+                } }
+                let mut input = &b"A"[..];
+                assert_eq!(Format::decode(&mut input, &mut []).map_err(|e| e.kind), $expected);
+                assert_eq!(input, if $code < 3 { &b""[..] } else { &b"A"[..] });
+            }};
+        }
+        check!(0, Ok(Value::Short(())));
+        check!(1, Ok(Value::Short(())));
+        check!(2, Ok(Value::Short(())));
+        check!(3, Err(Error::BufferOverflow));
+        check!(4, Err(Error::Internal));
+        #[derive(Debug, PartialEq)]
+        enum Body {
+            Required(String),
+            Empty(()),
+        }
+        crate::tagged_format! { struct Format for Body {
+            _: A1 = b"A" => Required(DirectScalar<A2>),
+            _: A1 = b"A" => Empty(Empty<()>),
+        } }
+        assert_eq!(Format::decode(&mut &b"A"[..], &mut []).unwrap_err().kind, Error::UnexpectedEof);
+    }
+    #[test]
+    fn literal_semantics_and_temporary_scratch() {
+        let mut scratch = [0; 80];
+        for wire in [&b"\x1C!"[..], &b"\x1F!"[..]] {
+            let mut input = wire;
+            let mut workspace = scratch.as_mut_slice();
+            assert_eq!(match_literal::<FixedSignedComp3<1>>(&mut input, &mut workspace, b"1"), Ok(true));
+            assert_eq!(input, b"!");
+            assert_eq!(workspace.len(), 80);
+        }
+        for expected in [&b"1"[..], &b"01"[..], &b"2"[..]] {
+            let mut input = &b"\0\x1C"[..];
+            assert_eq!(
+                match_literal::<FixedSignedComp3<2>>(&mut input, &mut scratch.as_mut_slice(), expected),
+                Ok(expected == b"1")
+            );
+            assert_eq!(input.len(), if expected == b"1" { 0 } else { 2 });
+        }
+        type Ebcdic = Field<Ascii<1, 1>, Fixed<1>, crate::Ebcdic037>;
+        for expected in [b"A", b"B"] {
+            let mut input = &b"\xC1!"[..];
+            let mut workspace = &mut scratch[..1];
+            assert_eq!(match_literal::<Ebcdic>(&mut input, &mut workspace, expected), Ok(expected == b"A"));
+            assert_eq!(workspace.len(), 1);
+            assert_eq!(input.len(), if expected == b"A" { 1 } else { 2 });
+        }
+        type Long = Field<Ascii<0, 80>, Rest>;
+        assert_eq!(match_literal::<Long>(&mut &[b'A'; 80][..], &mut &mut [][..], &[b'A'; 80]), Ok(true));
     }
 }
