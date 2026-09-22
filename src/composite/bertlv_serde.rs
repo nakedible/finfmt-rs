@@ -1,5 +1,3 @@
-use core::marker::PhantomData;
-
 use serde::Serialize;
 use serde::de::value::StrDeserializer;
 use serde::de::{DeserializeOwned, DeserializeSeed, MapAccess, SeqAccess, Visitor};
@@ -46,7 +44,7 @@ impl BerTlvTextSink for EncodeUnknownValueSink<'_, '_> {
 }
 
 struct BerTlvTextSerializer<'a, S> {
-    _marker: PhantomData<&'a mut [u8]>,
+    scratch: &'a mut [u8],
     sink: S,
 }
 
@@ -264,15 +262,42 @@ impl<S: BerTlvTextSink> serde::Serializer for BerTlvTextSerializer<'_, S> {
     }
 
     #[inline(always)]
+    fn collect_str<T: ?Sized + core::fmt::Display>(self, value: &T) -> Result<Self::Ok, Self::Error> {
+        use std::io::Write;
+
+        let capacity = self.scratch.len();
+        let used = {
+            let mut remaining = &mut *self.scratch;
+            write!(&mut remaining, "{value}").map_err(|_| {
+                cold_path();
+                Error::BufferOverflow
+            })?;
+            capacity - remaining.len()
+        };
+        let text = self.scratch.get(..used).ok_or_else(|| {
+            cold_path();
+            Error::Internal
+        })?;
+        let text = core::str::from_utf8(text).map_err(|_| {
+            cold_path();
+            Error::Internal
+        })?;
+        self.sink.accept(text)
+    }
+
+    #[inline(always)]
     fn is_human_readable(&self) -> bool {
         true
     }
 }
 
 #[inline(always)]
-fn parse_unknown_tag_from_serialize<T: ?Sized + Serialize>(value: &T) -> Result<([u8; MAX_BER_TAG_BYTES], usize), Error> {
+fn parse_unknown_tag_from_serialize<T: ?Sized + Serialize>(
+    scratch: &mut [u8],
+    value: &T,
+) -> Result<([u8; MAX_BER_TAG_BYTES], usize), Error> {
     value.serialize(BerTlvTextSerializer {
-        _marker: PhantomData,
+        scratch,
         sink: ParseUnknownTagSink,
     })
 }
@@ -280,12 +305,13 @@ fn parse_unknown_tag_from_serialize<T: ?Sized + Serialize>(value: &T) -> Result<
 #[inline(always)]
 fn encode_unknown_value_from_serialize<T: ?Sized + Serialize>(
     output: &mut &mut [u8],
+    scratch: &mut [u8],
     tag_bytes: [u8; MAX_BER_TAG_BYTES],
     tag_len: usize,
     value: &T,
 ) -> Result<(), Error> {
     value.serialize(BerTlvTextSerializer {
-        _marker: PhantomData,
+        scratch,
         sink: EncodeUnknownValueSink {
             output,
             tag_bytes,
@@ -818,6 +844,7 @@ impl<'de> serde::Deserializer<'de> for BerTlvDeserializer<'_, 'de> {
 
 struct BerTlvMapSerializer<'a, 'b> {
     output: &'a mut &'b mut [u8],
+    scratch: &'a mut [u8],
     pending_tag: Option<([u8; MAX_BER_TAG_BYTES], usize)>,
 }
 
@@ -831,7 +858,7 @@ impl SerializeMap for BerTlvMapSerializer<'_, '_> {
             cold_path();
             return Err(Error::Internal);
         }
-        self.pending_tag = Some(parse_unknown_tag_from_serialize(key)?);
+        self.pending_tag = Some(parse_unknown_tag_from_serialize(self.scratch, key)?);
         Ok(())
     }
 
@@ -841,7 +868,7 @@ impl SerializeMap for BerTlvMapSerializer<'_, '_> {
             cold_path();
             Error::Internal
         })?;
-        encode_unknown_value_from_serialize(self.output, tag_bytes, tag_len, value)
+        encode_unknown_value_from_serialize(self.output, self.scratch, tag_bytes, tag_len, value)
     }
 
     #[inline(always)]
@@ -856,10 +883,12 @@ impl SerializeMap for BerTlvMapSerializer<'_, '_> {
 
 struct BerTlvPairSerializer<'a, 'b> {
     output: &'a mut &'b mut [u8],
+    scratch: &'a mut [u8],
 }
 
 struct BerTlvPairTupleSerializer<'a, 'b> {
     output: &'a mut &'b mut [u8],
+    scratch: &'a mut [u8],
     pending_tag: Option<([u8; MAX_BER_TAG_BYTES], usize)>,
     index: u8,
 }
@@ -869,7 +898,7 @@ impl BerTlvPairTupleSerializer<'_, '_> {
     fn serialize_item<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Error> {
         match self.index {
             0 => {
-                self.pending_tag = Some(parse_unknown_tag_from_serialize(value)?);
+                self.pending_tag = Some(parse_unknown_tag_from_serialize(self.scratch, value)?);
                 self.index = 1;
                 Ok(())
             }
@@ -879,7 +908,7 @@ impl BerTlvPairTupleSerializer<'_, '_> {
                     Error::Internal
                 })?;
                 self.index = 2;
-                encode_unknown_value_from_serialize(self.output, tag_bytes, tag_len, value)
+                encode_unknown_value_from_serialize(self.output, self.scratch, tag_bytes, tag_len, value)
             }
             _ => {
                 cold_path();
@@ -962,6 +991,7 @@ impl<'a, 'b> serde::Serializer for BerTlvPairSerializer<'a, 'b> {
         }
         Ok(BerTlvPairTupleSerializer {
             output: self.output,
+            scratch: self.scratch,
             pending_tag: None,
             index: 0,
         })
@@ -975,6 +1005,7 @@ impl<'a, 'b> serde::Serializer for BerTlvPairSerializer<'a, 'b> {
         }
         Ok(BerTlvPairTupleSerializer {
             output: self.output,
+            scratch: self.scratch,
             pending_tag: None,
             index: 0,
         })
@@ -1165,6 +1196,12 @@ impl<'a, 'b> serde::Serializer for BerTlvPairSerializer<'a, 'b> {
     }
 
     #[inline(always)]
+    fn collect_str<T: ?Sized + core::fmt::Display>(self, _value: &T) -> Result<Self::Ok, Self::Error> {
+        cold_path();
+        Err(Error::Internal)
+    }
+
+    #[inline(always)]
     fn is_human_readable(&self) -> bool {
         true
     }
@@ -1172,6 +1209,7 @@ impl<'a, 'b> serde::Serializer for BerTlvPairSerializer<'a, 'b> {
 
 struct BerTlvSeqSerializer<'a, 'b> {
     output: &'a mut &'b mut [u8],
+    scratch: &'a mut [u8],
 }
 
 impl SerializeSeq for BerTlvSeqSerializer<'_, '_> {
@@ -1180,7 +1218,10 @@ impl SerializeSeq for BerTlvSeqSerializer<'_, '_> {
 
     #[inline(always)]
     fn serialize_element<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Self::Error> {
-        value.serialize(BerTlvPairSerializer { output: self.output })
+        value.serialize(BerTlvPairSerializer {
+            output: self.output,
+            scratch: self.scratch,
+        })
     }
 
     #[inline(always)]
@@ -1191,11 +1232,12 @@ impl SerializeSeq for BerTlvSeqSerializer<'_, '_> {
 
 struct BerTlvSerializer<'a, 'b> {
     output: &'a mut &'b mut [u8],
+    scratch: &'a mut [u8],
 }
 
 #[inline(always)]
-pub(crate) fn encode_ber_tlv_serde<T: ?Sized + Serialize>(output: &mut &mut [u8], value: &T) -> Result<(), Error> {
-    value.serialize(BerTlvSerializer { output })
+pub(crate) fn encode_ber_tlv_serde<T: ?Sized + Serialize>(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), Error> {
+    value.serialize(BerTlvSerializer { output, scratch })
 }
 
 impl<T> CompositeFmt<T> for BerTlvList<T>
@@ -1206,8 +1248,7 @@ where
 
     #[inline(always)]
     fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), CompositeError> {
-        let _ = scratch;
-        encode_ber_tlv_serde(output, value)?;
+        encode_ber_tlv_serde(output, scratch, value)?;
         Ok(())
     }
 
@@ -1235,13 +1276,17 @@ impl<'a, 'b> serde::Serializer for BerTlvSerializer<'a, 'b> {
 
     #[inline(always)]
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
-        Ok(BerTlvSeqSerializer { output: self.output })
+        Ok(BerTlvSeqSerializer {
+            output: self.output,
+            scratch: self.scratch,
+        })
     }
 
     #[inline(always)]
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
         Ok(BerTlvMapSerializer {
             output: self.output,
+            scratch: self.scratch,
             pending_tag: None,
         })
     }
@@ -1432,7 +1477,104 @@ impl<'a, 'b> serde::Serializer for BerTlvSerializer<'a, 'b> {
     }
 
     #[inline(always)]
+    fn collect_str<T: ?Sized + core::fmt::Display>(self, _value: &T) -> Result<Self::Ok, Self::Error> {
+        cold_path();
+        Err(Error::Internal)
+    }
+
+    #[inline(always)]
     fn is_human_readable(&self) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::fmt;
+
+    use super::*;
+
+    struct Formatted<T>(T);
+
+    impl<T: fmt::Display> Serialize for Formatted<T> {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.collect_str(&self.0)
+        }
+    }
+
+    fn encode(value: &impl Serialize, scratch_len: usize) -> Result<Vec<u8>, Error> {
+        let mut output = [0; 128];
+        let capacity = output.len();
+        let mut out = output.as_mut_slice();
+        let mut storage = [0; 64];
+        let mut scratch = &mut storage[..scratch_len];
+        encode_ber_tlv_serde(&mut out, &mut scratch, value)?;
+        assert_eq!(scratch.len(), scratch_len);
+        let used = capacity - out.len();
+        Ok(output[..used].to_vec())
+    }
+
+    #[test]
+    fn collect_str_uses_reusable_bounded_scratch() {
+        let value = [
+            (Formatted("t59_unknown"), Formatted("ABCD")),
+            (Formatted("t59_unknown"), Formatted("")),
+        ];
+        for capacity in [0, 10, 11, 64] {
+            let expected = if capacity < 11 {
+                Err(Error::BufferOverflow)
+            } else {
+                Ok(b"\x59\x02\xAB\xCD\x59\0".to_vec())
+            };
+            assert_eq!(encode(&value.as_slice(), capacity), expected);
+        }
+        assert_eq!(encode(&[("t59_unknown", "ABCD")].as_slice(), 0), Ok(b"\x59\x02\xAB\xCD".to_vec()));
+        let map = std::collections::BTreeMap::from([("t59_unknown", Formatted("ABCD"))]);
+        assert_eq!(encode(&map, 4), Ok(b"\x59\x02\xAB\xCD".to_vec()));
+        assert_eq!(encode(&map, 3), Err(Error::BufferOverflow));
+        assert_eq!(encode(&[("t59_unknown", Formatted(""))].as_slice(), 0), Ok(b"\x59\0".to_vec()));
+        assert_eq!(encode(&[(Formatted("bad"), "AB")].as_slice(), 11), Err(Error::Invalid));
+        for value in ["A", "ab", "GG", "€"] {
+            assert_eq!(encode(&[("t59_unknown", Formatted(value))].as_slice(), 11), Err(Error::Invalid));
+        }
+        assert_eq!(
+            encode_ber_tlv_serde(&mut [0; 3].as_mut_slice(), &mut [0; 11].as_mut_slice(), &map),
+            Err(Error::BufferOverflow)
+        );
+    }
+
+    #[test]
+    fn collect_str_formats_once_and_rejects_unsupported_shapes_without_formatting() {
+        struct Counted(core::cell::Cell<usize>);
+        impl fmt::Display for Counted {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.set(self.0.get() + 1);
+                formatter.write_str("AB")?;
+                formatter.write_str("CD")
+            }
+        }
+        let counted = Formatted(Counted(core::cell::Cell::new(0)));
+        assert_eq!(encode(&[("t59_unknown", &counted)].as_slice(), 4), Ok(b"\x59\x02\xAB\xCD".to_vec()));
+        assert_eq!(counted.0.0.get(), 1);
+        assert_eq!(encode(&counted, 4), Err(Error::Internal));
+        assert_eq!(encode(&[&counted].as_slice(), 4), Err(Error::Internal));
+        assert_eq!(counted.0.0.get(), 1);
+    }
+
+    mod proptests {
+        use proptest::prelude::*;
+
+        use super::*;
+
+        proptest! {
+            #[test]
+            fn formatted_hex_matches_plain_strings(value in "([0-9A-F]{2}){0,16}") {
+                let capacity = 11.max(value.len());
+                let formatted = [(Formatted("t59_unknown"), Formatted(value.as_str()))];
+                let plain = [("t59_unknown", value.as_str())];
+                prop_assert_eq!(encode(&formatted.as_slice(), capacity), encode(&plain.as_slice(), 0));
+                prop_assert_eq!(encode(&formatted.as_slice(), capacity - 1), Err(Error::BufferOverflow));
+            }
+        }
     }
 }
