@@ -341,3 +341,48 @@ impl<T: Default> CompositeFmt<T> for Empty<T> {
         Ok(T::default())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Ascii, DirectScalar, Ebcdic037, Field, Fixed};
+
+    type A3 = Field<Ascii<3, 3>, Fixed<3>>;
+    crate::absent_format! {
+        struct Dashes {
+            _: A3 = b"---",
+        }
+    }
+
+    #[test]
+    fn absence_comparison_reuses_scratch_before_borrowed_decode() {
+        for (wire, capacity, expected) in [
+            (b"---", 3, Ok(true)),
+            (b"ABC", 3, Ok(false)),
+            (b"---", 32, Ok(true)),
+            (b"---", 2, Err(Error::BufferOverflow)),
+        ] {
+            let mut scratch = [0; 32];
+            let mut workspace = &mut scratch[..capacity];
+            let start = workspace.as_ptr();
+            assert_eq!(Dashes::is_absent(wire, &mut workspace), expected);
+            assert_eq!(workspace.len(), capacity);
+            assert_eq!(workspace.as_ptr(), start);
+        }
+
+        type Text = DirectScalar<Field<Ascii<3, 3>, Fixed<3>, Ebcdic037>, &'static str>;
+        type OptionalText = OptionalAbsent<&'static str, Text, Dashes, 3>;
+        for capacity in [3, 32] {
+            let mut scratch = [0; 32];
+            let start = scratch.as_ptr();
+            let mut workspace = &mut scratch[..capacity];
+            let mut input = &b"---\xC1\xC2\xC3TAIL"[..];
+            assert_eq!(OptionalText::decode_cursor(&mut input, &mut workspace), Ok(None));
+            let text = OptionalText::decode_cursor(&mut input, &mut workspace).unwrap().unwrap();
+            assert_eq!(text, "ABC");
+            assert_eq!(text.as_ptr(), start);
+            assert_eq!(workspace.len(), capacity - 3);
+            assert_eq!(input, b"TAIL");
+        }
+    }
+}

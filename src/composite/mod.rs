@@ -60,9 +60,10 @@ pub trait AbsentFmt {
 
     #[inline(always)]
     fn is_absent(input: &[u8], scratch: &mut &mut [u8]) -> Result<bool, Error> {
-        let absent = take_scratch(scratch, input.len())?;
+        let mut workspace = &mut **scratch;
+        let absent = take_scratch(&mut workspace, input.len())?;
         let mut absent_out = &mut absent[..];
-        Self::encode_absent(&mut absent_out, scratch)?;
+        Self::encode_absent(&mut absent_out, &mut workspace)?;
         if !absent_out.is_empty() {
             crate::utils::cold_path();
             return Err(Error::Internal);
