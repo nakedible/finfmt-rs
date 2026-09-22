@@ -597,12 +597,11 @@ impl<'de> serde::Deserializer<'de> for BerTlvTextDeserializer<'de> {
     }
 
     #[inline(always)]
-    fn deserialize_ignored_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        cold_path();
-        Err(Error::Internal)
+        visitor.visit_unit()
     }
 
     #[inline(always)]
@@ -664,11 +663,17 @@ impl<'de> serde::Deserializer<'de> for BerTlvPairDeserializer<'de> {
     where
         V: Visitor<'de>,
     {
-        visitor.visit_seq(BerTlvPairAccess {
+        let mut access = BerTlvPairAccess {
             key: self.key,
             value: self.value,
             index: 0,
-        })
+        };
+        let value = visitor.visit_seq(&mut access)?;
+        if access.index != 2 {
+            cold_path();
+            return Err(Error::Internal);
+        }
+        Ok(value)
     }
 
     #[inline(always)]
@@ -821,11 +826,17 @@ impl<'de> serde::Deserializer<'de> for BerTlvDeserializer<'_, 'de> {
     where
         V: Visitor<'de>,
     {
-        visitor.visit_map(BerTlvMapDeserializer {
+        let mut access = BerTlvMapDeserializer {
             input: self.input,
             scratch: self.scratch,
             pending: None,
-        })
+        };
+        let value = visitor.visit_map(&mut access)?;
+        if access.pending.is_some() {
+            cold_path();
+            return Err(Error::Internal);
+        }
+        Ok(value)
     }
 
     #[inline(always)]
@@ -999,7 +1010,7 @@ impl<'a, 'b> serde::Serializer for BerTlvPairSerializer<'a, 'b> {
 
     #[inline(always)]
     fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
-        if len != Some(2) {
+        if len.is_some_and(|len| len != 2) {
             cold_path();
             return Err(Error::Internal);
         }
@@ -1559,6 +1570,78 @@ mod tests {
         assert_eq!(encode(&counted, 4), Err(Error::Internal));
         assert_eq!(encode(&[&counted].as_slice(), 4), Err(Error::Internal));
         assert_eq!(counted.0.0.get(), 1);
+    }
+
+    #[test]
+    fn pairs_require_two_elements_with_or_without_a_length_hint() {
+        struct Pair<'a>(Option<usize>, &'a [&'a str]);
+        impl Serialize for Pair<'_> {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                let mut seq = serializer.serialize_seq(self.0)?;
+                for value in self.1 {
+                    seq.serialize_element(value)?;
+                }
+                seq.end()
+            }
+        }
+        let elements = ["t59_unknown", "ABCD", "extra"];
+        for hint in [None, Some(0), Some(1), Some(2), Some(3)] {
+            for len in 0..=elements.len() {
+                let expected = if len == 2 && hint.is_none_or(|n| n == 2) {
+                    Ok(b"\x59\x02\xAB\xCD".to_vec())
+                } else {
+                    Err(Error::Internal)
+                };
+                assert_eq!(encode(&[Pair(hint, &elements[..len])].as_slice(), 0), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn visitors_must_consume_values_but_can_explicitly_ignore_them() {
+        use serde::Deserializer;
+        use serde::de::IgnoredAny;
+
+        struct ReadEntry(bool);
+        impl<'de> Visitor<'de> for ReadEntry {
+            type Value = ();
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("one entry")
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<(), A::Error> {
+                seq.next_element::<String>()?;
+                if self.0 {
+                    seq.next_element::<IgnoredAny>()?;
+                }
+                Ok(())
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
+                map.next_key::<String>()?;
+                if self.0 {
+                    map.next_value::<IgnoredAny>()?;
+                }
+                Ok(())
+            }
+        }
+        for complete in [false, true] {
+            let expected = if complete { Ok(()) } else { Err(Error::Internal) };
+            let pair = BerTlvPairDeserializer {
+                key: "t59_unknown",
+                value: "ABCD",
+            };
+            assert_eq!(pair.deserialize_seq(ReadEntry(complete)), expected);
+            let mut input = b"\x59\x02\xAB\xCD".as_slice();
+            let mut scratch = [0; 32];
+            let map = BerTlvDeserializer {
+                input: &mut input,
+                scratch: &mut scratch.as_mut_slice(),
+            };
+            assert_eq!(map.deserialize_map(ReadEntry(complete)), expected);
+        }
+        let values =
+            decode_ber_tlv_serde::<Vec<(String, IgnoredAny)>>(&mut b"\x59\x02\xAB\xCD".as_slice(), &mut [0; 32].as_mut_slice()).unwrap();
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].0, "t59_unknown");
     }
 
     mod proptests {
