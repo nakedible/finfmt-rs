@@ -89,43 +89,43 @@ macro_rules! __finfmt_delimited_encode_next {
 macro_rules! __finfmt_delimited_encode_fields {
     ($value:expr, $output:expr, $scratch:expr, $separator:expr;) => {};
     ($value:expr, $output:expr, $scratch:expr, $separator:expr; _: $fmt:ty = $bytes:expr $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, $separator, _: $fmt = $bytes)?;
+        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, if $crate::__finfmt_delimited_has_rest!($($($rest)*)?) { Some($separator) } else { None }, _: $fmt = $bytes)?;
         $crate::__finfmt_delimited_encode_next!($value, $output, $scratch, $separator; $($($rest)*)?);
     }};
     ($value:expr, $output:expr, $scratch:expr, $separator:expr; $field:ident : Option<Composite<$fmt:ty>> $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, $separator, $field : Option<Composite<$fmt>>)?;
+        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, if $crate::__finfmt_delimited_has_rest!($($($rest)*)?) { Some($separator) } else { None }, $field : Option<Composite<$fmt>>)?;
         $crate::__finfmt_delimited_encode_next!($value, $output, $scratch, $separator; $($($rest)*)?);
     }};
     ($value:expr, $output:expr, $scratch:expr, $separator:expr; $field:ident : Option<Composite<$fmt:ty> > $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, $separator, $field : Option<Composite<$fmt> >)?;
+        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, if $crate::__finfmt_delimited_has_rest!($($($rest)*)?) { Some($separator) } else { None }, $field : Option<Composite<$fmt> >)?;
         $crate::__finfmt_delimited_encode_next!($value, $output, $scratch, $separator; $($($rest)*)?);
     }};
     ($value:expr, $output:expr, $scratch:expr, $separator:expr; $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>> $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, $separator, $field : Option<DirectScalar<$fmt $(, $value_ty)?>>)?;
+        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, if $crate::__finfmt_delimited_has_rest!($($($rest)*)?) { Some($separator) } else { None }, $field : Option<DirectScalar<$fmt $(, $value_ty)?>>)?;
         $crate::__finfmt_delimited_encode_next!($value, $output, $scratch, $separator; $($($rest)*)?);
     }};
     ($value:expr, $output:expr, $scratch:expr, $separator:expr; $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> > $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, $separator, $field : Option<DirectScalar<$fmt $(, $value_ty)?> >)?;
+        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, if $crate::__finfmt_delimited_has_rest!($($($rest)*)?) { Some($separator) } else { None }, $field : Option<DirectScalar<$fmt $(, $value_ty)?> >)?;
         $crate::__finfmt_delimited_encode_next!($value, $output, $scratch, $separator; $($($rest)*)?);
     }};
     ($value:expr, $output:expr, $scratch:expr, $separator:expr; $field:ident : Option<$fmt:ty> $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, $separator, $field : Option<$fmt>)?;
+        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, if $crate::__finfmt_delimited_has_rest!($($($rest)*)?) { Some($separator) } else { None }, $field : Option<$fmt>)?;
         $crate::__finfmt_delimited_encode_next!($value, $output, $scratch, $separator; $($($rest)*)?);
     }};
     ($value:expr, $output:expr, $scratch:expr, $separator:expr; $field:ident : Composite<$fmt:ty>::with($context:ident) $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, $separator, $field : Composite<$fmt>::with($context))?;
+        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, if $crate::__finfmt_delimited_has_rest!($($($rest)*)?) { Some($separator) } else { None }, $field : Composite<$fmt>::with($context))?;
         $crate::__finfmt_delimited_encode_next!($value, $output, $scratch, $separator; $($($rest)*)?);
     }};
     ($value:expr, $output:expr, $scratch:expr, $separator:expr; $field:ident : Composite<$fmt:ty> $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, $separator, $field : Composite<$fmt>)?;
+        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, if $crate::__finfmt_delimited_has_rest!($($($rest)*)?) { Some($separator) } else { None }, $field : Composite<$fmt>)?;
         $crate::__finfmt_delimited_encode_next!($value, $output, $scratch, $separator; $($($rest)*)?);
     }};
     ($value:expr, $output:expr, $scratch:expr, $separator:expr; $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?> $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, $separator, $field : DirectScalar<$fmt $(, $value_ty)?>)?;
+        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, if $crate::__finfmt_delimited_has_rest!($($($rest)*)?) { Some($separator) } else { None }, $field : DirectScalar<$fmt $(, $value_ty)?>)?;
         $crate::__finfmt_delimited_encode_next!($value, $output, $scratch, $separator; $($($rest)*)?);
     }};
     ($value:expr, $output:expr, $scratch:expr, $separator:expr; $field:ident : $fmt:ty $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, $separator, $field : $fmt)?;
+        $crate::__finfmt_delimited_encode_field!($value, $output, $scratch, if $crate::__finfmt_delimited_has_rest!($($($rest)*)?) { Some($separator) } else { None }, $field : $fmt)?;
         $crate::__finfmt_delimited_encode_next!($value, $output, $scratch, $separator; $($($rest)*)?);
     }};
 }
@@ -254,6 +254,10 @@ macro_rules! __finfmt_delimited_decode_build {
     }};
 }
 
+/// Define a record separated by a byte. The final field consumes the remainder
+/// of the bounded input and may itself contain the separator. Earlier fields
+/// cannot encode that byte. An empty optional segment decodes as `None`, even
+/// when it was encoded from a present value that produced no bytes.
 #[macro_export]
 macro_rules! delimited_format {
     (

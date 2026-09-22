@@ -1020,7 +1020,7 @@ mod tests {
                 &mut out,
                 &mut &mut scratch[..capacity],
                 &"1".to_owned(),
-                b'|',
+                Some(b'|'),
             ));
             if capacity < 4 {
                 assert_eq!(result, Err(Error::BufferOverflow));
@@ -2636,7 +2636,12 @@ where
 }
 
 #[inline]
-fn encode_delimited_segment<E>(output: &mut &mut [u8], scratch: &mut &mut [u8], separator: u8, encode: E) -> Result<(), CompositeError>
+fn encode_delimited_segment<E>(
+    output: &mut &mut [u8],
+    scratch: &mut &mut [u8],
+    separator: Option<u8>,
+    encode: E,
+) -> Result<(), CompositeError>
 where
     E: FnOnce(&mut &mut [u8], &mut &mut [u8]) -> Result<(), CompositeError>,
 {
@@ -2653,7 +2658,7 @@ where
         crate::utils::cold_path();
         Error::Internal
     })?;
-    if contains_byte(segment, separator) {
+    if separator.is_some_and(|byte| contains_byte(segment, byte)) {
         crate::utils::cold_path();
         return Err(Error::Invalid.into());
     }
@@ -2666,7 +2671,7 @@ pub fn encode_delimited_value<T, S: CompositeFmt<T>>(
     output: &mut &mut [u8],
     scratch: &mut &mut [u8],
     value: &T,
-    separator: u8,
+    separator: Option<u8>,
 ) -> Result<(), CompositeError> {
     encode_delimited_segment(output, scratch, separator, |segment_out, nested_scratch| {
         S::encode_cursor(segment_out, nested_scratch, value)
@@ -2680,7 +2685,7 @@ pub fn encode_delimited_context<T, C: ?Sized, S: ContextFmt<T, C>>(
     scratch: &mut &mut [u8],
     context: &C,
     value: &T,
-    separator: u8,
+    separator: Option<u8>,
 ) -> Result<(), CompositeError> {
     encode_delimited_segment(output, scratch, separator, |segment_out, nested_scratch| {
         S::encode_with(segment_out, nested_scratch, context, value)
@@ -2693,7 +2698,7 @@ pub fn encode_delimited_serde_value<T, F: ScalarFmt>(
     output: &mut &mut [u8],
     scratch: &mut &mut [u8],
     value: &T,
-    separator: u8,
+    separator: Option<u8>,
 ) -> Result<(), CompositeError>
 where
     T: ?Sized + serde::Serialize,
@@ -2769,7 +2774,7 @@ pub fn encode_delimited_literal<F: ScalarFmt>(
     output: &mut &mut [u8],
     scratch: &mut &mut [u8],
     expected: &[u8],
-    separator: u8,
+    separator: Option<u8>,
 ) -> Result<(), CompositeError> {
     encode_delimited_segment(output, scratch, separator, |segment_out, scratch| {
         F::encode(segment_out, scratch, expected).map_err(CompositeError::from)
@@ -2875,6 +2880,74 @@ mod ber_tag_boundary_tests {
             assert_eq!(result.unwrap_err().kind, Error::Internal);
             let result = decode_ber_tlv_field(&[0x5A], tag, &mut &[][..], &mut &mut scratch[..], &mut None, "field", |_, _| Ok(()));
             assert_eq!(result.unwrap_err().kind, Error::Internal);
+        }
+    }
+}
+
+#[cfg(test)]
+mod delimited_proptests {
+    use proptest::prelude::*;
+
+    use super::*;
+    use crate::{Ascii, Field, Rest};
+
+    type Text = Field<Ascii<0, 64>, Rest>;
+    #[derive(Debug, PartialEq)]
+    struct Record {
+        first: String,
+        tail: Option<String>,
+    }
+    crate::delimited_format! { struct Format for Record, b'|' {
+        first: Text, tail: Option<DirectScalar<Text>>,
+    } }
+    fn roundtrip(first: String, tail: Option<String>) {
+        let mut value = Record { first, tail };
+        let mut output = [0; 130];
+        let used = {
+            let mut out = output.as_mut_slice();
+            Format::encode(&mut out, &mut [], &value).unwrap();
+            130 - out.len()
+        };
+        let mut input = &output[..used];
+        value.tail = value.tail.filter(|text| !text.is_empty());
+        assert_eq!(Format::decode(&mut input, &mut []).unwrap(), value);
+        assert!(input.is_empty());
+    }
+    #[test]
+    fn final_segment_separators_and_absence() {
+        for tail in [None, Some(""), Some("|"), Some("B|C"), Some("B|")] {
+            roundtrip("A".into(), tail.map(str::to_owned));
+        }
+        let mut output = [0; 16];
+        assert_eq!(
+            Format::encode(
+                &mut &mut output[..],
+                &mut [],
+                &Record {
+                    first: "A|B".into(),
+                    tail: None
+                }
+            )
+            .unwrap_err()
+            .kind,
+            Error::Invalid
+        );
+        #[derive(Debug, PartialEq)]
+        struct Literal {
+            first: String,
+        }
+        crate::delimited_format! { struct LiteralFormat for Literal, b'|' { first: Text, _: Text = b"B|C", } }
+        let value = Literal { first: "A".into() };
+        let mut out = output.as_mut_slice();
+        LiteralFormat::encode(&mut out, &mut [], &value).unwrap();
+        let used = 16 - out.len();
+        assert_eq!(&output[..used], b"A|B|C");
+        assert_eq!(LiteralFormat::decode(&mut &output[..used], &mut []).unwrap(), value);
+    }
+    proptest! {
+        #[test]
+        fn final_segment_roundtrip(first in "[A-Za-z0-9]{0,32}", tail in prop::option::of("[A-Za-z0-9|]{0,32}")) {
+            roundtrip(first, tail);
         }
     }
 }
