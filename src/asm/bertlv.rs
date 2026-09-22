@@ -1,7 +1,7 @@
 use crate::Error;
 use crate::primitive::bertlv::{
     BerTlvEntry, MAX_BER_TAG_BYTES, ber_length_width, ber_tag_matches_hex, decode_ber_length, decode_ber_tag, decode_ber_tlv_entry,
-    encode_ber_length, encode_ber_tag, parse_ber_tag_hex,
+    encode_ber_length, encode_ber_tag, encode_ber_tlv_in_place, parse_ber_tag_hex,
 };
 
 #[inline(never)]
@@ -42,4 +42,9 @@ pub fn ber_tag_matches_hex_9f02(tag_bytes: &[u8]) -> Result<bool, Error> {
 #[inline(never)]
 pub fn decode_ber_tlv_entry_runtime<'a>(input: &mut &'a [u8]) -> Result<Option<BerTlvEntry<'a>>, Error> {
     decode_ber_tlv_entry(input)
+}
+
+#[inline(never)]
+pub fn encode_ber_tlv_in_place_9f02<'a>(output: &mut &'a mut [u8], value_len: usize) -> Result<&'a mut [u8], Error> {
+    encode_ber_tlv_in_place(output, &[0x9F, 0x02], value_len)
 }

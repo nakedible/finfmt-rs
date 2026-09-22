@@ -195,6 +195,36 @@ pub fn ber_tag_matches_hex(tag_bytes: &[u8], tag_hex: &str) -> Result<bool, Erro
     Ok(tag_bytes == &parsed[..len])
 }
 
+/// Frame a body already encoded at the start of `output` as a BER-TLV entry.
+///
+/// The first `value_len` bytes contain the body. This moves them right to make
+/// room for the supplied tag and definite length, advances the output cursor,
+/// and returns the complete written entry. Tag bytes are copied without
+/// validation. Insufficient capacity returns `BufferOverflow`; unsupported
+/// value lengths return `Invalid`.
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub fn encode_ber_tlv_in_place<'a>(output: &mut &'a mut [u8], tag: &[u8], value_len: usize) -> Result<&'a mut [u8], Error> {
+    let width = ber_length_width(value_len)?;
+    let head_len = tag.len().checked_add(width).ok_or_else(|| {
+        cold_path();
+        Error::BufferOverflow
+    })?;
+    let used = head_len.checked_add(value_len).ok_or_else(|| {
+        cold_path();
+        Error::BufferOverflow
+    })?;
+    let entry = output.split_off_mut(..used).ok_or_else(|| {
+        cold_path();
+        Error::BufferOverflow
+    })?;
+    entry.copy_within(..value_len, head_len);
+    let mut head = &mut entry[..head_len];
+    encode_ber_tag(&mut head, tag)?;
+    encode_ber_length(&mut head, value_len)?;
+    Ok(entry)
+}
+
 /// Borrowed tag and value bytes; the original length octets are not retained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BerTlvEntry<'a> {
@@ -293,6 +323,50 @@ mod tests {
         let mut inp = input;
         let len = decode_ber_length(&mut inp)?;
         Ok((len, inp.to_vec()))
+    }
+
+    pub(super) fn check_in_place(tag: &[u8], body: &[u8], capacity: usize) {
+        let mut storage = vec![0xAA; capacity];
+        let present = capacity.min(body.len());
+        storage[..present].copy_from_slice(&body[..present]);
+        let mut output = storage.as_mut_slice();
+        let required = tag.len() + ber_length_width(body.len()).unwrap() + body.len();
+        let result = encode_ber_tlv_in_place(&mut output, tag, body.len());
+        if capacity < required {
+            assert_eq!(result, Err(Error::BufferOverflow));
+        } else {
+            let entry = result.unwrap();
+            assert_eq!(entry.len(), required);
+            let mut input = &*entry;
+            let decoded = decode_ber_tlv_entry(&mut input).unwrap().unwrap();
+            assert_eq!(decoded.tag, tag);
+            assert_eq!(decoded.value, body);
+            assert!(input.is_empty());
+            assert_eq!(output.len(), capacity - required);
+            assert!(output.iter().all(|&byte| byte == 0xAA));
+        }
+    }
+
+    #[test]
+    fn test_encode_ber_tlv_in_place() {
+        for tag in [&b"\x5A"[..], &b"\x9F\x02"[..], &b"\xDF\x81\x81\x01"[..]] {
+            for len in [0, 1, 6, 127, 128, 255, 256, MAX_BER_VALUE_LEN] {
+                let body: Vec<u8> = (0..len).map(|n| n as u8).collect();
+                let required = tag.len() + ber_length_width(len).unwrap() + len;
+                for capacity in [0, len, required - 1, required, required + 3] {
+                    check_in_place(tag, &body, capacity);
+                }
+            }
+        }
+        for len in [MAX_BER_VALUE_LEN + 1, usize::MAX] {
+            assert_eq!(encode_ber_tlv_in_place(&mut &mut [0; 8][..], &[0x5A], len), Err(Error::Invalid));
+        }
+        for tag in [&b""[..], &b"\0"[..], &b"\x9F"[..], &[0xFF; 16][..]] {
+            let mut buffer = [0; 32];
+            let written = encode_ber_tlv_in_place(&mut buffer.as_mut_slice(), tag, 0).unwrap();
+            assert_eq!(&written[..tag.len()], tag);
+            assert_eq!(written[tag.len()], 0);
+        }
     }
 
     #[test]
@@ -487,6 +561,15 @@ mod proptests {
     use proptest::prelude::*;
 
     use super::*;
+
+    proptest! {
+        #[test]
+        fn ber_in_place_preserves_arbitrary_bodies(body in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..512), spare in 0usize..8) {
+            let required = 2 + ber_length_width(body.len()).unwrap() + body.len();
+            super::tests::check_in_place(&[0x9F, 0x02], &body, required + spare);
+            super::tests::check_in_place(&[0x9F, 0x02], &body, required - 1);
+        }
+    }
 
     proptest! {
         #[test]

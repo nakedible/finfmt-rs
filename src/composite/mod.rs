@@ -2572,22 +2572,18 @@ where
 {
     let (tag_bytes, tag_len) =
         crate::primitive::bertlv::parse_ber_tag_hex(tag_hex).map_err(|_| wrap_composite_error(Error::Internal, field))?;
-    let out = core::mem::take(output);
-    let total = out.len();
-    let mut value_out = &mut *out;
-    encode_value(&mut value_out, scratch).map_err(|error| wrap_composite_error(error, field))?;
-    let used = total - value_out.len();
-    let head_len = tag_len + crate::primitive::bertlv::ber_length_width(used).map_err(|error| wrap_composite_error(error, field))?;
-    if total < head_len + used {
-        crate::utils::cold_path();
-        return Err(wrap_composite_error(Error::BufferOverflow, field));
-    }
-    out.copy_within(0..used, head_len);
-    let mut head = &mut out[..head_len];
-    crate::primitive::bertlv::encode_ber_tag(&mut head, &tag_bytes[..tag_len]).map_err(|error| wrap_composite_error(error, field))?;
-    crate::primitive::bertlv::encode_ber_length(&mut head, used).map_err(|error| wrap_composite_error(error, field))?;
-    *output = &mut out[head_len + used..];
-    Ok(())
+    let available = output.len();
+    let used = {
+        let mut value_out = &mut **output;
+        encode_value(&mut value_out, scratch).map_err(|error| wrap_composite_error(error, field))?;
+        available.checked_sub(value_out.len()).ok_or_else(|| {
+            crate::utils::cold_path();
+            wrap_composite_error(Error::Internal, field)
+        })?
+    };
+    crate::primitive::bertlv::encode_ber_tlv_in_place(output, &tag_bytes[..tag_len], used)
+        .map(|_| ())
+        .map_err(|error| wrap_composite_error(error, field))
 }
 
 #[inline(always)]
