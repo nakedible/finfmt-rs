@@ -272,8 +272,9 @@ mod tests {
             head: { ascii: DirectScalar<A4, &str>, }
             3 => ebcdic: Option<DirectScalar<A4Ebcdic, &'a str>>,
         } }
+        const ASCII_TAG: &str = "59";
         crate::ber_tlv_format! { struct Ber for<'a> Record<'a> {
-            "59" => ascii: DirectScalar<A4, &'a str>, "5A" => ebcdic: Option<DirectScalar<A4Ebcdic, &str> >,
+            ASCII_TAG => ascii: DirectScalar<A4, &'a str>, "5A" => ebcdic: Option<DirectScalar<A4Ebcdic, &str> >,
         } }
         fn check<F: for<'a, 'de> CompositeFmt<Record<'a>, Decoded<'de> = Record<'de>>>() {
             for ebcdic in [None, Some("WXYZ")] {

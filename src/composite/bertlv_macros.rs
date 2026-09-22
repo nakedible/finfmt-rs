@@ -375,11 +375,87 @@ macro_rules! __finfmt_ber_tlv_known_tags {
     ($($tag:expr => $field:ident : $fmt:ty),* $(,)?) => { &[$($tag),*] };
 }
 
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __finfmt_ber_tlv_assert_tags {
+    ($($tag:expr => $field:ident : $fmt:ty),* $(,)?) => {
+        const _: () = {
+            let tags: &[&str] = &[$($tag),*];
+            let mut i = 0;
+            while i < tags.len() {
+                let mut j = i + 1;
+                while j < tags.len() {
+                    let a = tags[i].as_bytes();
+                    let b = tags[j].as_bytes();
+                    if a.len() == b.len() {
+                        let mut k = 0;
+                        while k < a.len() && a[k] == b[k] {
+                            k += 1;
+                        }
+                        assert!(k != a.len(), "duplicate declared BER tag");
+                    }
+                    j += 1;
+                }
+                i += 1;
+            }
+        };
+    };
+}
+
 /// Define a named BER-TLV format. Decoding rejects padding by default.
 ///
 /// Add `, allow_zero_padding = true` after the target type and before `{` to
 /// accept `00` bytes between entries and at either end. Each nested format has
 /// its own setting. Encoding never adds padding; value bytes are not trimmed.
+///
+/// Declared tags must be unique constant expressions. Repeated wire occurrences
+/// of a known tag are also rejected, independently of this declaration check.
+///
+/// ```compile_fail
+/// # use finfmt::*;
+/// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
+/// # struct Record { first: String, second: String }
+/// const TAG: &str = "5A";
+/// ber_tlv_format! { struct Format for Record {
+///     TAG => first: A2,
+///     "5A" => second: A2,
+/// } }
+/// ```
+///
+/// ```compile_fail
+/// # use finfmt::*;
+/// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
+/// # struct Record { first: String, second: String, extras: std::collections::BTreeMap<String, String> }
+/// const TAG: &str = "5A";
+/// ber_tlv_format! { struct Format for Record {
+///     extras: extras,
+///     TAG => first: A2,
+///     "5A" => second: A2,
+/// } }
+/// ```
+///
+/// ```compile_fail
+/// # use finfmt::*;
+/// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
+/// # struct Record<'a> { first: &'a str, second: &'a str }
+/// const TAG: &str = "5A";
+/// ber_tlv_format! { struct Format for<'a> Record<'a> {
+///     TAG => first: A2,
+///     "5A" => second: A2,
+/// } }
+/// ```
+///
+/// ```compile_fail
+/// # use finfmt::*;
+/// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
+/// # struct Record<'a> { first: &'a str, second: &'a str, extras: std::collections::BTreeMap<String, String> }
+/// const TAG: &str = "5A";
+/// ber_tlv_format! { struct Format for<'a> Record<'a> {
+///     extras: extras,
+///     TAG => first: A2,
+///     "5A" => second: A2,
+/// } }
+/// ```
 #[macro_export]
 macro_rules! ber_tlv_format {
     (
@@ -389,6 +465,8 @@ macro_rules! ber_tlv_format {
             $($fields:tt)*
         }
     ) => {
+        $crate::__finfmt_ber_tlv_assert_tags!($($fields)*);
+
         $(#[$attr])*
         $vis struct $name;
 
@@ -415,6 +493,8 @@ macro_rules! ber_tlv_format {
             $($fields:tt)*
         }
     ) => {
+        $crate::__finfmt_ber_tlv_assert_tags!($($fields)*);
+
         $(#[$attr])*
         $vis struct $name;
 
@@ -440,6 +520,8 @@ macro_rules! ber_tlv_format {
             $($fields:tt)*
         }
     ) => {
+        $crate::__finfmt_ber_tlv_assert_tags!($($fields)*);
+
         $(#[$attr])*
         $vis struct $name;
 
@@ -466,6 +548,8 @@ macro_rules! ber_tlv_format {
             $($fields:tt)*
         }
     ) => {
+        $crate::__finfmt_ber_tlv_assert_tags!($($fields)*);
+
         $(#[$attr])*
         $vis struct $name;
 
