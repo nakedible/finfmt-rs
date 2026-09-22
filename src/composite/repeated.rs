@@ -1,6 +1,6 @@
 use super::*;
 use crate::field::{Identity, LengthSpec};
-use crate::primitive::bytes::{contains_byte, fill_repeated_block, split_delimited_bytes, validate_repeated_block};
+use crate::primitive::bytes::{contains_byte, fill_repeated_block, split_delimited_bytes};
 use crate::utils::take_scratch;
 
 impl ListCountPolicy for () {
@@ -246,14 +246,12 @@ where
         if input.is_empty() {
             return Ok(());
         }
-        let absent = take_scratch(scratch, Self::WIRE_LEN)?;
-        let mut slot_out = &mut absent[..];
-        Absent::encode_absent(&mut slot_out, scratch)?;
-        if !slot_out.is_empty() {
-            crate::utils::cold_path();
-            return Err(Error::Internal.into());
+        for slot in input.chunks_exact(Self::WIRE_LEN) {
+            if !Absent::is_absent(slot, &mut &mut **scratch)? {
+                crate::utils::cold_path();
+                return Err(Error::Invalid.into());
+            }
         }
-        validate_repeated_block(input, absent)?;
         Ok(())
     }
 }
@@ -477,6 +475,74 @@ mod tests {
         assert_eq!(decode::<NoItems>(b"0TAIL"), Ok((vec![], b"TAIL".to_vec())));
         roundtrip::<Plain>(&["A", "B", "C", "D"], b"4ABCD");
         assert_eq!(decode::<Plain>(b"4A"), Err(Error::UnexpectedEof));
+    }
+
+    struct SpacesOrZeros;
+
+    impl AbsentFmt for SpacesOrZeros {
+        fn encode_absent(output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error> {
+            ByteFill::<b' '>::encode_absent(output, scratch)
+        }
+
+        fn is_absent(input: &[u8], _scratch: &mut &mut [u8]) -> Result<bool, Error> {
+            use crate::primitive::bytes::all_bytes_eq;
+            Ok(all_bytes_eq(input, b' ') || all_bytes_eq(input, b'0'))
+        }
+    }
+
+    #[test]
+    fn unused_fixed_area_slots_use_the_absent_matcher() {
+        type Two = DirectScalar<Field<Ascii<2, 2>, Fixed<2>>>;
+        type Optional = OptionalAbsent<String, Two, SpacesOrZeros, 2>;
+        type Area = FixedAreaList<String, AsciiLength<1>, Optional, 3>;
+        assert_eq!(Optional::decode(&mut &b"00"[..], &mut []), Ok(None));
+        for (wire, expected) in [
+            (&b"0  00  "[..], &[][..]),
+            (b"2AB00  ", &["AB"]),
+            (b"2  0000", &["  "]),
+            (b"400AB00", &["00", "AB"]),
+            (b"6AB00  ", &["AB", "00", "  "]),
+        ] {
+            let (values, rest) = decode::<Area>(wire).unwrap();
+            assert_eq!(values, expected);
+            assert!(rest.is_empty());
+        }
+        assert_eq!(decode::<Area>(b"2AB0000TAIL").unwrap().1, b"TAIL");
+        for (wire, error) in [
+            (&b"1AB    "[..], Error::Invalid),
+            (b"8AB    ", Error::Invalid),
+            (b"0AB    ", Error::Invalid),
+            (b"0 0    ", Error::Invalid),
+            (b"2AB   ", Error::UnexpectedEof),
+        ] {
+            assert_eq!(decode::<Area>(wire), Err(error));
+        }
+        roundtrip::<Area>(&[], b"0      ");
+        roundtrip::<Area>(&["AB"], b"2AB    ");
+        roundtrip::<Area>(&["AB", "00", "  "], b"6AB00  ");
+        type ZeroWidth = FixedAreaList<(), AsciiLength<1>, OptionalAbsent<(), Empty<()>, ByteFill, 0>, 3>;
+        assert_eq!(ZeroWidth::decode(&mut &b"0"[..], &mut []).unwrap_err().kind, Error::Internal);
+    }
+
+    #[test]
+    fn unused_slot_checks_preserve_borrowed_values_and_workspace() {
+        struct Canonical;
+        impl AbsentFmt for Canonical {
+            fn encode_absent(output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error> {
+                ByteFill::<b'_'>::encode_absent(output, scratch)
+            }
+        }
+        type Borrowed = DirectScalar<Field<Ascii<1, 1>, Fixed<1>, Ebcdic037>, &'static str>;
+        type Area = FixedAreaList<&'static str, AsciiLength<1>, OptionalAbsent<&'static str, Borrowed, Canonical, 1>, 4>;
+        let mut input = &b"1\xC1___TAIL"[..];
+        let mut scratch = [0; 2];
+        let start = scratch.as_ptr();
+        let mut workspace = scratch.as_mut_slice();
+        let values = Area::decode_cursor(&mut input, &mut workspace).unwrap();
+        assert_eq!(values, ["A"]);
+        assert_eq!(values[0].as_ptr(), start);
+        assert_eq!(workspace.len(), 1);
+        assert_eq!(input, b"TAIL");
     }
 }
 

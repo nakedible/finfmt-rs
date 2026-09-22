@@ -58,6 +58,7 @@ pub trait ContextFmt<T, C: ?Sized> {
 pub trait AbsentFmt {
     fn encode_absent(output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error>;
 
+    /// Match the canonical absent bytes, or override to accept additional encodings.
     #[inline(always)]
     fn is_absent(input: &[u8], scratch: &mut &mut [u8]) -> Result<bool, Error> {
         let mut workspace = &mut **scratch;
@@ -102,6 +103,12 @@ pub struct FixedCount<const COUNT: usize>;
 pub struct OptionalAbsent<T, Inner, Absent, const N: usize>(PhantomData<(T, Inner, Absent)>);
 /// Fill the provided absent area with one byte.
 pub struct ByteFill<const BYTE: u8 = b' '>;
+/// A fixed physical area of `MAX` slots with a separately declared used byte length.
+///
+/// `Len` must describe the used extent independently of the physical area, for
+/// example with a numeric length prefix. [`crate::Rest`] cannot recover it.
+/// Slots inside that extent decode as present values. Remaining slots encode
+/// canonically and decode through their [`AbsentFmt::is_absent`] matcher.
 pub struct FixedAreaList<T, Len, Slot, const MAX: usize>(PhantomData<(T, Len, Slot)>);
 pub struct Separator<const BYTE: u8>;
 
