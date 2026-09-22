@@ -1,18 +1,51 @@
 #[macro_export]
 #[doc(hidden)]
-macro_rules! __finfmt_bitmap_assert_ascending_fields {
-    () => {};
-    ($id:literal => $field:ident : $fmt:ty $(, $($rest:tt)*)?) => {
-        $crate::__finfmt_bitmap_assert_ascending_fields!(@prev $id; $($($rest)*)?);
+macro_rules! __finfmt_bitmap_assert_fields {
+    ($layout:expr, $word:ty; $($id:literal => $field:ident : $fmt:ty),* $(,)?) => {
+        const _: () = {
+            let layout: $crate::bitmap::BitmapLayout = $layout;
+            let width = <$word as $crate::bitmap::BitmapWord>::DECODED_BYTES;
+            assert!(width > 0 && width <= 8, "bitmap word byte width out of range");
+            assert!(layout.min_words > 0 && layout.min_words <= layout.max_words && layout.max_words <= 3, "invalid bitmap word counts");
+            let mut index = 0;
+            while index < 3 {
+                if let Some(bit) = layout.continuation_bits[index] {
+                    assert!(bit > 0 && bit <= 64, "bitmap continuation bit out of range");
+                    assert!(index >= layout.max_words as usize || bit as usize <= width * 8, "bitmap continuation bit outside word width");
+                }
+                index += 1;
+            }
+            let fields: &[u16] = &[$($id),*];
+            index = 0;
+            while index < fields.len() {
+                let id = fields[index] as usize;
+                assert!(id > 0 && id <= 192, "bitmap field must be in 1..=192");
+                assert!(index == 0 || fields[index - 1] < fields[index], "bitmap fields must be declared in ascending order");
+                let word = (id - 1) / 64;
+                let bit = (id - 1) % 64 + 1;
+                assert!(word < layout.max_words as usize, "bitmap field exceeds configured word count");
+                assert!(bit <= width * 8, "bitmap field exceeds decoded word width");
+                if let Some(continuation) = layout.continuation_bits[word] {
+                    assert!(bit != continuation as usize, "bitmap field uses reserved continuation bit");
+                }
+                index += 1;
+            }
+        };
     };
-    (@prev $prev:literal;) => {};
-    (@prev $prev:literal; $id:literal => $field:ident : $fmt:ty $(, $($rest:tt)*)?) => {
-        const _: () = assert!(
-            ($prev as usize) < ($id as usize),
-            "bitmap fields must be declared in ascending order"
-        );
-        $crate::__finfmt_bitmap_assert_ascending_fields!(@prev $id; $($($rest)*)?);
-    };
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __finfmt_bitmap_reject_unknown {
+    ($bitmap:expr; $($id:literal => $field:ident : $fmt:ty),* $(,)?) => {{
+        #[allow(unused_mut)]
+        let mut unknown = $bitmap;
+        $(unknown.set($id, false);)*
+        if unknown != $crate::bitmap::Bitmap::new() {
+            $crate::__private::cold_path();
+            return Err($crate::Error::Invalid.into());
+        }
+    }};
 }
 
 #[macro_export]
@@ -198,6 +231,84 @@ macro_rules! __finfmt_bitmap_encode_fields {
     }};
 }
 
+/// Define a bitmap record with a constant layout and ascending field numbers.
+///
+/// Fields must fit the configured words and their decoded width, and must not
+/// occupy continuation positions. Unknown incoming fields are rejected before
+/// any body field is decoded. Header slots are always physically present; use
+/// an explicit `OptionalAbsent` format for a header absence pattern.
+///
+/// An out-of-range field is a declaration error.
+///
+/// ```compile_fail
+/// # use finfmt::*;
+/// # use finfmt::bitmap::BitmapLayout;
+/// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
+/// # struct Record { value: String }
+/// bitmap_format! { struct Format for Record, BitmapLayout::fixed(3), Field<Binary<8, 8>, Fixed<8>> {
+///     193 => value: A2,
+/// } }
+/// ```
+///
+/// Fields must be strictly ascending.
+///
+/// ```compile_fail
+/// # use finfmt::*;
+/// # use finfmt::bitmap::BitmapLayout;
+/// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
+/// # struct Record { first: String, second: String }
+/// bitmap_format! { struct Format for Record, BitmapLayout::fixed(1), Field<Binary<8, 8>, Fixed<8>> {
+///     3 => first: A2, 2 => second: A2,
+/// } }
+/// ```
+///
+/// Fields must fit the word count.
+///
+/// ```compile_fail
+/// # use finfmt::*;
+/// # use finfmt::bitmap::BitmapLayout;
+/// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
+/// # struct Record { value: String }
+/// bitmap_format! { struct Format for Record, BitmapLayout::fixed(1), Field<Binary<8, 8>, Fixed<8>> {
+///     65 => value: A2,
+/// } }
+/// ```
+///
+/// Narrow words preserve 64-field group numbering.
+///
+/// ```compile_fail
+/// # use finfmt::*;
+/// # use finfmt::bitmap::BitmapLayout;
+/// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
+/// # struct Record { value: String }
+/// bitmap_format! { struct Format for Record, BitmapLayout::fixed(2), Field<Binary<4, 4>, Fixed<4>> {
+///     33 => value: A2,
+/// } }
+/// ```
+///
+/// Continuation positions are reserved.
+///
+/// ```compile_fail
+/// # use finfmt::*;
+/// # use finfmt::bitmap::BitmapLayout;
+/// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
+/// # struct Record { value: String }
+/// bitmap_format! { struct Format for Record, BitmapLayout::iso(1, 2), Field<Binary<8, 8>, Fixed<8>> {
+///     65 => value: A2,
+/// } }
+/// ```
+///
+/// A header cannot be omitted through container presence syntax.
+///
+/// ```compile_fail
+/// # use finfmt::*;
+/// # use finfmt::bitmap::BitmapLayout;
+/// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
+/// # struct Record { value: Option<String> }
+/// bitmap_format! { struct Format for Record, BitmapLayout::fixed(1), Field<Binary<8, 8>, Fixed<8>> {
+///     head: { value: Option<A2>, }
+/// } }
+/// ```
 #[macro_export]
 macro_rules! bitmap_format {
     (
@@ -207,7 +318,7 @@ macro_rules! bitmap_format {
             $($fields:tt)*
         }
     ) => {
-        $crate::__finfmt_bitmap_assert_ascending_fields!($($fields)*);
+        $crate::__finfmt_bitmap_assert_fields!($layout, $bitmap_word; $($fields)*);
 
         $(#[$attr])*
         $vis struct $name;
@@ -253,7 +364,7 @@ macro_rules! bitmap_format {
             $($fields:tt)*
         }
     ) => {
-        $crate::__finfmt_bitmap_assert_ascending_fields!($($fields)*);
+        $crate::__finfmt_bitmap_assert_fields!($layout, $bitmap_word; $($fields)*);
 
         $(#[$attr])*
         $vis struct $name;
@@ -315,6 +426,7 @@ macro_rules! __finfmt_bitmap_decode_construct_as {
 macro_rules! __finfmt_bitmap_decode_head_build {
     ($input:expr, $scratch:expr, $layout:expr, $bitmap_word:ty, $result_ty:ty, $ctor:path; [$($built:tt)*]; { } $($fields:tt)*) => {{
         let bitmap = $crate::bitmap::decode_bitmap::<$bitmap_word>($input, &mut **$scratch, $layout).map_err($crate::CompositeError::from)?;
+        $crate::__finfmt_bitmap_reject_unknown!(bitmap; $($fields)*);
         $crate::__finfmt_bitmap_decode_body_build!(bitmap, $input, $scratch, $result_ty, $ctor; [$($built)*]; $($fields)*)
     }};
     ($input:expr, $scratch:expr, $layout:expr, $bitmap_word:ty, $result_ty:ty, $ctor:path; [$($built:tt)*]; { _: $fmt:ty = $bytes:expr $(, $($rest:tt)*)? } $($fields:tt)*) => {{
@@ -322,90 +434,8 @@ macro_rules! __finfmt_bitmap_decode_head_build {
         $crate::composite::decode_literal::<$fmt>($input, $scratch, expected).map_err($crate::CompositeError::from)?;
         $crate::__finfmt_bitmap_decode_head_build!($input, $scratch, $layout, $bitmap_word, $result_ty, $ctor; [$($built)*]; { $($($rest)*)? } $($fields)*)
     }};
-    ($input:expr, $scratch:expr, $layout:expr, $bitmap_word:ty, $result_ty:ty, $ctor:path; [$($built:tt)*]; { $field:ident : Option<Composite<$fmt:ty>> $(, $($rest:tt)*)? } $($fields:tt)*) => {{
-        let $field = Some(
-            <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch)
-                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
-        );
-        $crate::__finfmt_bitmap_decode_head_build!(
-            $input,
-            $scratch,
-            $layout,
-            $bitmap_word,
-            $result_ty,
-            $ctor;
-            [$($built)* $field: $field,];
-            { $($($rest)*)? }
-            $($fields)*
-        )
-    }};
-    ($input:expr, $scratch:expr, $layout:expr, $bitmap_word:ty, $result_ty:ty, $ctor:path; [$($built:tt)*]; { $field:ident : Option<Composite<$fmt:ty> > $(, $($rest:tt)*)? } $($fields:tt)*) => {{
-        let $field = Some(
-            <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch)
-                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
-        );
-        $crate::__finfmt_bitmap_decode_head_build!(
-            $input,
-            $scratch,
-            $layout,
-            $bitmap_word,
-            $result_ty,
-            $ctor;
-            [$($built)* $field: $field,];
-            { $($($rest)*)? }
-            $($fields)*
-        )
-    }};
-    ($input:expr, $scratch:expr, $layout:expr, $bitmap_word:ty, $result_ty:ty, $ctor:path; [$($built:tt)*]; { $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>> $(, $($rest:tt)*)? } $($fields:tt)*) => {{
-        let $field = Some(
-            <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch)
-                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
-        );
-        $crate::__finfmt_bitmap_decode_head_build!(
-            $input,
-            $scratch,
-            $layout,
-            $bitmap_word,
-            $result_ty,
-            $ctor;
-            [$($built)* $field: $field,];
-            { $($($rest)*)? }
-            $($fields)*
-        )
-    }};
-    ($input:expr, $scratch:expr, $layout:expr, $bitmap_word:ty, $result_ty:ty, $ctor:path; [$($built:tt)*]; { $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> > $(, $($rest:tt)*)? } $($fields:tt)*) => {{
-        let $field = Some(
-            <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch)
-                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
-        );
-        $crate::__finfmt_bitmap_decode_head_build!(
-            $input,
-            $scratch,
-            $layout,
-            $bitmap_word,
-            $result_ty,
-            $ctor;
-            [$($built)* $field: $field,];
-            { $($($rest)*)? }
-            $($fields)*
-        )
-    }};
     ($input:expr, $scratch:expr, $layout:expr, $bitmap_word:ty, $result_ty:ty, $ctor:path; [$($built:tt)*]; { $field:ident : Option<$fmt:ty> $(, $($rest:tt)*)? } $($fields:tt)*) => {{
-        let $field = Some(
-            $crate::composite::decode_serde_scalar::<_, $fmt>($input, $scratch)
-                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
-        );
-        $crate::__finfmt_bitmap_decode_head_build!(
-            $input,
-            $scratch,
-            $layout,
-            $bitmap_word,
-            $result_ty,
-            $ctor;
-            [$($built)* $field: $field,];
-            { $($($rest)*)? }
-            $($fields)*
-        )
+        compile_error!("bitmap head fields cannot use container Option; use an explicit OptionalAbsent format");
     }};
     ($input:expr, $scratch:expr, $layout:expr, $bitmap_word:ty, $result_ty:ty, $ctor:path; [$($built:tt)*]; { $field:ident : Composite<$fmt:ty> $(, $($rest:tt)*)? } $($fields:tt)*) => {{
         let $field = <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch)

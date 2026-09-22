@@ -1437,6 +1437,59 @@ mod tests {
     }
 
     #[test]
+    fn test_bitmap_declared_fields() {
+        use crate::bitmap::{Bitmap, BitmapLayout};
+        #[derive(Debug, PartialEq)]
+        struct Record {
+            low: Option<String>,
+            middle: Option<String>,
+            high: Option<String>,
+        }
+        crate::bitmap_format! { struct Format for Record, BitmapLayout::fixed(3), BitmapBinaryWord {
+            3 => low: Option<A2>, 97 => middle: Option<A2>, 192 => high: Option<A2>,
+        } }
+        crate::__finfmt_bitmap_assert_fields!(BitmapLayout::fixed(2), BitmapBinaryHalfWord;
+            1 => first: A2, 32 => second: A2, 65 => third: A2, 96 => fourth: A2);
+        let mut output = [0; 32];
+        let mut scratch = [0; 16];
+        for id in 1..=192 {
+            if [3, 97, 192].contains(&id) {
+                continue;
+            }
+            for known in [false, true] {
+                let mut bitmap = Bitmap::new();
+                bitmap.set(id, true);
+                bitmap.set(3, known);
+                let mut out = output.as_mut_slice();
+                crate::bitmap::encode_bitmap::<BitmapBinaryWord>(&mut out, &mut scratch, &bitmap, BitmapLayout::fixed(3)).unwrap();
+                copy_bytes(&mut out, b"XY").unwrap();
+                let mut input = &output[..26];
+                assert_eq!(
+                    error_kind(Format::decode(&mut input, &mut scratch)),
+                    Err(Error::Invalid),
+                    "field {id}"
+                );
+                assert_eq!(input, b"XY");
+            }
+        }
+        for mask in 0..8 {
+            let value = Record {
+                low: (mask & 1 != 0).then(|| "AB".into()),
+                middle: (mask & 2 != 0).then(|| "CD".into()),
+                high: (mask & 4 != 0).then(|| "EF".into()),
+            };
+            let used = {
+                let mut out = output.as_mut_slice();
+                Format::encode(&mut out, &mut scratch, &value).unwrap();
+                32 - out.len()
+            };
+            let mut input = &output[..used];
+            assert_eq!(Format::decode(&mut input, &mut scratch).unwrap(), value);
+            assert!(input.is_empty());
+        }
+    }
+
+    #[test]
     fn test_local_bitmap_roundtrip() {
         let value = LocalBitmapData {
             a: Some("12".into()),
