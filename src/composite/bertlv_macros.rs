@@ -370,6 +370,12 @@ macro_rules! __finfmt_ber_tlv_decode_construct_as {
 }
 
 #[macro_export]
+#[doc(hidden)]
+macro_rules! __finfmt_ber_tlv_known_tags {
+    ($($tag:expr => $field:ident : $fmt:ty),* $(,)?) => { &[$($tag),*] };
+}
+
+#[macro_export]
 macro_rules! ber_tlv_format {
     (
         $(#[$attr:meta])*
@@ -387,7 +393,7 @@ macro_rules! ber_tlv_format {
             #[inline(always)]
             fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_encode_fields!(value, output, scratch; $($fields)*);
-                $crate::composite::BerTlvExtras::encode_unknowns(&value.$extras, output, scratch)
+                $crate::composite::BerTlvExtras::encode_unknowns(&value.$extras, output, scratch, $crate::__finfmt_ber_tlv_known_tags!($($fields)*))
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($extras)))?;
                 Ok(())
             }
@@ -438,7 +444,7 @@ macro_rules! ber_tlv_format {
             #[inline(always)]
             fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_encode_fields!(value, output, scratch; $($fields)*);
-                $crate::composite::BerTlvExtras::encode_unknowns(&value.$extras, output, scratch)
+                $crate::composite::BerTlvExtras::encode_unknowns(&value.$extras, output, scratch, $crate::__finfmt_ber_tlv_known_tags!($($fields)*))
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($extras)))?;
                 Ok(())
             }

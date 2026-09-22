@@ -1980,6 +1980,34 @@ mod tests {
     }
 
     #[test]
+    fn test_ber_tlv_extras_reject_declared_tags() {
+        #[derive(Serialize, Deserialize)]
+        struct Record {
+            code: Option<String>,
+            #[serde(flatten)]
+            extras: BTreeMap<String, String>,
+        }
+        #[derive(Serialize)]
+        struct BorrowedRecord<'a> {
+            code: Option<&'a str>,
+            extras: BTreeMap<String, String>,
+        }
+        crate::ber_tlv_format! { struct Fmt for Record { extras: extras, "59" => code: Option<A4>, } }
+        crate::ber_tlv_format! { struct BorrowedFmt for<'a> BorrowedRecord<'a> { extras: extras, "59" => code: Option<A4>, } }
+
+        for json in [r#"{"code":"ABCD","t59_unknown":"5758595A"}"#, r#"{"t59_unknown":"5758595A"}"#] {
+            let value: Record = serde_json::from_str(json).unwrap();
+            let borrowed = BorrowedRecord {
+                code: value.code.as_deref(),
+                extras: value.extras.clone(),
+            };
+            let expected = CompositeError::from(Error::Invalid).with_field("extras");
+            assert_eq!(Fmt::encode(&mut [0; 32].as_mut_slice(), &mut [], &value), Err(expected));
+            assert_eq!(BorrowedFmt::encode(&mut [0; 32].as_mut_slice(), &mut [], &borrowed), Err(expected));
+        }
+    }
+
+    #[test]
     fn test_ber_tlv_extras_duplicate_unknown_rejected_for_map() {
         let bytes = b"\x9F\x02\x01\x01\x9F\x02\x01\x02";
         let mut input = &bytes[..];
@@ -2267,7 +2295,9 @@ pub trait ListSeparatorPolicy {
 }
 
 pub trait BerTlvExtras {
-    fn encode_unknowns(&self, output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error>;
+    /// Encode extras, rejecting tags declared in `known_tags`, even if their fields are absent.
+    /// The declarations use uppercase tag hex; pass an empty slice for standalone extras.
+    fn encode_unknowns(&self, output: &mut &mut [u8], scratch: &mut &mut [u8], known_tags: &[&str]) -> Result<(), Error>;
     fn decode_unknown(&mut self, tag: &[u8], value: &[u8], scratch: &mut &mut [u8]) -> Result<(), Error>;
 }
 

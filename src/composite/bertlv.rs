@@ -23,8 +23,13 @@ where
 }
 
 #[inline(always)]
-fn encode_unknown_entry<K: AsRef<str> + ?Sized, V: AsRef<str> + ?Sized>(output: &mut &mut [u8], key: &K, value: &V) -> Result<(), Error> {
-    encode_unknown_tlv_from_key(output, key.as_ref(), value.as_ref())
+fn encode_unknown_entry<K: AsRef<str> + ?Sized, V: AsRef<str> + ?Sized>(
+    output: &mut &mut [u8],
+    key: &K,
+    value: &V,
+    known_tags: &[&str],
+) -> Result<(), Error> {
+    encode_unknown_tlv_from_key(output, key.as_ref(), value.as_ref(), known_tags)
 }
 
 impl<T, K, V> BerTlvExtras for T
@@ -35,9 +40,9 @@ where
     V: AsRef<str> + FromStr,
 {
     #[inline(always)]
-    fn encode_unknowns(&self, output: &mut &mut [u8], _scratch: &mut &mut [u8]) -> Result<(), Error> {
+    fn encode_unknowns(&self, output: &mut &mut [u8], _scratch: &mut &mut [u8], known_tags: &[&str]) -> Result<(), Error> {
         for (key, value) in self {
-            encode_unknown_entry(output, key, value)?;
+            encode_unknown_entry(output, key, value, known_tags)?;
         }
         Ok(())
     }

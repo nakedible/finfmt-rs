@@ -283,12 +283,21 @@ pub(crate) fn parse_unknown_tag_key(key: &str) -> Result<([u8; MAX_BER_TAG_BYTES
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub(crate) fn encode_unknown_tlv_from_key(output: &mut &mut [u8], key: &str, value: &str) -> Result<(), Error> {
+pub(crate) fn encode_unknown_tlv_from_key(output: &mut &mut [u8], key: &str, value: &str, known_tags: &[&str]) -> Result<(), Error> {
     let (tag_bytes, tag_len) = parse_unknown_tag_key(key)?;
     let tag = tag_bytes.get(..tag_len).ok_or_else(|| {
         cold_path();
         Error::Internal
     })?;
+    for known in known_tags {
+        if ber_tag_matches_hex(tag, known).map_err(|_| {
+            cold_path();
+            Error::Internal
+        })? {
+            cold_path();
+            return Err(Error::Invalid);
+        }
+    }
     encode_unknown_tlv_from_tag(output, tag, value)
 }
 
@@ -614,7 +623,7 @@ mod tests {
             let mut storage = vec![0xEE; total + 1];
             for capacity in [0, 1, 2, total - 1, total, total + 1] {
                 let mut output = &mut storage[..capacity];
-                let result = encode_unknown_tlv_from_key(&mut output, "t9F02_unknown", &value);
+                let result = encode_unknown_tlv_from_key(&mut output, "t9F02_unknown", &value, &[]);
                 if capacity < total {
                     assert_eq!(result, Err(Error::BufferOverflow));
                 } else {
@@ -641,13 +650,16 @@ mod tests {
             "t9F02",
             "9F02_unknown",
         ] {
-            assert_eq!(encode_unknown_tlv_from_key(&mut &mut output[..], key, ""), Err(Error::Invalid));
+            assert_eq!(encode_unknown_tlv_from_key(&mut &mut output[..], key, "", &[]), Err(Error::Invalid));
         }
         for (value, error) in [("aB", Error::Invalid), ("GG", Error::Invalid), ("A", Error::Invalid)] {
-            assert_eq!(encode_unknown_tlv_from_key(&mut &mut output[..], "t5A_unknown", value), Err(error));
+            assert_eq!(
+                encode_unknown_tlv_from_key(&mut &mut output[..], "t5A_unknown", value, &[]),
+                Err(error)
+            );
         }
         assert_eq!(
-            encode_unknown_tlv_from_key(&mut &mut [][..], "t5A_unknown", &"00".repeat(MAX_BER_VALUE_LEN + 1)),
+            encode_unknown_tlv_from_key(&mut &mut [][..], "t5A_unknown", &"00".repeat(MAX_BER_VALUE_LEN + 1), &[]),
             Err(Error::Invalid)
         );
     }
