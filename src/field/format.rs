@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 
 use super::{Check, LengthSpec, Step};
-use crate::primitive::bytes::{decode_padded_bytes, reserve_filled_area};
+use crate::primitive::bytes::{decode_padded_bytes, reserve_filled_area, take_bytes};
 use crate::utils::cold_path;
 use crate::{Error, ScalarFmt};
 
@@ -33,10 +33,7 @@ impl<C: Check, L: LengthSpec<S>, S: Step> ScalarFmt for Field<C, L, S> {
 
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
         let plan = L::decode_plan(input, scratch)?;
-        let wire = input.split_off(..plan.wire_len).ok_or_else(|| {
-            cold_path();
-            Error::UnexpectedEof
-        })?;
+        let wire = take_bytes(input, plan.wire_len)?;
         let semantic = S::decode(wire, scratch, plan.semantic_len)?;
         let semantic_len = C::validate(semantic)?;
         if let Some(expected_len) = plan.semantic_len

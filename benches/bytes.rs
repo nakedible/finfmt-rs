@@ -39,10 +39,19 @@ fn bench_bytes(suite: &mut Suite) {
             })
         });
 
-        group.bench("decode_exact_bytes_8", |b| {
+        group.bench("take_bytes_8", |b| {
             b.iter(|| {
                 let mut input = black_box(INPUT_8);
-                black_box(decode_exact_bytes_8(&mut input))
+                black_box(take_bytes_8(&mut input))
+            })
+        });
+
+        group.bench("reserve_bytes_8", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 8];
+                let mut out = &mut buf[..];
+                let _ = black_box(reserve_bytes_8(&mut out)).map(|area| area.fill(1));
+                black_box(buf)
             })
         });
 

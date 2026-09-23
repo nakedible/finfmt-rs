@@ -14,13 +14,30 @@ pub fn validate_exact_length(input: &[u8], len: usize) -> Result<(), Error> {
     Ok(())
 }
 
+/// Reserve the next `len` output bytes, advancing the cursor past them.
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub fn reserve_bytes<'a>(output: &mut &'a mut [u8], len: usize) -> Result<&'a mut [u8], Error> {
+    output.split_off_mut(..len).ok_or_else(|| {
+        cold_path();
+        Error::BufferOverflow
+    })
+}
+
+/// Take the next `len` input bytes, advancing the cursor past them.
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub fn take_bytes<'a>(input: &mut &'a [u8], len: usize) -> Result<&'a [u8], Error> {
+    input.split_off(..len).ok_or_else(|| {
+        cold_path();
+        Error::UnexpectedEof
+    })
+}
+
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn copy_bytes<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-    let buf = output.split_off_mut(..input.len()).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
+    let buf = reserve_bytes(output, input.len())?;
     buf.copy_from_slice(input);
     Ok(buf)
 }
@@ -31,15 +48,6 @@ pub fn encode_exact_bytes(output: &mut &mut [u8], input: &[u8], len: usize) -> R
     validate_exact_length(input, len)?;
     let _ = copy_bytes(output, input)?;
     Ok(())
-}
-
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn decode_exact_bytes<'a>(input: &mut &'a [u8], len: usize) -> Result<&'a [u8], Error> {
-    input.split_off(..len).ok_or_else(|| {
-        cold_path();
-        Error::UnexpectedEof
-    })
 }
 
 #[inline(always)]
@@ -155,8 +163,8 @@ pub fn split_delimited_bytes<'a>(input: &mut &'a [u8], separator: u8) -> (&'a [u
 #[cfg(test)]
 mod tests {
     use super::{
-        all_bytes_eq, contains_byte, copy_bytes, decode_exact_bytes, decode_padded_bytes, encode_exact_bytes, fill_repeated_block,
-        fill_tail, reserve_filled_area, split_delimited_bytes, validate_exact_length, validate_repeated_block,
+        all_bytes_eq, contains_byte, copy_bytes, decode_padded_bytes, encode_exact_bytes, fill_repeated_block, fill_tail,
+        reserve_filled_area, split_delimited_bytes, take_bytes, validate_exact_length, validate_repeated_block,
     };
     use crate::Error;
 
@@ -169,7 +177,7 @@ mod tests {
 
     fn decode(input: &[u8], len: usize) -> Result<Vec<u8>, Error> {
         let mut input = input;
-        Ok(decode_exact_bytes(&mut input, len)?.to_vec())
+        Ok(take_bytes(&mut input, len)?.to_vec())
     }
 
     fn copy<const N: usize>(input: &[u8]) -> Result<[u8; N], Error> {

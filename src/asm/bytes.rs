@@ -1,7 +1,7 @@
 use crate::Error;
 use crate::primitive::bytes::{
-    all_bytes_eq, contains_byte, copy_bytes, decode_exact_bytes, decode_padded_bytes, encode_exact_bytes, fill_repeated_block, fill_tail,
-    reserve_filled_area, split_delimited_bytes, validate_exact_length, validate_repeated_block,
+    all_bytes_eq, contains_byte, copy_bytes, decode_padded_bytes, encode_exact_bytes, fill_repeated_block, fill_tail, reserve_bytes,
+    reserve_filled_area, split_delimited_bytes, take_bytes, validate_exact_length, validate_repeated_block,
 };
 
 #[inline(never)]
@@ -20,8 +20,13 @@ pub fn encode_exact_bytes_8(output: &mut &mut [u8], input: &[u8]) -> Result<(), 
 }
 
 #[inline(never)]
-pub fn decode_exact_bytes_8<'a>(input: &mut &'a [u8]) -> Result<&'a [u8], Error> {
-    decode_exact_bytes(input, 8)
+pub fn take_bytes_8<'a>(input: &mut &'a [u8]) -> Result<&'a [u8], Error> {
+    take_bytes(input, 8)
+}
+
+#[inline(never)]
+pub fn reserve_bytes_8<'a>(output: &mut &'a mut [u8]) -> Result<&'a mut [u8], Error> {
+    reserve_bytes(output, 8)
 }
 
 #[inline(never)]

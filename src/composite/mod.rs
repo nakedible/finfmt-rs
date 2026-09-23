@@ -18,8 +18,8 @@
 
 use core::marker::PhantomData;
 
-use crate::primitive::bytes::{contains_byte, copy_bytes, split_delimited_bytes};
-use crate::utils::{split_scratch, take_scratch};
+use crate::primitive::bytes::{contains_byte, copy_bytes, reserve_bytes, split_delimited_bytes};
+use crate::utils::split_scratch;
 use crate::{CompositeError, Error, ScalarFmt};
 
 /// Encode/decode a structured value.
@@ -79,7 +79,7 @@ pub trait AbsentFmt {
     #[inline(always)]
     fn is_absent(input: &[u8], scratch: &mut &mut [u8]) -> Result<bool, Error> {
         let mut workspace = &mut **scratch;
-        let absent = take_scratch(&mut workspace, input.len())?;
+        let absent = reserve_bytes(&mut workspace, input.len())?;
         let mut absent_out = &mut absent[..];
         Self::encode_absent(&mut absent_out, workspace)?;
         if !absent_out.is_empty() {

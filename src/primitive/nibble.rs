@@ -2,6 +2,7 @@
 use no_panic::no_panic;
 
 use crate::Error;
+use crate::primitive::bytes::reserve_bytes;
 use crate::utils::cold_path;
 
 const fn nibbles_from_digits(digits: &[u8; 16]) -> [u8; 256] {
@@ -88,10 +89,7 @@ pub fn pack_nibbles<'a>(
 ) -> Result<&'a mut [u8], Error> {
     let input = input.as_ref();
     debug_assert!(padding < 16, "Invalid padding nibble for packing");
-    let buf = output.split_off_mut(..input.len().div_ceil(2)).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
+    let buf = reserve_bytes(output, input.len().div_ceil(2))?;
     if input.len() % 2 == 0 {
         pack_nibbles_exact(buf, input, digit_table);
     } else if align_right {
@@ -157,10 +155,7 @@ pub fn pack_expanded_nibbles<'a>(
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn unpack_nibbles<'a>(output: &mut &'a mut [u8], input: impl AsRef<[u8]>, digits: &[u8; 16]) -> Result<&'a mut [u8], Error> {
     let input = input.as_ref();
-    let buf = output.split_off_mut(..input.len() * 2).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
+    let buf = reserve_bytes(output, input.len() * 2)?;
     unpack_nibbles_exact(buf, input, digits);
     Ok(buf)
 }
@@ -183,10 +178,7 @@ pub fn unpack_padded_nibbles<'a>(
         cold_path();
         return Err(Error::Invalid);
     }
-    let buf = output.split_off_mut(..output_len).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
+    let buf = reserve_bytes(output, output_len)?;
     if output_len.is_multiple_of(2) {
         unpack_nibbles_exact(buf, input, digits);
     } else if align_right {

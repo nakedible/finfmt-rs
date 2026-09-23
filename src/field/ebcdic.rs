@@ -1,4 +1,4 @@
-use crate::primitive::bytes::copy_bytes;
+use crate::primitive::bytes::{copy_bytes, reserve_bytes};
 use crate::primitive::ebcdic::{
     ASCII_TO_EBCDIC_037, EBCDIC_037_TO_ASCII, decode_ebcdic_1142, encode_ebcdic_1142_validated, translate_bytes, translate_bytes_inplace,
 };
@@ -48,10 +48,7 @@ impl Step for Ebcdic037 {
             cold_path();
             return Err(Error::Invalid);
         }
-        let buf = scratch.split_off_mut(..input.len()).ok_or_else(|| {
-            cold_path();
-            Error::BufferOverflow
-        })?;
+        let buf = reserve_bytes(scratch, input.len())?;
         translate_bytes(buf, input, &EBCDIC_037_TO_ASCII)?;
         Ok(buf)
     }

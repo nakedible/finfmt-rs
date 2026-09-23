@@ -2,6 +2,7 @@
 use no_panic::no_panic;
 
 use crate::Error;
+use crate::primitive::bytes::reserve_bytes;
 use crate::utils::cold_path;
 
 /// ASCII to EBCDIC conversion table (IBM Code Page 037).
@@ -148,10 +149,7 @@ pub fn encode_ebcdic_1142_char(ch: char) -> Option<u8> {
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn encode_ebcdic_1142<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
     if input.is_ascii() {
-        let buf = output.split_off_mut(..input.len()).ok_or_else(|| {
-            cold_path();
-            Error::BufferOverflow
-        })?;
+        let buf = reserve_bytes(output, input.len())?;
         translate_bytes(buf, input, &LATIN1_TO_EBCDIC_1142)?;
         return Ok(buf);
     }
@@ -164,10 +162,7 @@ pub fn encode_ebcdic_1142<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub(crate) fn encode_ebcdic_1142_validated<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
     if input.is_ascii() {
-        let buf = output.split_off_mut(..input.len()).ok_or_else(|| {
-            cold_path();
-            Error::BufferOverflow
-        })?;
+        let buf = reserve_bytes(output, input.len())?;
         translate_bytes(buf, input, &LATIN1_TO_EBCDIC_1142)?;
         return Ok(buf);
     }
@@ -203,10 +198,7 @@ fn encode_ebcdic_1142_validated_slow<'a>(output: &mut &'a mut [u8], input: &[u8]
         *dest = byte;
         used += 1;
     }
-    output.split_off_mut(..used).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })
+    reserve_bytes(output, used)
 }
 
 /// Decode IBM1142 bytes into UTF-8.
@@ -221,10 +213,7 @@ pub fn decode_ebcdic_1142<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result
         }
     }
     if all_ascii {
-        let buf = output.split_off_mut(..input.len()).ok_or_else(|| {
-            cold_path();
-            Error::BufferOverflow
-        })?;
+        let buf = reserve_bytes(output, input.len())?;
         for (dst, &src) in buf.iter_mut().zip(input) {
             *dst = EBCDIC_1142_TO_ASCII_SUBSET[src as usize];
         }
@@ -249,10 +238,7 @@ fn encode_ebcdic_1142_slow<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Resul
         }
         char_len += 1;
     }
-    let buf = output.split_off_mut(..char_len).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
+    let buf = reserve_bytes(output, char_len)?;
     for (dst, ch) in buf.iter_mut().zip(text.chars()) {
         *dst = encode_ebcdic_1142_char(ch).ok_or_else(|| {
             cold_path();
@@ -286,10 +272,7 @@ fn decode_ebcdic_1142_slow<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Resul
         used = end;
         i += 1;
     }
-    output.split_off_mut(..used).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })
+    reserve_bytes(output, used)
 }
 
 #[cfg(test)]

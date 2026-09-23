@@ -2,6 +2,7 @@
 use no_panic::no_panic;
 
 use crate::Error;
+use crate::primitive::bytes::reserve_bytes;
 use crate::utils::cold_path;
 
 /// Encode all input bytes, padding to at least `pad_to` bytes. Right alignment
@@ -17,10 +18,7 @@ pub fn encode_bytes<'a>(
     align_right: bool,
     padding: u8,
 ) -> Result<&'a mut [u8], Error> {
-    let buf = output.split_off_mut(..input.len().max(pad_to)).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
+    let buf = reserve_bytes(output, input.len().max(pad_to))?;
     let pad_len = pad_to.saturating_sub(input.len());
     if align_right {
         for byte in buf.iter_mut().take(pad_len) {
@@ -127,7 +125,7 @@ pub fn decode_ascii(input: &[u8], min_len: usize, align_right: bool, padding: u8
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::primitive::bytes::decode_exact_bytes;
+    use crate::primitive::bytes::take_bytes;
 
     #[test]
     fn text_truncation_uses_byte_boundaries() {
@@ -222,10 +220,10 @@ mod tests {
     #[test]
     fn test_explicit_framing() {
         let mut input = b"Hi   tail".as_slice();
-        let field = decode_exact_bytes(&mut input, 5).unwrap();
+        let field = take_bytes(&mut input, 5).unwrap();
         assert_eq!(decode_bytes(field, 0, false, b' '), b"Hi");
         assert_eq!(input, b"tail");
-        assert_eq!(decode_exact_bytes(&mut input, 5), Err(Error::UnexpectedEof));
+        assert_eq!(take_bytes(&mut input, 5), Err(Error::UnexpectedEof));
         assert_eq!(input, b"tail");
     }
 

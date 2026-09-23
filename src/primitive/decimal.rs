@@ -2,7 +2,7 @@
 use no_panic::no_panic;
 
 use crate::Error;
-use crate::primitive::bytes::all_bytes_eq;
+use crate::primitive::bytes::{all_bytes_eq, reserve_bytes, take_bytes};
 use crate::primitive::ebcdic::{EBCDIC_037_TO_ASCII, translate_bytes};
 use crate::primitive::int::decode_signed_magnitude_i64;
 use crate::primitive::nibble::{Bcdz, NibbleAlphabet, pack_nibbles, unpack_padded_nibbles};
@@ -185,10 +185,7 @@ pub fn format_i64(output: &mut [u8; MAX_INTEGER_TEXT_LEN], value: i64) -> &[u8] 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_sign(input: &mut &[u8], pos: u8, neg: u8) -> Result<bool, Error> {
-    let sign = input.split_off(..1).ok_or_else(|| {
-        cold_path();
-        Error::UnexpectedEof
-    })?[0];
+    let sign = take_bytes(input, 1)?[0];
     match sign {
         s if s == pos => Ok(false),
         s if s == neg => Ok(true),
@@ -202,10 +199,7 @@ pub fn decode_sign(input: &mut &[u8], pos: u8, neg: u8) -> Result<bool, Error> {
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn encode_sign(output: &mut &mut [u8], negative: bool, pos: u8, neg: u8) -> Result<(), Error> {
-    let sign = output.split_off_mut(..1).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
+    let sign = reserve_bytes(output, 1)?;
     sign[0] = if negative { neg } else { pos };
     Ok(())
 }
@@ -216,10 +210,7 @@ pub fn encode_negative_prefix(output: &mut &mut [u8], negative: bool, neg: u8) -
     if !negative {
         return Ok(());
     }
-    let sign = output.split_off_mut(..1).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
+    let sign = reserve_bytes(output, 1)?;
     sign[0] = neg;
     Ok(())
 }
@@ -244,10 +235,7 @@ pub fn prepend_minus<'a>(output: &mut &'a mut [u8], digits: &[u8]) -> Result<&'a
         cold_path();
         Error::BufferOverflow
     })?;
-    let buf = output.split_off_mut(..len).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
+    let buf = reserve_bytes(output, len)?;
     let (sign, out) = buf.split_at_mut(1);
     sign[0] = b'-';
     out.copy_from_slice(digits);
@@ -264,10 +252,7 @@ pub fn encode_decimal_implied<'a>(
     signed: bool,
 ) -> Result<&'a mut [u8], Error> {
     let (negative, out_len, significant) = analyze_scaled_decimal(input, scale, max_digits, signed)?;
-    let buf = output.split_off_mut(..out_len).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
+    let buf = reserve_bytes(output, out_len)?;
     let mut out = buf.iter_mut();
     for sign in out.by_ref().take(usize::from(negative)) {
         *sign = b'-';
@@ -323,10 +308,7 @@ pub(crate) fn decode_decimal_implied_digits<'a>(
             cold_path();
             Error::Internal
         })?;
-    let buf = output.split_off_mut(..out_len).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
+    let buf = reserve_bytes(output, out_len)?;
     let mut out = buf.iter_mut();
     for sign in out.by_ref().take(usize::from(negative)) {
         *sign = b'-';
@@ -408,10 +390,7 @@ pub fn packed_decimal_max_digits(bytes_len: usize) -> Result<usize, Error> {
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub(crate) fn encode_ebcdic_zoned_digits(output: &mut &mut [u8], digits: &[u8], negative: bool, len: usize) -> Result<(), Error> {
-    let output = output.split_off_mut(..len).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
+    let output = reserve_bytes(output, len)?;
     debug_assert!(validate_numeric(digits, 1, usize::MAX).is_ok());
     if digits.len() > output.len() {
         cold_path();
@@ -439,10 +418,7 @@ pub(crate) fn encode_decimal_packed_digits(
     signed: bool,
     len: usize,
 ) -> Result<(), Error> {
-    let output = output.split_off_mut(..len).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
+    let output = reserve_bytes(output, len)?;
     debug_assert!(validate_numeric(digits, 1, usize::MAX).is_ok());
     if digits.len() > output.len().saturating_mul(2).saturating_sub(1) {
         cold_path();
@@ -532,10 +508,7 @@ fn encode_decimal_fixed(output: &mut &mut [u8], mut value: usize, len: usize, ze
         cold_path();
         return Err(Error::Invalid);
     }
-    let buf = output.split_off_mut(..len).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
+    let buf = reserve_bytes(output, len)?;
     for byte in buf.iter_mut().rev() {
         *byte = zero + (value % 10) as u8;
         value /= 10;
@@ -547,10 +520,7 @@ fn encode_decimal_fixed(output: &mut &mut [u8], mut value: usize, len: usize, ze
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn encode_decimal_ebcdic_blank_zero_fixed(output: &mut &mut [u8], value: usize, len: usize) -> Result<(), Error> {
     if value == 0 {
-        let buf = output.split_off_mut(..len).ok_or_else(|| {
-            cold_path();
-            Error::BufferOverflow
-        })?;
+        let buf = reserve_bytes(output, len)?;
         buf.fill(0x40);
         return Ok(());
     }
@@ -571,10 +541,7 @@ pub fn decode_decimal_ebcdic_fixed(input: &mut &[u8], len: usize) -> Result<usiz
 
 #[inline(always)]
 fn decode_decimal_fixed(input: &mut &[u8], len: usize, zero: u8) -> Result<usize, Error> {
-    let bytes = input.split_off(..len).ok_or_else(|| {
-        cold_path();
-        Error::UnexpectedEof
-    })?;
+    let bytes = take_bytes(input, len)?;
     usize::try_from(parse_decimal_digits(bytes, zero)?).map_err(|_| {
         cold_path();
         Error::Invalid
@@ -584,10 +551,7 @@ fn decode_decimal_fixed(input: &mut &[u8], len: usize, zero: u8) -> Result<usize
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_decimal_ebcdic_blank_zero_fixed(input: &mut &[u8], len: usize) -> Result<usize, Error> {
-    let bytes = input.split_off(..len).ok_or_else(|| {
-        cold_path();
-        Error::UnexpectedEof
-    })?;
+    let bytes = take_bytes(input, len)?;
     if all_bytes_eq(bytes, 0x40) {
         return Ok(0);
     }
@@ -607,18 +571,12 @@ pub fn encode_ebcdic_zoned_decimal(output: &mut &mut [u8], input: &[u8], len: us
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_ebcdic_zoned_decimal<'a>(input: &mut &[u8], output: &mut &'a mut [u8], len: usize) -> Result<&'a mut [u8], Error> {
-    let input = input.split_off(..len).ok_or_else(|| {
-        cold_path();
-        Error::UnexpectedEof
-    })?;
+    let input = take_bytes(input, len)?;
     let Some((&last, body)) = input.split_last() else {
         cold_path();
         return Err(Error::Invalid);
     };
-    let buf = output.split_off_mut(..input.len() + 1).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
+    let buf = reserve_bytes(output, input.len() + 1)?;
     let (negative, last_digit) = decode_overpunch_digit(last)?;
     let [_, digits @ .., last_out] = &mut *buf else {
         cold_path();
@@ -656,10 +614,7 @@ fn decode_decimal_packed_common<'a>(input: &[u8], output: &mut &'a mut [u8], sig
         cold_path();
         return Err(Error::Invalid);
     };
-    let buf = output.split_off_mut(..input.len() * 2).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
+    let buf = reserve_bytes(output, input.len() * 2)?;
     let sign = last & 0x0F;
     let negative = decode_packed_sign(sign)?;
     if negative && !signed {
@@ -695,10 +650,7 @@ pub fn encode_decimal_packed_signed_fixed(output: &mut &mut [u8], input: &[u8], 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_decimal_packed_fixed<'a>(input: &mut &[u8], output: &mut &'a mut [u8], len: usize) -> Result<&'a mut [u8], Error> {
-    let input = input.split_off(..len).ok_or_else(|| {
-        cold_path();
-        Error::UnexpectedEof
-    })?;
+    let input = take_bytes(input, len)?;
     decode_decimal_packed_common(input, output, false)
 }
 
@@ -707,10 +659,7 @@ pub fn decode_decimal_packed_fixed<'a>(input: &mut &[u8], output: &mut &'a mut [
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_decimal_packed_signed_fixed<'a>(input: &mut &[u8], output: &mut &'a mut [u8], len: usize) -> Result<&'a mut [u8], Error> {
-    let input = input.split_off(..len).ok_or_else(|| {
-        cold_path();
-        Error::UnexpectedEof
-    })?;
+    let input = take_bytes(input, len)?;
     decode_decimal_packed_common(input, output, true)
 }
 

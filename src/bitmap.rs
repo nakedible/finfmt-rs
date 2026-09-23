@@ -242,8 +242,8 @@ mod tests {
         }
 
         fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
-            use crate::primitive::bytes::{copy_bytes, decode_exact_bytes};
-            let bytes = decode_exact_bytes(input, N)?;
+            use crate::primitive::bytes::{copy_bytes, take_bytes};
+            let bytes = take_bytes(input, N)?;
             Ok(copy_bytes(scratch, bytes)?)
         }
     }

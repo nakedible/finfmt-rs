@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 use core::mem::size_of;
 
-use crate::primitive::bytes::{decode_exact_bytes, encode_exact_bytes, validate_exact_length};
+use crate::primitive::bytes::{encode_exact_bytes, take_bytes, validate_exact_length};
 use crate::primitive::decimal::{
     decode_decimal_implied_digits, decode_decimal_packed_fixed, decode_decimal_packed_signed_fixed, decode_ebcdic_zoned_decimal,
     decode_negative_prefix, decode_sign, encode_decimal_implied, encode_decimal_packed_digits, encode_decimal_packed_fixed,
@@ -257,7 +257,7 @@ impl<F: NibbleAlphabet, const N: usize> ScalarFmt for FixedNibbleInt<F, N> {
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
-        let bytes = decode_exact_bytes(input, N)?;
+        let bytes = take_bytes(input, N)?;
         validate_nibble_int_fixed::<F>(bytes, N)?;
         Ok(bytes)
     }
@@ -323,7 +323,7 @@ impl<const N: usize> ScalarFmt for FixedBinaryBe<N> {
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
-        decode_exact_bytes(input, N)
+        take_bytes(input, N)
     }
 
     #[inline(always)]
@@ -387,7 +387,7 @@ impl<const N: usize> ScalarFmt for FixedSignedBinaryBe<N> {
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
-        decode_exact_bytes(input, N)
+        take_bytes(input, N)
     }
 
     #[inline(always)]

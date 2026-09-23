@@ -1,5 +1,5 @@
 use super::*;
-use crate::primitive::bytes::{all_bytes_eq, copy_bytes, fill_tail};
+use crate::primitive::bytes::{all_bytes_eq, copy_bytes, fill_tail, reserve_bytes, take_bytes};
 
 impl<T, F: ScalarFmt, S: CompositeFmt<T>> CompositeFmt<T> for Frame<F, S> {
     type Decoded<'de> = S::Decoded<'de>;
@@ -240,10 +240,7 @@ where
         }
 
         let full_len = trailing_body_len::<Tails, BASE_LEN>()?;
-        let body = input.split_off(..full_len).ok_or_else(|| {
-            crate::utils::cold_path();
-            CompositeError::from(Error::UnexpectedEof)
-        })?;
+        let body = take_bytes(input, full_len)?;
         let tails = body.get(BASE_LEN..).ok_or_else(|| {
             crate::utils::cold_path();
             CompositeError::from(Error::Internal)
@@ -269,10 +266,7 @@ where
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &Option<T>) -> Result<(), CompositeError> {
-        let area = output.split_off_mut(..N).ok_or_else(|| {
-            crate::utils::cold_path();
-            CompositeError::from(Error::BufferOverflow)
-        })?;
+        let area = reserve_bytes(output, N)?;
         let mut area_out = &mut area[..];
         match value {
             None => Absent::encode_absent(&mut area_out, scratch)?,
@@ -287,10 +281,7 @@ where
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
-        let area = input.split_off(..N).ok_or_else(|| {
-            crate::utils::cold_path();
-            CompositeError::from(Error::UnexpectedEof)
-        })?;
+        let area = take_bytes(input, N)?;
         if Absent::is_absent(area, scratch)? {
             return Ok(None);
         }

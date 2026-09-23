@@ -1,6 +1,6 @@
 use super::*;
 use crate::field::{Identity, LengthSpec};
-use crate::primitive::bytes::{contains_byte, fill_repeated_block, split_delimited_bytes};
+use crate::primitive::bytes::{contains_byte, fill_repeated_block, reserve_bytes, split_delimited_bytes, take_bytes};
 
 impl ListCountPolicy for () {
     const HAS_COUNT: bool = false;
@@ -288,10 +288,7 @@ where
         })?;
         Len::encode(output, scratch, logical_len, logical_len)?;
 
-        let area = output.split_off_mut(..area_len).ok_or_else(|| {
-            crate::utils::cold_path();
-            CompositeError::from(Error::BufferOverflow)
-        })?;
+        let area = reserve_bytes(output, area_len)?;
         let mut area_out = area;
         for (index, item) in value.iter().enumerate() {
             let slot = area_out.split_off_mut(..Slot::WIRE_LEN).ok_or_else(|| {
@@ -314,10 +311,7 @@ where
             return Err(Error::Invalid.into());
         }
 
-        let area = input.split_off(..area_len).ok_or_else(|| {
-            crate::utils::cold_path();
-            CompositeError::from(Error::UnexpectedEof)
-        })?;
+        let area = take_bytes(input, area_len)?;
         let count = logical_len / Slot::WIRE_LEN;
         let mut values = Vec::with_capacity(count);
         let mut slots = area;

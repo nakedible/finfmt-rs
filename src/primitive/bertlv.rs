@@ -2,7 +2,7 @@
 use no_panic::no_panic;
 
 use crate::Error;
-use crate::primitive::bytes::copy_bytes;
+use crate::primitive::bytes::{copy_bytes, reserve_bytes, take_bytes};
 use crate::primitive::nibble::{HexUpper, NibbleAlphabet, pack_expanded_nibbles};
 use crate::utils::cold_path;
 
@@ -52,22 +52,10 @@ pub fn encode_ber_tag<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_ber_tag<'a>(input: &mut &'a [u8]) -> Result<&'a [u8], Error> {
     match *input {
-        [a, ..] if *a & 0x1F != 0x1F => input.split_off(..1).ok_or_else(|| {
-            cold_path();
-            Error::UnexpectedEof
-        }),
-        [_, 0x01..=0x7F, ..] => input.split_off(..2).ok_or_else(|| {
-            cold_path();
-            Error::UnexpectedEof
-        }),
-        [_, 0x81..=0xFF, c, ..] if *c < 0x80 => input.split_off(..3).ok_or_else(|| {
-            cold_path();
-            Error::UnexpectedEof
-        }),
-        [_, 0x81..=0xFF, _, d, ..] if *d < 0x80 => input.split_off(..4).ok_or_else(|| {
-            cold_path();
-            Error::UnexpectedEof
-        }),
+        [a, ..] if *a & 0x1F != 0x1F => take_bytes(input, 1),
+        [_, 0x01..=0x7F, ..] => take_bytes(input, 2),
+        [_, 0x81..=0xFF, c, ..] if *c < 0x80 => take_bytes(input, 3),
+        [_, 0x81..=0xFF, _, d, ..] if *d < 0x80 => take_bytes(input, 4),
         [_, 0x00 | 0x80, ..] => {
             cold_path();
             Err(Error::Invalid)
@@ -128,10 +116,7 @@ pub fn encode_ber_length<'a>(output: &mut &'a mut [u8], input: usize) -> Result<
 pub fn decode_ber_length(input: &mut &[u8]) -> Result<usize, Error> {
     match *input {
         [a @ 0x00..=0x7F, ..] => {
-            input.split_off(..1).ok_or_else(|| {
-                cold_path();
-                Error::UnexpectedEof
-            })?;
+            take_bytes(input, 1)?;
             Ok(*a as usize)
         }
         _ => decode_ber_length_long(input),
@@ -214,10 +199,7 @@ pub fn encode_ber_tlv_in_place<'a>(output: &mut &'a mut [u8], tag: &[u8], value_
         cold_path();
         Error::BufferOverflow
     })?;
-    let entry = output.split_off_mut(..used).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
+    let entry = reserve_bytes(output, used)?;
     entry.copy_within(..value_len, head_len);
     let mut head = &mut entry[..head_len];
     encode_ber_tag(&mut head, tag)?;
@@ -246,10 +228,7 @@ pub fn decode_ber_tlv_entry<'a>(input: &mut &'a [u8]) -> Result<Option<BerTlvEnt
         return Err(Error::Invalid);
     }
     let len = decode_ber_length(input)?;
-    let value = input.split_off(..len).ok_or_else(|| {
-        cold_path();
-        Error::UnexpectedEof
-    })?;
+    let value = take_bytes(input, len)?;
     Ok(Some(BerTlvEntry { tag, value }))
 }
 
@@ -267,17 +246,11 @@ pub fn decode_ber_tlv_entry<'a>(input: &mut &'a [u8]) -> Result<Option<BerTlvEnt
 fn decode_ber_length_long(input: &mut &[u8]) -> Result<usize, Error> {
     match *input {
         [0x81, b, ..] => {
-            input.split_off(..2).ok_or_else(|| {
-                cold_path();
-                Error::UnexpectedEof
-            })?;
+            take_bytes(input, 2)?;
             Ok(*b as usize)
         }
         [0x82, b, c, ..] => {
-            input.split_off(..3).ok_or_else(|| {
-                cold_path();
-                Error::UnexpectedEof
-            })?;
+            take_bytes(input, 3)?;
             Ok(u16::from_be_bytes([*b, *c]) as usize)
         }
         [0x80, ..] | [0x83..=0xFF, ..] => {
