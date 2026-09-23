@@ -29,27 +29,15 @@ pub use types::{CompositeError, Error};
 
 #[doc(hidden)]
 pub mod __private {
-    use crate::{CompositeError, Error};
+    use crate::CompositeError;
 
     #[inline(always)]
     pub fn cold_path() {
         crate::utils::cold_path();
     }
 
-    #[inline(always)]
-    pub fn ber_length_width(len: usize) -> Result<usize, Error> {
-        crate::primitive::bertlv::ber_length_width(len)
-    }
 
-    #[inline(always)]
-    pub fn parse_ber_tag_hex(tag: &str) -> Result<([u8; crate::primitive::bertlv::MAX_BER_TAG_BYTES], usize), Error> {
-        crate::primitive::bertlv::parse_ber_tag_hex(tag)
-    }
 
-    #[inline(always)]
-    pub fn ber_tag_matches_hex(tag_bytes: &[u8], tag_hex: &str) -> Result<bool, Error> {
-        crate::primitive::bertlv::ber_tag_matches_hex(tag_bytes, tag_hex)
-    }
 
     #[inline(always)]
     pub fn decode_variant<'a, T, E, F, W>(input: &mut &'a [u8], scratch: &mut &'a mut [u8], wrap: W) -> Result<E, CompositeError>
