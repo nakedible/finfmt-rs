@@ -1,7 +1,5 @@
 use core::marker::PhantomData;
 
-use compact_str::CompactString;
-
 use super::*;
 
 /// Wrap a leaf [`ScalarFmt`] as a [`CompositeFmt`] using [`ScalarValue`].
@@ -41,18 +39,6 @@ impl ScalarValue for String {
     #[inline(always)]
     fn decode_with<'de, F: ScalarFmt>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self, Error> {
         Ok(F::decode_str(input, scratch)?.to_owned())
-    }
-}
-
-impl ScalarValue for CompactString {
-    #[inline(always)]
-    fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error> {
-        F::encode_str(output, scratch, self.as_str())
-    }
-
-    #[inline(always)]
-    fn decode_with<'de, F: ScalarFmt>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self, Error> {
-        Ok(CompactString::from(F::decode_str(input, scratch)?))
     }
 }
 
