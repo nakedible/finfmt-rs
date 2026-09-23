@@ -4,16 +4,6 @@ use no_panic::no_panic;
 use crate::Error;
 use crate::utils::cold_path;
 
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_exact_length(input: &[u8], len: usize) -> Result<(), Error> {
-    if input.len() != len {
-        cold_path();
-        return Err(Error::Invalid);
-    }
-    Ok(())
-}
-
 /// Reserve the next `len` output bytes, advancing the cursor past them.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
@@ -40,14 +30,6 @@ pub fn copy_bytes<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut
     let buf = reserve_bytes(output, input.len())?;
     buf.copy_from_slice(input);
     Ok(buf)
-}
-
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn encode_exact_bytes(output: &mut &mut [u8], input: &[u8], len: usize) -> Result<(), Error> {
-    validate_exact_length(input, len)?;
-    let _ = copy_bytes(output, input)?;
-    Ok(())
 }
 
 #[inline(always)]
@@ -163,17 +145,10 @@ pub fn split_delimited_bytes<'a>(input: &mut &'a [u8], separator: u8) -> (&'a [u
 #[cfg(test)]
 mod tests {
     use super::{
-        all_bytes_eq, contains_byte, copy_bytes, decode_padded_bytes, encode_exact_bytes, fill_repeated_block, fill_tail,
-        reserve_filled_area, split_delimited_bytes, take_bytes, validate_exact_length, validate_repeated_block,
+        all_bytes_eq, contains_byte, copy_bytes, decode_padded_bytes, fill_repeated_block, fill_tail, reserve_filled_area,
+        split_delimited_bytes, take_bytes, validate_repeated_block,
     };
     use crate::Error;
-
-    fn encode<const OUT: usize>(input: &[u8], len: usize) -> Result<[u8; OUT], Error> {
-        let mut output = [0u8; OUT];
-        let mut out_ptr = output.as_mut_slice();
-        encode_exact_bytes(&mut out_ptr, input, len)?;
-        Ok(output)
-    }
 
     fn decode(input: &[u8], len: usize) -> Result<Vec<u8>, Error> {
         let mut input = input;
@@ -213,13 +188,8 @@ mod tests {
 
     #[test]
     fn test_fixed_bytes_helpers() {
-        assert_eq!(validate_exact_length(b"\x12\x34", 2), Ok(()));
-        assert_eq!(validate_exact_length(b"\x12", 2), Err(Error::Invalid));
         assert_eq!(copy::<2>(b"\x12\x34"), Ok([0x12, 0x34]));
         assert_eq!(copy::<1>(b"\x12\x34"), Err(Error::BufferOverflow));
-        assert_eq!(encode::<2>(b"\x12\x34", 2), Ok([0x12, 0x34]));
-        assert_eq!(encode::<1>(b"\x12\x34", 2), Err(Error::BufferOverflow));
-        assert_eq!(encode::<2>(b"\x12", 2), Err(Error::Invalid));
         assert_eq!(decode(b"\x12\x34", 2), Ok(vec![0x12, 0x34]));
         assert_eq!(decode(b"\x12", 2), Err(Error::UnexpectedEof));
         assert_eq!(reserve_filled::<3>(0x40), Ok([0x40, 0x40, 0x40]));

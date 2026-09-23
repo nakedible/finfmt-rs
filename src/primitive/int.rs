@@ -4,8 +4,9 @@ use core::mem::size_of;
 use no_panic::no_panic;
 
 use crate::Error;
-use crate::primitive::bytes::{all_bytes_eq, copy_bytes, reserve_bytes, take_bytes, validate_exact_length};
+use crate::primitive::bytes::{all_bytes_eq, copy_bytes, reserve_bytes, take_bytes};
 use crate::primitive::nibble::{NibbleAlphabet, pack_nibbles, unpack_padded_nibbles, validate_nibbles};
+use crate::primitive::validation::validate_byte_length;
 use crate::utils::cold_path;
 
 #[inline(always)]
@@ -42,8 +43,9 @@ pub fn decode_be_bytes<const N: usize>(input: &mut &[u8], len: usize, fill: u8) 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn validate_nibble_int_fixed<F: NibbleAlphabet>(input: &[u8], len: usize) -> Result<(), Error> {
-    validate_exact_length(input, len)?;
-    validate_nibbles(input, &F::NIBBLES)
+    validate_nibbles(input, &F::NIBBLES)?;
+    validate_byte_length(input, len, len)?;
+    Ok(())
 }
 
 #[inline(always)]
@@ -248,7 +250,8 @@ mod tests {
         assert_eq!(validate_nibble_int_fixed::<HexUpper>(b"1f", 2), Err(Error::Invalid));
         assert_eq!(validate_nibble_int_fixed::<HexLower>(b"AB", 2), Err(Error::Invalid));
         assert_eq!(validate_nibble_int_fixed::<HexEbcdic>(b"AF", 2), Err(Error::Invalid));
-        assert_eq!(validate_nibble_int_fixed::<HexUpper>(b"1", 2), Err(Error::Invalid));
+        assert_eq!(validate_nibble_int_fixed::<HexUpper>(b"1", 2), Err(Error::InvalidValueLength));
+        assert_eq!(validate_nibble_int_fixed::<HexUpper>(b"g", 2), Err(Error::Invalid));
     }
 
     #[test]

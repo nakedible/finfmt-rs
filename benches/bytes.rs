@@ -17,24 +17,11 @@ fn bench_bytes(suite: &mut Suite) {
     suite.group("bytes", |group| {
         quick(group);
 
-        group.bench("validate_exact_length_8", |b| {
-            b.iter(|| validate_exact_length_8(black_box(INPUT_8)))
-        });
-
         group.bench("copy_bytes_through", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 8];
                 let mut out = &mut buf[..];
                 let _ = copy_bytes_through(&mut out, black_box(INPUT_8));
-                black_box(buf)
-            })
-        });
-
-        group.bench("encode_exact_bytes_8", |b| {
-            b.iter(|| {
-                let mut buf = [0u8; 8];
-                let mut out = &mut buf[..];
-                let _ = encode_exact_bytes_8(&mut out, black_box(INPUT_8));
                 black_box(buf)
             })
         });

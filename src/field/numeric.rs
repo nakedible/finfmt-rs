@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 use core::mem::size_of;
 
-use crate::primitive::bytes::{encode_exact_bytes, take_bytes, validate_exact_length};
+use crate::primitive::bytes::{copy_bytes, take_bytes};
 use crate::primitive::decimal::{
     decode_decimal_implied_digits, decode_decimal_packed_fixed, decode_decimal_packed_signed_fixed, decode_ebcdic_zoned_decimal,
     decode_negative_prefix, decode_sign, encode_decimal_implied, encode_decimal_packed_digits, encode_decimal_packed_fixed,
@@ -14,7 +14,7 @@ use crate::primitive::int::{
     validate_nibble_int_fixed,
 };
 use crate::primitive::nibble::NibbleAlphabet;
-use crate::primitive::validation::validate_numeric;
+use crate::primitive::validation::{validate_byte_length, validate_numeric};
 use crate::utils::cold_path;
 use crate::{Error, ScalarFmt};
 
@@ -252,7 +252,8 @@ impl<F: NibbleAlphabet, const N: usize> ScalarFmt for FixedNibbleInt<F, N> {
     #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
         validate_nibble_int_fixed::<F>(input, N)?;
-        encode_exact_bytes(output, input, N)
+        copy_bytes(output, input)?;
+        Ok(())
     }
 
     #[inline(always)]
@@ -312,13 +313,15 @@ impl<F: NibbleAlphabet, const N: usize> ScalarFmt for FixedNibbleInt<F, N> {
 impl<const N: usize> ScalarFmt for FixedBinaryBe<N> {
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
-        validate_exact_length(input, N)?;
+        validate_byte_length(input, N, N)?;
         Ok(N)
     }
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
-        encode_exact_bytes(output, input, N)
+        validate_byte_length(input, N, N)?;
+        copy_bytes(output, input)?;
+        Ok(())
     }
 
     #[inline(always)]
@@ -376,13 +379,15 @@ impl<const N: usize> ScalarFmt for FixedBinaryBe<N> {
 impl<const N: usize> ScalarFmt for FixedSignedBinaryBe<N> {
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
-        validate_exact_length(input, N)?;
+        validate_byte_length(input, N, N)?;
         Ok(N)
     }
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
-        encode_exact_bytes(output, input, N)
+        validate_byte_length(input, N, N)?;
+        copy_bytes(output, input)?;
+        Ok(())
     }
 
     #[inline(always)]
@@ -587,6 +592,17 @@ mod tests {
         assert_eq!(decode_i64::<FixedSignedBinaryBe<2>>(b"\xFF\xFE"), Ok(-2));
         assert_eq!(encode_i64::<FixedSignedBinaryBe<1>>(128), Err(Error::Invalid));
         assert_eq!(decode_u64::<FixedSignedBinaryBe<1>>(b"\xFF"), Err(Error::Invalid));
+    }
+
+    #[test]
+    fn wrong_length_values_are_value_length_errors() {
+        assert_eq!(FixedBinaryBe::<2>::encoded_len(b"\x01"), Err(Error::InvalidValueLength));
+        assert_eq!(encode_bytes::<FixedBinaryBe<2>>(b"\x01\x02\x03"), Err(Error::InvalidValueLength));
+        assert_eq!(FixedSignedBinaryBe::<2>::encoded_len(b"\x01"), Err(Error::InvalidValueLength));
+        assert_eq!(encode_bytes::<FixedSignedBinaryBe<2>>(b"\x01"), Err(Error::InvalidValueLength));
+        assert_eq!(FixedNibbleInt::<HexUpper, 2>::encoded_len(b"F"), Err(Error::InvalidValueLength));
+        assert_eq!(encode_bytes::<FixedNibbleInt<HexUpper, 2>>(b"FFF"), Err(Error::InvalidValueLength));
+        assert_eq!(encode_bytes::<FixedNibbleInt<HexUpper, 2>>(b"G"), Err(Error::Invalid));
     }
 
     #[test]
