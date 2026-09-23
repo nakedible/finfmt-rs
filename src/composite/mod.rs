@@ -18,7 +18,7 @@
 
 use core::marker::PhantomData;
 
-use crate::primitive::bytes::{contains_byte, copy_bytes, reserve_bytes, split_delimited_bytes};
+use crate::primitive::bytes::{copy_bytes, reserve_bytes, take_delimited};
 use crate::utils::split_scratch;
 use crate::{CompositeError, Error, ScalarFmt};
 
@@ -2703,7 +2703,7 @@ where
         crate::utils::cold_path();
         Error::Internal
     })?;
-    if separator.is_some_and(|byte| contains_byte(segment, byte)) {
+    if separator.is_some_and(|byte| segment.contains(&byte)) {
         crate::utils::cold_path();
         return Err(Error::Invalid.into());
     }
@@ -2760,7 +2760,7 @@ pub fn decode_delimited_field<'a>(input: &mut &'a [u8], separator: u8, expect_se
         return Ok(core::mem::take(input));
     }
     let mut trial = *input;
-    let (segment, terminated) = split_delimited_bytes(&mut trial, separator);
+    let (segment, terminated) = take_delimited(&mut trial, separator);
     if !terminated {
         crate::utils::cold_path();
         return Err(Error::Invalid);

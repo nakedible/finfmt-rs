@@ -32,107 +32,59 @@ pub fn copy_bytes<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut
     Ok(buf)
 }
 
+/// Reserve the next `len` output bytes and fill them with `fill`.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn reserve_filled_area<'a>(output: &mut &'a mut [u8], len: usize, fill: u8) -> Result<&'a mut [u8], Error> {
-    let area = output.split_off_mut(..len).ok_or_else(|| {
-        cold_path();
-        Error::BufferOverflow
-    })?;
+pub fn reserve_filled<'a>(output: &mut &'a mut [u8], len: usize, fill: u8) -> Result<&'a mut [u8], Error> {
+    let area = reserve_bytes(output, len)?;
     area.fill(fill);
     Ok(area)
 }
 
-/// Consume `total_len` bytes, check that the suffix after `used_len` contains only
-/// `fill`, and return the used prefix. The supplied `used_len` determines the
-/// boundary; fill bytes within the used prefix are preserved.
+/// Take `total_len` bytes, check that everything after `used_len` is `fill`,
+/// and return the used prefix. Fill bytes inside the used prefix are kept.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn decode_padded_bytes<'a>(input: &mut &'a [u8], total_len: usize, used_len: usize, fill: u8) -> Result<&'a [u8], Error> {
+pub fn take_padded<'a>(input: &mut &'a [u8], total_len: usize, used_len: usize, fill: u8) -> Result<&'a [u8], Error> {
     if used_len > total_len {
         cold_path();
         return Err(Error::Invalid);
     }
-    let area = input.split_off(..total_len).ok_or_else(|| {
-        cold_path();
-        Error::UnexpectedEof
-    })?;
-    if area[used_len..].iter().any(|&byte| byte != fill) {
+    let (used, padding) = take_bytes(input, total_len)?.split_at(used_len);
+    if !is_filled(padding, fill) {
         cold_path();
         return Err(Error::Invalid);
     }
-    Ok(&area[..used_len])
+    Ok(used)
 }
 
+/// Whether every byte of `input` equals `fill`; true for empty input.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn fill_tail(output: &mut [u8], used_len: usize, fill: u8) -> Result<(), Error> {
-    let tail = output.get_mut(used_len..).ok_or_else(|| {
-        cold_path();
-        Error::Invalid
-    })?;
-    tail.fill(fill);
-    Ok(())
-}
-
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn all_bytes_eq(input: &[u8], fill: u8) -> bool {
+pub fn is_filled(input: &[u8], fill: u8) -> bool {
     input.iter().all(|&byte| byte == fill)
 }
 
+/// Fill `output` with back-to-back copies of `block`. An empty block, or an
+/// output that is not a whole number of blocks, is a format error.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn fill_repeated_block(output: &mut [u8], used_len: usize, block: &[u8]) -> Result<(), Error> {
-    if block.is_empty() {
+pub fn fill_repeated(output: &mut [u8], block: &[u8]) -> Result<(), Error> {
+    if block.is_empty() || !output.len().is_multiple_of(block.len()) {
         cold_path();
         return Err(Error::Internal);
     }
-    let tail = output.get_mut(used_len..).ok_or_else(|| {
-        cold_path();
-        Error::Invalid
-    })?;
-    if !tail.len().is_multiple_of(block.len()) {
-        cold_path();
-        return Err(Error::Internal);
-    }
-    for chunk in tail.chunks_exact_mut(block.len()) {
+    for chunk in output.chunks_exact_mut(block.len()) {
         chunk.copy_from_slice(block);
     }
     Ok(())
 }
 
+/// Take input through the first `separator`, returning the bytes before it and
+/// whether it was found. Without a separator, take and return the remainder.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_repeated_block(input: &[u8], block: &[u8]) -> Result<(), Error> {
-    if block.is_empty() {
-        cold_path();
-        return Err(Error::Internal);
-    }
-    if !input.len().is_multiple_of(block.len()) {
-        cold_path();
-        return Err(Error::Invalid);
-    }
-    for chunk in input.chunks_exact(block.len()) {
-        if chunk != block {
-            cold_path();
-            return Err(Error::Invalid);
-        }
-    }
-    Ok(())
-}
-
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn contains_byte(input: &[u8], byte: u8) -> bool {
-    input.contains(&byte)
-}
-
-/// Consume through the first separator, returning the preceding bytes and whether
-/// a separator was found. If absent, consume the remainder and return it with `false`.
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn split_delimited_bytes<'a>(input: &mut &'a [u8], separator: u8) -> (&'a [u8], bool) {
+pub fn take_delimited<'a>(input: &mut &'a [u8], separator: u8) -> (&'a [u8], bool) {
     let mut parts = input.splitn(2, |&byte| byte == separator);
     if let (Some(segment), Some(rest)) = (parts.next(), parts.next()) {
         *input = rest;
@@ -144,100 +96,57 @@ pub fn split_delimited_bytes<'a>(input: &mut &'a [u8], separator: u8) -> (&'a [u
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        all_bytes_eq, contains_byte, copy_bytes, decode_padded_bytes, fill_repeated_block, fill_tail, reserve_filled_area,
-        split_delimited_bytes, take_bytes, validate_repeated_block,
-    };
+    use super::{copy_bytes, fill_repeated, is_filled, reserve_bytes, reserve_filled, take_bytes, take_delimited, take_padded};
     use crate::Error;
 
-    fn decode(input: &[u8], len: usize) -> Result<Vec<u8>, Error> {
-        let mut input = input;
-        Ok(take_bytes(&mut input, len)?.to_vec())
-    }
-
-    fn copy<const N: usize>(input: &[u8]) -> Result<[u8; N], Error> {
-        let mut output = [0u8; N];
-        let mut out_ptr = output.as_mut_slice();
-        let _ = copy_bytes(&mut out_ptr, input)?;
-        Ok(output)
-    }
-
-    fn reserve_filled<const N: usize>(fill: u8) -> Result<[u8; N], Error> {
-        let mut output = [0u8; N];
-        let mut out_ptr = output.as_mut_slice();
-        let _ = reserve_filled_area(&mut out_ptr, N, fill)?;
-        Ok(output)
-    }
-
-    fn decode_prefix(input: &[u8], total_len: usize, used_len: usize, fill: u8) -> Result<Vec<u8>, Error> {
-        let mut input = input;
-        Ok(decode_padded_bytes(&mut input, total_len, used_len, fill)?.to_vec())
-    }
-
-    fn fill_tail_buf<const N: usize>(used_len: usize, fill: u8) -> Result<[u8; N], Error> {
-        let mut output = [0u8; N];
-        fill_tail(&mut output, used_len, fill)?;
-        Ok(output)
-    }
-
-    fn fill_repeated_block_buf<const N: usize>(used_len: usize, block: &[u8]) -> Result<[u8; N], Error> {
-        let mut output = [0u8; N];
-        fill_repeated_block(&mut output, used_len, block)?;
-        Ok(output)
-    }
-
     #[test]
-    fn test_fixed_bytes_helpers() {
-        assert_eq!(copy::<2>(b"\x12\x34"), Ok([0x12, 0x34]));
-        assert_eq!(copy::<1>(b"\x12\x34"), Err(Error::BufferOverflow));
-        assert_eq!(decode(b"\x12\x34", 2), Ok(vec![0x12, 0x34]));
-        assert_eq!(decode(b"\x12", 2), Err(Error::UnexpectedEof));
-        assert_eq!(reserve_filled::<3>(0x40), Ok([0x40, 0x40, 0x40]));
-        assert_eq!(decode_prefix(b"\x12\x34\x40\x40", 4, 2, 0x40), Ok(vec![0x12, 0x34]));
-        assert_eq!(decode_prefix(b"A   ", 4, 2, b' '), Ok(b"A ".to_vec()));
-        assert_eq!(decode_prefix(b"\x12\x34\x40\x41", 4, 2, 0x40), Err(Error::Invalid));
-        assert_eq!(decode_prefix(b"\x12\x34", 4, 2, 0x40), Err(Error::UnexpectedEof));
-        assert_eq!(decode_prefix(b"\x12\x34", 2, 3, 0x40), Err(Error::Invalid));
-        assert_eq!(fill_tail_buf::<4>(2, 0x40), Ok([0x00, 0x00, 0x40, 0x40]));
-        assert_eq!(fill_tail_buf::<2>(3, 0x40), Err(Error::Invalid));
-        assert!(all_bytes_eq(b"\x40\x40", 0x40));
-        assert!(!all_bytes_eq(b"\x40\x41", 0x40));
-        assert!(contains_byte(b"\x12\x34", 0x34));
-        assert!(!contains_byte(b"\x12\x34", 0x56));
-        assert_eq!(
-            fill_repeated_block_buf::<6>(2, b"\x12\x34"),
-            Ok([0x00, 0x00, 0x12, 0x34, 0x12, 0x34])
-        );
-        assert_eq!(fill_repeated_block_buf::<5>(2, b"\x12\x34"), Err(Error::Internal));
-        assert_eq!(fill_repeated_block_buf::<5>(2, b""), Err(Error::Internal));
-        assert_eq!(validate_repeated_block(b"\x12\x34\x12\x34", b"\x12\x34"), Ok(()));
-        assert_eq!(validate_repeated_block(b"\x12\x34\x56\x78", b"\x12\x34"), Err(Error::Invalid));
-        assert_eq!(validate_repeated_block(b"\x12", b"\x12\x34"), Err(Error::Invalid));
-        assert_eq!(validate_repeated_block(b"\x12", b""), Err(Error::Internal));
-    }
-
-    #[test]
-    fn test_repeated_block_boundaries() {
-        assert_eq!(fill_repeated_block(&mut [], 0, b""), Err(Error::Internal));
-        assert_eq!(fill_repeated_block(&mut [], 0, b"AB"), Ok(()));
-        assert_eq!(validate_repeated_block(b"", b""), Err(Error::Internal));
-        assert_eq!(validate_repeated_block(b"", b"AB"), Ok(()));
-        let mut output = [0x55; 5];
-        for (used, block, expected) in [
-            (2, b"AB".as_slice(), Err(Error::Internal)),
-            (usize::MAX, b"AB", Err(Error::Invalid)),
-            (usize::MAX, b"", Err(Error::Internal)),
-            (5, b"AB", Ok(())),
-        ] {
-            assert_eq!(fill_repeated_block(&mut output, used, block), expected);
-            assert_eq!(output, [0x55; 5]);
+    fn test_cursor_helpers() {
+        let mut storage = [0xA5; 4];
+        for (len, expected) in [(0, Ok(0)), (3, Ok(3)), (4, Ok(4)), (5, Err(Error::BufferOverflow))] {
+            let mut out = storage.as_mut_slice();
+            assert_eq!(reserve_bytes(&mut out, len).map(|area| area.len()), expected);
+            assert_eq!(out.len(), expected.map_or(4, |used| 4 - used));
         }
-        assert_eq!(fill_repeated_block(&mut output, 1, b"AB"), Ok(()));
-        assert_eq!(&output, b"UABAB");
-        assert_eq!(fill_repeated_block(&mut output, 3, &[0]), Ok(()));
-        assert_eq!(&output, b"UAB\0\0");
-        for input in [b"XBAB", b"AXAB", b"ABXB", b"ABAX"] {
-            assert_eq!(validate_repeated_block(input, b"AB"), Err(Error::Invalid));
+        for (len, expected) in [(0, Ok(&b""[..])), (2, Ok(b"\x12\x34")), (3, Err(Error::UnexpectedEof))] {
+            let mut input = &b"\x12\x34"[..];
+            assert_eq!(take_bytes(&mut input, len), expected);
+            assert_eq!(input.len(), expected.map_or(2, |taken| 2 - taken.len()));
+        }
+        let mut out = storage.as_mut_slice();
+        assert_eq!(copy_bytes(&mut out, b"\x12\x34").map(|area| area.to_vec()), Ok(vec![0x12, 0x34]));
+        assert_eq!(copy_bytes(&mut out, b"\x56\x78\x9A"), Err(Error::BufferOverflow));
+        assert_eq!(reserve_filled(&mut out, 2, 0x40).map(|area| area.to_vec()), Ok(vec![0x40, 0x40]));
+        assert!(out.is_empty());
+        assert_eq!(storage, [0x12, 0x34, 0x40, 0x40]);
+    }
+
+    fn padded(input: &[u8], total_len: usize, used_len: usize, fill: u8) -> Result<Vec<u8>, Error> {
+        let mut input = input;
+        Ok(take_padded(&mut input, total_len, used_len, fill)?.to_vec())
+    }
+
+    #[test]
+    fn test_padding_helpers() {
+        assert_eq!(padded(b"\x12\x34\x40\x40", 4, 2, 0x40), Ok(vec![0x12, 0x34]));
+        assert_eq!(padded(b"A   ", 4, 2, b' '), Ok(b"A ".to_vec()));
+        assert_eq!(padded(b"\x12\x34\x40\x41", 4, 2, 0x40), Err(Error::Invalid));
+        assert_eq!(padded(b"\x12\x34", 4, 2, 0x40), Err(Error::UnexpectedEof));
+        assert_eq!(padded(b"\x12\x34", 2, 3, 0x40), Err(Error::Invalid));
+        assert!(is_filled(b"", 0x40));
+        assert!(is_filled(b"\x40\x40", 0x40));
+        assert!(!is_filled(b"\x40\x41", 0x40));
+    }
+
+    #[test]
+    fn test_repeated_fill() {
+        let mut output = [0x55; 6];
+        assert_eq!(fill_repeated(&mut output, b"\x12\x34"), Ok(()));
+        assert_eq!(output, [0x12, 0x34, 0x12, 0x34, 0x12, 0x34]);
+        assert_eq!(fill_repeated(&mut [], b"AB"), Ok(()));
+        for block in [&b""[..], b"ABCD"] {
+            let mut output = [0x55; 6];
+            assert_eq!(fill_repeated(&mut output, block), Err(Error::Internal));
+            assert_eq!(output, [0x55; 6]);
         }
     }
 
@@ -254,7 +163,7 @@ mod tests {
             (b"\0A\0B", 0, b"", b"A\0B", true),
         ] {
             let mut input = wire;
-            assert_eq!(split_delimited_bytes(&mut input, separator), (segment, terminated));
+            assert_eq!(take_delimited(&mut input, separator), (segment, terminated));
             assert_eq!(input, rest);
         }
     }
@@ -264,35 +173,20 @@ mod tests {
 mod proptests {
     use proptest::prelude::*;
 
-    use super::{fill_repeated_block, split_delimited_bytes, validate_repeated_block};
-    use crate::Error;
+    use super::{fill_repeated, take_delimited};
 
     proptest! {
         #[test]
-        fn repeated_blocks_preserve_prefix_and_match_reference(
-            block in prop::collection::vec(any::<u8>(), 1..17),
-            prefix in prop::collection::vec(any::<u8>(), 0..32),
-            count in 0usize..32,
-            corrupt in any::<usize>(),
-        ) {
-            let mut output = prefix.clone();
-            output.resize(prefix.len() + block.len() * count, 0x55);
-            prop_assert_eq!(fill_repeated_block(&mut output, prefix.len(), &block), Ok(()));
-            prop_assert_eq!(&output[..prefix.len()], prefix.as_slice());
-            let tail = &mut output[prefix.len()..];
-            prop_assert_eq!(&*tail, block.repeat(count));
-            prop_assert_eq!(validate_repeated_block(tail, &block), Ok(()));
-            if !tail.is_empty() {
-                let index = corrupt % tail.len();
-                tail[index] ^= 1;
-                prop_assert_eq!(validate_repeated_block(tail, &block), Err(Error::Invalid));
-            }
+        fn repeated_fill_matches_reference(block in prop::collection::vec(any::<u8>(), 1..17), count in 0usize..32) {
+            let mut output = vec![0x55; block.len() * count];
+            prop_assert_eq!(fill_repeated(&mut output, &block), Ok(()));
+            prop_assert_eq!(output, block.repeat(count));
         }
 
         #[test]
         fn delimited_bytes_match_first_separator(bytes in prop::collection::vec(any::<u8>(), 0..128), separator in any::<u8>()) {
             let mut input = bytes.as_slice();
-            let (segment, terminated) = split_delimited_bytes(&mut input, separator);
+            let (segment, terminated) = take_delimited(&mut input, separator);
             let boundary = bytes.iter().position(|&byte| byte == separator);
             let length = boundary.unwrap_or(bytes.len());
             prop_assert_eq!(segment, &bytes[..length]);

@@ -1,7 +1,6 @@
 use crate::Error;
 use crate::primitive::bytes::{
-    all_bytes_eq, contains_byte, copy_bytes, decode_padded_bytes, fill_repeated_block, fill_tail, reserve_bytes, reserve_filled_area,
-    split_delimited_bytes, take_bytes, validate_repeated_block,
+    copy_bytes, fill_repeated, is_filled, reserve_bytes, reserve_filled, take_bytes, take_delimited, take_padded,
 };
 
 #[inline(never)]
@@ -20,51 +19,31 @@ pub fn reserve_bytes_8<'a>(output: &mut &'a mut [u8]) -> Result<&'a mut [u8], Er
 }
 
 #[inline(never)]
-pub fn reserve_filled_area_8_ebcdic_space<'a>(output: &mut &'a mut [u8]) -> Result<&'a mut [u8], Error> {
-    reserve_filled_area(output, 8, 0x40)
+pub fn reserve_filled_8_ebcdic_space<'a>(output: &mut &'a mut [u8]) -> Result<&'a mut [u8], Error> {
+    reserve_filled(output, 8, 0x40)
 }
 
 #[inline(never)]
-pub fn decode_padded_bytes_8_ebcdic_space<'a>(input: &mut &'a [u8], used_len: usize) -> Result<&'a [u8], Error> {
-    decode_padded_bytes(input, 8, used_len, 0x40)
+pub fn take_padded_8_ebcdic_space<'a>(input: &mut &'a [u8], used_len: usize) -> Result<&'a [u8], Error> {
+    take_padded(input, 8, used_len, 0x40)
 }
 
 #[inline(never)]
-pub fn fill_tail_ebcdic_space(output: &mut [u8], used_len: usize) -> Result<(), Error> {
-    fill_tail(output, used_len, 0x40)
+pub fn is_filled_ebcdic_space(input: &[u8]) -> bool {
+    is_filled(input, 0x40)
 }
 
 #[inline(never)]
-pub fn all_bytes_eq_ebcdic_space(input: &[u8]) -> bool {
-    all_bytes_eq(input, 0x40)
+pub fn fill_repeated_runtime(output: &mut [u8], block: &[u8]) -> Result<(), Error> {
+    fill_repeated(output, block)
 }
 
 #[inline(never)]
-pub fn fill_repeated_block_runtime(output: &mut [u8], used_len: usize, block: &[u8]) -> Result<(), Error> {
-    fill_repeated_block(output, used_len, block)
+pub fn fill_repeated_4(output: &mut [u8], block: &[u8; 4]) -> Result<(), Error> {
+    fill_repeated(output, block)
 }
 
 #[inline(never)]
-pub fn validate_repeated_block_runtime(input: &[u8], block: &[u8]) -> Result<(), Error> {
-    validate_repeated_block(input, block)
-}
-
-#[inline(never)]
-pub fn contains_byte_pipe(input: &[u8]) -> bool {
-    contains_byte(input, b'|')
-}
-
-#[inline(never)]
-pub fn split_delimited_bytes_pipe<'a>(input: &mut &'a [u8]) -> (&'a [u8], bool) {
-    split_delimited_bytes(input, b'|')
-}
-
-#[inline(never)]
-pub fn fill_repeated_block_4(output: &mut [u8], block: &[u8; 4]) -> Result<(), Error> {
-    fill_repeated_block(output, 0, block)
-}
-
-#[inline(never)]
-pub fn validate_repeated_block_4(input: &[u8], block: &[u8; 4]) -> Result<(), Error> {
-    validate_repeated_block(input, block)
+pub fn take_delimited_pipe<'a>(input: &mut &'a [u8]) -> (&'a [u8], bool) {
+    take_delimited(input, b'|')
 }

@@ -2,7 +2,7 @@
 use no_panic::no_panic;
 
 use crate::Error;
-use crate::primitive::bytes::{all_bytes_eq, reserve_bytes, take_bytes};
+use crate::primitive::bytes::{is_filled, reserve_bytes, take_bytes};
 use crate::primitive::ebcdic::{EBCDIC_037_TO_ASCII, translate_bytes};
 use crate::primitive::int::decode_signed_magnitude_i64;
 use crate::primitive::nibble::{Bcdz, NibbleAlphabet, pack_nibbles, unpack_padded_nibbles};
@@ -552,7 +552,7 @@ fn decode_decimal_fixed(input: &mut &[u8], len: usize, zero: u8) -> Result<usize
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_decimal_ebcdic_blank_zero_fixed(input: &mut &[u8], len: usize) -> Result<usize, Error> {
     let bytes = take_bytes(input, len)?;
-    if all_bytes_eq(bytes, 0x40) {
+    if is_filled(bytes, 0x40) {
         return Ok(0);
     }
     let mut nested = bytes;

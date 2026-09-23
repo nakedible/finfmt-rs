@@ -1,7 +1,7 @@
 #[cfg(all(not(debug_assertions), feature = "no-panic"))]
 use no_panic::no_panic;
 
-use super::bytes::all_bytes_eq;
+use super::bytes::is_filled;
 use crate::utils::cold_path;
 use crate::{Error, ScalarFmt};
 
@@ -199,7 +199,7 @@ fn encode_bitmap_word<F: BitmapWord>(output: &mut &mut [u8], scratch: &mut [u8],
     let scratch_ptr = &mut scratch[..];
     let word = word.to_be_bytes();
     debug_assert!(
-        word.get(F::DECODED_BYTES..).is_some_and(|tail| all_bytes_eq(tail, 0)),
+        word.get(F::DECODED_BYTES..).is_some_and(|tail| is_filled(tail, 0)),
         "bitmap contains bits outside word width"
     );
     let bytes = word.get(..F::DECODED_BYTES).ok_or_else(|| {

@@ -1,5 +1,5 @@
 use super::*;
-use crate::primitive::bytes::{all_bytes_eq, copy_bytes, fill_tail, reserve_bytes, take_bytes};
+use crate::primitive::bytes::{copy_bytes, is_filled, reserve_bytes, reserve_filled, take_bytes};
 
 impl<T, F: ScalarFmt, S: CompositeFmt<T>> CompositeFmt<T> for Frame<F, S> {
     type Decoded<'de> = S::Decoded<'de>;
@@ -298,14 +298,14 @@ where
 impl<const BYTE: u8> AbsentFmt for ByteFill<BYTE> {
     #[inline(always)]
     fn encode_absent(output: &mut &mut [u8], _scratch: &mut [u8]) -> Result<(), Error> {
-        let area = core::mem::take(output);
-        fill_tail(area, 0, BYTE)?;
+        let len = output.len();
+        reserve_filled(output, len, BYTE)?;
         Ok(())
     }
 
     #[inline(always)]
     fn is_absent(input: &[u8], _scratch: &mut &mut [u8]) -> Result<bool, Error> {
-        Ok(all_bytes_eq(input, BYTE))
+        Ok(is_filled(input, BYTE))
     }
 }
 

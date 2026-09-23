@@ -4,7 +4,7 @@ use core::mem::size_of;
 use no_panic::no_panic;
 
 use crate::Error;
-use crate::primitive::bytes::{all_bytes_eq, copy_bytes, reserve_bytes, take_bytes};
+use crate::primitive::bytes::{copy_bytes, is_filled, reserve_bytes, take_bytes};
 use crate::primitive::nibble::{NibbleAlphabet, pack_nibbles, unpack_padded_nibbles, validate_nibbles};
 use crate::primitive::validation::validate_byte_length;
 use crate::utils::cold_path;
@@ -15,7 +15,7 @@ pub fn encode_be_bytes(output: &mut &mut [u8], bytes: &[u8], len: usize, fill: u
     let buf = reserve_bytes(output, len)?;
     let tail_len = len.min(bytes.len());
     let (prefix, tail) = bytes.split_at(bytes.len() - tail_len);
-    if !all_bytes_eq(prefix, fill) {
+    if !is_filled(prefix, fill) {
         cold_path();
         return Err(Error::Invalid);
     }
@@ -29,7 +29,7 @@ pub fn encode_be_bytes(output: &mut &mut [u8], bytes: &[u8], len: usize, fill: u
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_be_bytes<const N: usize>(input: &mut &[u8], len: usize, fill: u8) -> Result<[u8; N], Error> {
     let bytes = take_bytes(input, len)?;
-    if !all_bytes_eq(&bytes[..len.saturating_sub(N)], fill) {
+    if !is_filled(&bytes[..len.saturating_sub(N)], fill) {
         cold_path();
         return Err(Error::Invalid);
     }

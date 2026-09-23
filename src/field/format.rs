@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 
 use super::{Check, LengthSpec, Step};
-use crate::primitive::bytes::{decode_padded_bytes, reserve_filled_area, take_bytes};
+use crate::primitive::bytes::{reserve_filled, take_bytes, take_padded};
 use crate::utils::cold_path;
 use crate::{Error, ScalarFmt};
 
@@ -69,7 +69,7 @@ impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> S
             return Err(Error::Invalid);
         }
         L::encode(output, scratch, semantic_len, wire_len)?;
-        let area = reserve_filled_area(output, PAD_TO, FILL)?;
+        let area = reserve_filled(output, PAD_TO, FILL)?;
         let (field, _tail) = area.split_at_mut(wire_len);
         let mut field_out = field;
         S::encode(&mut field_out, scratch, input)?;
@@ -86,7 +86,7 @@ impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> S
             cold_path();
             return Err(Error::Invalid);
         }
-        let wire = decode_padded_bytes(input, PAD_TO, plan.wire_len, FILL)?;
+        let wire = take_padded(input, PAD_TO, plan.wire_len, FILL)?;
         let semantic = S::decode(wire, scratch, plan.semantic_len)?;
         let semantic_len = C::validate(semantic)?;
         if let Some(expected_len) = plan.semantic_len

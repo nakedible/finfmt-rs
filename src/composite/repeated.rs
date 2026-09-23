@@ -1,6 +1,6 @@
 use super::*;
 use crate::field::{Identity, LengthSpec};
-use crate::primitive::bytes::{contains_byte, fill_repeated_block, reserve_bytes, split_delimited_bytes, take_bytes};
+use crate::primitive::bytes::{fill_repeated, reserve_bytes, take_bytes, take_delimited};
 
 impl ListCountPolicy for () {
     const HAS_COUNT: bool = false;
@@ -95,7 +95,7 @@ where
                 crate::utils::cold_path();
                 CompositeError::from(Error::Internal)
             })?;
-            if Sep::BYTE.is_some_and(|separator| (!Count::HAS_COUNT || index + 1 != value.len()) && contains_byte(encoded, separator))
+            if Sep::BYTE.is_some_and(|separator| (!Count::HAS_COUNT || index + 1 != value.len()) && encoded.contains(&separator))
                 || (!Count::HAS_COUNT && used == 0 && (Sep::BYTE.is_none() || value.len() == 1))
             {
                 crate::utils::cold_path();
@@ -134,7 +134,7 @@ where
                         crate::utils::cold_path();
                         return Err(Error::Invalid.into());
                     }
-                    let (mut segment, terminated) = split_delimited_bytes(input, separator);
+                    let (mut segment, terminated) = take_delimited(input, separator);
                     more = terminated;
                     let value = Item::decode(&mut segment, scratch).map_err(|error| error.with_index(values.len()))?;
                     if !segment.is_empty() {
@@ -236,7 +236,7 @@ where
             crate::utils::cold_path();
             return Err(Error::Internal.into());
         }
-        fill_repeated_block(output, 0, absent)?;
+        fill_repeated(output, absent)?;
         Ok(())
     }
 
@@ -505,8 +505,8 @@ mod tests {
         }
 
         fn is_absent(input: &[u8], _scratch: &mut &mut [u8]) -> Result<bool, Error> {
-            use crate::primitive::bytes::all_bytes_eq;
-            Ok(all_bytes_eq(input, b' ') || all_bytes_eq(input, b'0'))
+            use crate::primitive::bytes::is_filled;
+            Ok(is_filled(input, b' ') || is_filled(input, b'0'))
         }
     }
 
