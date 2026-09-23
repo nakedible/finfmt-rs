@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use crate::primitive::nibble::{NibbleAlphabet, pack_expanded_nibbles, pack_nibbles, unpack_nibbles, unpack_padded_nibbles};
+use crate::primitive::nibble::{NibbleAlphabet, pack_nibbles, pack_nibbles_checked, unpack_nibbles, unpack_padded_nibbles};
 use crate::utils::cold_path;
 use crate::{Error, Step};
 
@@ -66,7 +66,7 @@ impl<F: NibbleAlphabet> Step for UnpackNibbles<F> {
             cold_path();
             return Err(Error::Invalid);
         }
-        pack_expanded_nibbles::<F>(scratch, input).map(|buf| &*buf)
+        pack_nibbles_checked::<F>(scratch, input).map(|buf| &*buf)
     }
 }
 

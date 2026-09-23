@@ -124,11 +124,12 @@ pub fn validate_nibbles<A: NibbleAlphabet>(input: &[u8]) -> Result<(), Error> {
     Ok(())
 }
 
-/// Validate and pack an even number of expanded nibble digits.
-/// Odd length or invalid digits return `Invalid` before reserving output.
+/// Validate and pack an even number of digits. Odd length or invalid digits
+/// return `Invalid` before reserving output. Validation is a separate pass:
+/// fusing it into the packing loop measured slower.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn pack_expanded_nibbles<'a, A: NibbleAlphabet>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+pub fn pack_nibbles_checked<'a, A: NibbleAlphabet>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
     if !input.len().is_multiple_of(2) {
         cold_path();
         return Err(Error::Invalid);
@@ -224,16 +225,16 @@ mod tests {
         unpack_nibbles::<BcdzDigits>(&mut outptr, input).map(|_| ())
     }
 
-    fn pack_expanded<A: NibbleAlphabet>(input: &[u8]) -> Result<Vec<u8>, Error> {
+    fn pack_checked<A: NibbleAlphabet>(input: &[u8]) -> Result<Vec<u8>, Error> {
         let mut output = [0u8; 64];
         let mut outptr = &mut output[..];
-        pack_expanded_nibbles::<A>(&mut outptr, input).map(|result| result.to_vec())
+        pack_nibbles_checked::<A>(&mut outptr, input).map(|result| result.to_vec())
     }
 
-    fn pack_expanded_err<A: NibbleAlphabet>(input: &[u8], buf_len: usize) -> Result<(), Error> {
+    fn pack_checked_err<A: NibbleAlphabet>(input: &[u8], buf_len: usize) -> Result<(), Error> {
         let mut output = [0u8; 64];
         let mut outptr = &mut output[..buf_len];
-        pack_expanded_nibbles::<A>(&mut outptr, input).map(|_| ())
+        pack_nibbles_checked::<A>(&mut outptr, input).map(|_| ())
     }
 
     #[test]
@@ -294,12 +295,12 @@ mod tests {
 
     #[test]
     fn test_pack_expanded() {
-        assert_eq!(pack_expanded::<UpperHexDigits>(b""), Ok(b"".to_vec()));
-        assert_eq!(pack_expanded::<UpperHexDigits>(b"12"), Ok(b"\x12".to_vec()));
-        assert_eq!(pack_expanded::<UpperHexDigits>(b"1234"), Ok(b"\x12\x34".to_vec()));
-        assert_eq!(pack_expanded::<UpperHexDigits>(b"1"), Err(Error::Invalid));
-        assert_eq!(pack_expanded::<UpperHexDigits>(b"1G"), Err(Error::Invalid));
-        assert_eq!(pack_expanded::<EbcdicHexDigits>(b"\xF1\xF2"), Ok(b"\x12".to_vec()));
+        assert_eq!(pack_checked::<UpperHexDigits>(b""), Ok(b"".to_vec()));
+        assert_eq!(pack_checked::<UpperHexDigits>(b"12"), Ok(b"\x12".to_vec()));
+        assert_eq!(pack_checked::<UpperHexDigits>(b"1234"), Ok(b"\x12\x34".to_vec()));
+        assert_eq!(pack_checked::<UpperHexDigits>(b"1"), Err(Error::Invalid));
+        assert_eq!(pack_checked::<UpperHexDigits>(b"1G"), Err(Error::Invalid));
+        assert_eq!(pack_checked::<EbcdicHexDigits>(b"\xF1\xF2"), Ok(b"\x12".to_vec()));
     }
 
     #[test]
@@ -307,7 +308,7 @@ mod tests {
         // Pack: buffer too small, zero buffer
         assert_eq!(pack_err(b"123", 1), Err(Error::BufferOverflow)); // needs 2
         assert_eq!(pack_err(b"1", 0), Err(Error::BufferOverflow)); // needs 1
-        assert_eq!(pack_expanded_err::<UpperHexDigits>(b"12", 0), Err(Error::BufferOverflow)); // needs 1
+        assert_eq!(pack_checked_err::<UpperHexDigits>(b"12", 0), Err(Error::BufferOverflow)); // needs 1
         // Unpack: buffer too small, zero buffer
         assert_eq!(unpack_err(b"\x12\x34", 3), Err(Error::BufferOverflow)); // needs 4
         assert_eq!(unpack_err(b"\x12", 0), Err(Error::BufferOverflow)); // needs 2
@@ -358,7 +359,7 @@ mod tests {
             assert_eq!(Letters::NIBBLES[*digit as usize], n as u8);
         }
         assert_eq!(Letters::NIBBLES[b'0' as usize], 0xFF);
-        assert_eq!(pack_expanded::<MixedHex>(b"aB"), Ok(vec![0xAB]));
+        assert_eq!(pack_checked::<MixedHex>(b"aB"), Ok(vec![0xAB]));
         assert_eq!(unpack::<MixedHex>(&[0xAB]), b"AB");
     }
 
@@ -386,14 +387,14 @@ mod tests {
     }
 
     #[test]
-    fn test_checked_packing_validation_and_string_inputs() {
-        assert_eq!(pack_expanded_err::<UpperHexDigits>(b"G0", 0), Err(Error::Invalid));
-        assert_eq!(pack_expanded_err::<UpperHexDigits>(b"1", 0), Err(Error::Invalid));
+    fn test_checked_packing_errors_keep_output() {
+        assert_eq!(pack_checked_err::<UpperHexDigits>(b"G0", 0), Err(Error::Invalid));
+        assert_eq!(pack_checked_err::<UpperHexDigits>(b"1", 0), Err(Error::Invalid));
         let mut storage = [0xA5; 3];
         let mut output = storage.as_mut_slice();
-        assert_eq!(pack_expanded_nibbles::<UpperHexDigits>(&mut output, b"aB"), Err(Error::Invalid));
+        assert_eq!(pack_nibbles_checked::<UpperHexDigits>(&mut output, b"aB"), Err(Error::Invalid));
         assert_eq!(output, [0xA5; 3]);
-        assert_eq!(pack_expanded_nibbles::<UpperHexDigits>(&mut output, b"AB").unwrap(), [0xAB]);
+        assert_eq!(pack_nibbles_checked::<UpperHexDigits>(&mut output, b"AB").unwrap(), [0xAB]);
         assert_eq!(pack_nibbles::<BcdzDigits>(&mut output, b"123", true, 0).unwrap(), [0x01, 0x23]);
         assert!(output.is_empty());
     }

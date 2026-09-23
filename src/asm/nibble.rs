@@ -1,6 +1,6 @@
 use crate::Error;
 use crate::primitive::nibble::{
-    BcdzDigits, UpperHexDigits, pack_expanded_nibbles, pack_nibbles, unpack_nibbles, unpack_padded_nibbles, validate_nibbles,
+    BcdzDigits, UpperHexDigits, pack_nibbles, pack_nibbles_checked, unpack_nibbles, unpack_padded_nibbles, validate_nibbles,
 };
 
 #[inline(never)]
@@ -14,8 +14,8 @@ pub fn pack_nibbles_bcdz_right<'a>(output: &mut &'a mut [u8], input: &[u8]) -> R
 }
 
 #[inline(never)]
-pub fn pack_expanded_nibbles_hex_upper<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-    pack_expanded_nibbles::<UpperHexDigits>(output, input)
+pub fn pack_nibbles_checked_hex_upper<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+    pack_nibbles_checked::<UpperHexDigits>(output, input)
 }
 
 #[inline(never)]

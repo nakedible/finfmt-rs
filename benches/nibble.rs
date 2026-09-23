@@ -30,11 +30,11 @@ fn bench_pack(suite: &mut Suite) {
                 black_box(buf)
             })
         });
-        group.bench("pack_expanded_nibbles_hex_upper", |b| {
+        group.bench("pack_nibbles_checked_hex_upper", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 8];
                 let mut out = &mut buf[..];
-                let _ = pack_expanded_nibbles_hex_upper(&mut out, black_box(HEX_8));
+                let _ = pack_nibbles_checked_hex_upper(&mut out, black_box(HEX_8));
                 black_box(buf)
             })
         });

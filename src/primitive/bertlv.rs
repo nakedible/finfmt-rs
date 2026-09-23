@@ -3,7 +3,7 @@ use no_panic::no_panic;
 
 use crate::Error;
 use crate::primitive::bytes::{copy_bytes, reserve_bytes, take_bytes};
-use crate::primitive::nibble::{UpperHexDigits, pack_expanded_nibbles};
+use crate::primitive::nibble::{UpperHexDigits, pack_nibbles_checked};
 use crate::utils::cold_path;
 
 /// Maximum encoded tag size accepted by this library's tag parsers.
@@ -151,7 +151,7 @@ pub fn parse_ber_tag_hex(tag: &str) -> Result<([u8; MAX_BER_TAG_BYTES], usize), 
         return Err(Error::Invalid);
     }
     let mut out = [0u8; MAX_BER_TAG_BYTES];
-    let packed = pack_expanded_nibbles::<UpperHexDigits>(&mut &mut out[..], bytes).map_err(|error| {
+    let packed = pack_nibbles_checked::<UpperHexDigits>(&mut &mut out[..], bytes).map_err(|error| {
         cold_path();
         if error == Error::BufferOverflow {
             Error::Internal

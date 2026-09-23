@@ -8,7 +8,7 @@ use crate::primitive::bertlv::{
     MAX_BER_TAG_BYTES, ber_length_width, ber_tag_matches_hex, encode_ber_length, encode_ber_tag, parse_ber_tag_hex,
 };
 use crate::primitive::bytes::reserve_bytes;
-use crate::primitive::nibble::{UpperHexDigits, pack_expanded_nibbles, unpack_nibbles};
+use crate::primitive::nibble::{UpperHexDigits, pack_nibbles_checked, unpack_nibbles};
 use crate::utils::cold_path;
 
 #[inline(always)]
@@ -146,7 +146,7 @@ pub(super) fn encode_unknown_tlv_from_tag(output: &mut &mut [u8], tag: &[u8], va
     encode_ber_tag(&mut head, tag)?;
     encode_ber_length(&mut head, used)?;
     let mut body = body_buf;
-    pack_expanded_nibbles::<UpperHexDigits>(&mut body, value.as_bytes())?;
+    pack_nibbles_checked::<UpperHexDigits>(&mut body, value.as_bytes())?;
     Ok(())
 }
 
