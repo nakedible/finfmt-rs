@@ -36,9 +36,6 @@ pub mod __private {
         crate::utils::cold_path();
     }
 
-
-
-
     #[inline(always)]
     pub fn decode_variant<'a, T, E, F, W>(input: &mut &'a [u8], scratch: &mut &'a mut [u8], wrap: W) -> Result<E, CompositeError>
     where
