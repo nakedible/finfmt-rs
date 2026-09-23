@@ -43,7 +43,7 @@ pub fn decode_be_bytes<const N: usize>(input: &mut &[u8], len: usize, fill: u8) 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn validate_nibble_int_fixed<F: NibbleAlphabet>(input: &[u8], len: usize) -> Result<(), Error> {
-    validate_nibbles(input, &F::NIBBLES)?;
+    validate_nibbles::<F>(input)?;
     validate_byte_length(input, len, len)?;
     Ok(())
 }
@@ -65,7 +65,7 @@ pub fn encode_nibble_int_fixed<F: NibbleAlphabet>(output: &mut &mut [u8], value:
     let mut packed_ptr = &mut packed[..packed_len];
     encode_binary_u64_be_fixed(&mut packed_ptr, value, packed_len)?;
     let mut tail = &mut buf[prefix_len..];
-    let _ = unpack_padded_nibbles(&mut tail, &packed[..packed_len], tail_len, true, 0, &F::DIGITS)?;
+    let _ = unpack_padded_nibbles::<F>(&mut tail, &packed[..packed_len], tail_len, true, 0)?;
     Ok(())
 }
 
@@ -86,7 +86,7 @@ pub fn decode_nibble_int_fixed<F: NibbleAlphabet>(input: &mut &[u8], len: usize)
     let packed_len = len.div_ceil(2).min(WORD_BYTES);
     let mut packed = [0u8; WORD_BYTES];
     let mut packed_ptr = &mut packed[..packed_len];
-    let _ = pack_nibbles(&mut packed_ptr, tail, true, 0, &F::NIBBLES)?;
+    let _ = pack_nibbles::<F>(&mut packed_ptr, tail, true, 0)?;
     let mut packed_input = &packed[..packed_len];
     decode_binary_u64_be_fixed(&mut packed_input, packed_len)
 }
@@ -177,7 +177,7 @@ mod tests {
         encode_be_bytes, encode_binary_i64_be_fixed, encode_binary_u64_be_fixed, encode_nibble_int_fixed, validate_nibble_int_fixed,
     };
     use crate::Error;
-    use crate::primitive::nibble::{HexEbcdic, HexLower, HexUpper, NibbleAlphabet};
+    use crate::primitive::nibble::{EbcdicHexDigits, LowerHexDigits, NibbleAlphabet, UpperHexDigits};
 
     fn encode<const N: usize>(f: impl FnOnce(&mut &mut [u8]) -> Result<(), Error>) -> Result<[u8; N], Error> {
         let mut out = [0u8; N];
@@ -245,60 +245,72 @@ mod tests {
 
     #[test]
     fn test_validate_fixed_width_nibble_integer() {
-        assert_eq!(validate_nibble_int_fixed::<HexUpper>(b"1F", 2), Ok(()));
-        assert_eq!(validate_nibble_int_fixed::<HexUpper>(b"1g", 2), Err(Error::Invalid));
-        assert_eq!(validate_nibble_int_fixed::<HexUpper>(b"1f", 2), Err(Error::Invalid));
-        assert_eq!(validate_nibble_int_fixed::<HexLower>(b"AB", 2), Err(Error::Invalid));
-        assert_eq!(validate_nibble_int_fixed::<HexEbcdic>(b"AF", 2), Err(Error::Invalid));
-        assert_eq!(validate_nibble_int_fixed::<HexUpper>(b"1", 2), Err(Error::InvalidValueLength));
-        assert_eq!(validate_nibble_int_fixed::<HexUpper>(b"g", 2), Err(Error::Invalid));
+        assert_eq!(validate_nibble_int_fixed::<UpperHexDigits>(b"1F", 2), Ok(()));
+        assert_eq!(validate_nibble_int_fixed::<UpperHexDigits>(b"1g", 2), Err(Error::Invalid));
+        assert_eq!(validate_nibble_int_fixed::<UpperHexDigits>(b"1f", 2), Err(Error::Invalid));
+        assert_eq!(validate_nibble_int_fixed::<LowerHexDigits>(b"AB", 2), Err(Error::Invalid));
+        assert_eq!(validate_nibble_int_fixed::<EbcdicHexDigits>(b"AF", 2), Err(Error::Invalid));
+        assert_eq!(validate_nibble_int_fixed::<UpperHexDigits>(b"1", 2), Err(Error::InvalidValueLength));
+        assert_eq!(validate_nibble_int_fixed::<UpperHexDigits>(b"g", 2), Err(Error::Invalid));
     }
 
     #[test]
     fn test_fixed_width_nibble_integer_codecs() {
-        assert_eq!(encode::<2>(|out| encode_nibble_int_fixed::<HexUpper>(out, 0x00, 2)), Ok(*b"00"));
-        assert_eq!(encode::<2>(|out| encode_nibble_int_fixed::<HexUpper>(out, 0xFF, 2)), Ok(*b"FF"));
-        assert_eq!(encode::<2>(|out| encode_nibble_int_fixed::<HexLower>(out, 0xAB, 2)), Ok(*b"ab"));
         assert_eq!(
-            encode::<2>(|out| encode_nibble_int_fixed::<HexEbcdic>(out, 0xAF, 2)),
+            encode::<2>(|out| encode_nibble_int_fixed::<UpperHexDigits>(out, 0x00, 2)),
+            Ok(*b"00")
+        );
+        assert_eq!(
+            encode::<2>(|out| encode_nibble_int_fixed::<UpperHexDigits>(out, 0xFF, 2)),
+            Ok(*b"FF")
+        );
+        assert_eq!(
+            encode::<2>(|out| encode_nibble_int_fixed::<LowerHexDigits>(out, 0xAB, 2)),
+            Ok(*b"ab")
+        );
+        assert_eq!(
+            encode::<2>(|out| encode_nibble_int_fixed::<EbcdicHexDigits>(out, 0xAF, 2)),
             Ok(*b"\xC1\xC6")
         );
-        assert_eq!(encode::<3>(|out| encode_nibble_int_fixed::<HexUpper>(out, 0xABC, 3)), Ok(*b"ABC"));
-        assert_eq!(decode_hex::<HexUpper, 2>(b"00"), Ok(0x00));
-        assert_eq!(decode_hex::<HexUpper, 2>(b"FF"), Ok(0xFF));
-        assert_eq!(decode_hex::<HexLower, 2>(b"ab"), Ok(0xAB));
-        assert_eq!(decode_hex::<HexEbcdic, 2>(b"\xC1\xC6"), Ok(0xAF));
-        assert_eq!(decode_hex::<HexUpper, 3>(b"ABC"), Ok(0xABC));
+        assert_eq!(
+            encode::<3>(|out| encode_nibble_int_fixed::<UpperHexDigits>(out, 0xABC, 3)),
+            Ok(*b"ABC")
+        );
+        assert_eq!(decode_hex::<UpperHexDigits, 2>(b"00"), Ok(0x00));
+        assert_eq!(decode_hex::<UpperHexDigits, 2>(b"FF"), Ok(0xFF));
+        assert_eq!(decode_hex::<LowerHexDigits, 2>(b"ab"), Ok(0xAB));
+        assert_eq!(decode_hex::<EbcdicHexDigits, 2>(b"\xC1\xC6"), Ok(0xAF));
+        assert_eq!(decode_hex::<UpperHexDigits, 3>(b"ABC"), Ok(0xABC));
 
         const WIDE: usize = size_of::<u64>() * 2 + 1;
         let zeros = [b'0'; WIDE];
         let mut wide_zero = vec![b'0'; WIDE];
         wide_zero[0] = b'1';
-        assert_eq!(decode_hex::<HexUpper, WIDE>(&zeros), Ok(0));
-        assert_eq!(decode_hex::<HexUpper, WIDE>(&wide_zero), Err(Error::Invalid));
+        assert_eq!(decode_hex::<UpperHexDigits, WIDE>(&zeros), Ok(0));
+        assert_eq!(decode_hex::<UpperHexDigits, WIDE>(&wide_zero), Err(Error::Invalid));
 
         assert_eq!(
-            encode::<2>(|out| encode_nibble_int_fixed::<HexUpper>(out, 0x100, 2)),
+            encode::<2>(|out| encode_nibble_int_fixed::<UpperHexDigits>(out, 0x100, 2)),
             Err(Error::Invalid)
         );
         assert_eq!(
-            encode::<1>(|out| encode_nibble_int_fixed::<HexUpper>(out, 0x01, 2)),
+            encode::<1>(|out| encode_nibble_int_fixed::<UpperHexDigits>(out, 0x01, 2)),
             Err(Error::BufferOverflow)
         );
-        assert_eq!(decode_hex::<HexUpper, 2>(b"1g"), Err(Error::Invalid));
-        assert_eq!(decode_hex::<HexUpper, 2>(b"1f"), Err(Error::Invalid));
-        assert_eq!(decode_hex::<HexLower, 2>(b"AB"), Err(Error::Invalid));
-        assert_eq!(decode_hex::<HexEbcdic, 2>(b"AF"), Err(Error::Invalid));
-        assert_eq!(decode_hex::<HexUpper, 2>(b"F"), Err(Error::UnexpectedEof));
+        assert_eq!(decode_hex::<UpperHexDigits, 2>(b"1g"), Err(Error::Invalid));
+        assert_eq!(decode_hex::<UpperHexDigits, 2>(b"1f"), Err(Error::Invalid));
+        assert_eq!(decode_hex::<LowerHexDigits, 2>(b"AB"), Err(Error::Invalid));
+        assert_eq!(decode_hex::<EbcdicHexDigits, 2>(b"AF"), Err(Error::Invalid));
+        assert_eq!(decode_hex::<UpperHexDigits, 2>(b"F"), Err(Error::UnexpectedEof));
     }
 
     #[test]
     fn test_nibble_integer_zero_alias_extension() {
         struct ZeroAlias;
         impl NibbleAlphabet for ZeroAlias {
-            const DIGITS: [u8; 16] = HexUpper::DIGITS;
+            const DIGITS: [u8; 16] = UpperHexDigits::DIGITS;
             const NIBBLES: [u8; 256] = {
-                let mut table = HexUpper::NIBBLES;
+                let mut table = UpperHexDigits::NIBBLES;
                 table[b'O' as usize] = 0;
                 table
             };
@@ -341,12 +353,12 @@ mod tests {
         assert_eq!(encode::<0>(|out| encode_binary_u64_be_fixed(out, 0, 0)), Ok([]));
         assert_eq!(encode::<0>(|out| encode_binary_u64_be_fixed(out, 1, 0)), Err(Error::Invalid));
         assert_eq!(decode_be::<0>(b""), Ok(0));
-        assert_eq!(encode::<0>(|out| encode_nibble_int_fixed::<HexUpper>(out, 0, 0)), Ok([]));
+        assert_eq!(encode::<0>(|out| encode_nibble_int_fixed::<UpperHexDigits>(out, 0, 0)), Ok([]));
         assert_eq!(
-            encode::<0>(|out| encode_nibble_int_fixed::<HexUpper>(out, 1, 0)),
+            encode::<0>(|out| encode_nibble_int_fixed::<UpperHexDigits>(out, 1, 0)),
             Err(Error::Invalid)
         );
-        assert_eq!(decode_hex::<HexUpper, 0>(b""), Ok(0));
+        assert_eq!(decode_hex::<UpperHexDigits, 0>(b""), Ok(0));
         for len in [0, 9, usize::MAX] {
             assert_eq!(encode::<9>(|out| encode_binary_i64_be_fixed(out, 0, len)), Err(Error::Invalid));
             assert_eq!(decode_binary_i64_be_fixed(&mut &b""[..], len), Err(Error::Invalid));
@@ -415,7 +427,7 @@ mod proptests {
         encode_binary_u64_be_fixed, encode_nibble_int_fixed,
     };
     use crate::Error;
-    use crate::primitive::nibble::HexUpper;
+    use crate::primitive::nibble::UpperHexDigits;
 
     fn roundtrip_signed_be<const N: usize>(value: i64) -> TestCaseResult {
         let mut output = [0u8; N];
@@ -430,7 +442,7 @@ mod proptests {
         let mut output = [0xA5; 26];
         let mut out = &mut output[..];
         let result = if nibble {
-            encode_nibble_int_fixed::<HexUpper>(&mut out, value, len)
+            encode_nibble_int_fixed::<UpperHexDigits>(&mut out, value, len)
         } else {
             encode_binary_u64_be_fixed(&mut out, value, len)
         };
@@ -444,7 +456,7 @@ mod proptests {
         prop_assert_eq!(output[len], 0xA5);
         let mut input = &output[..];
         let decoded = if nibble {
-            decode_nibble_int_fixed::<HexUpper>(&mut input, len)
+            decode_nibble_int_fixed::<UpperHexDigits>(&mut input, len)
         } else {
             decode_binary_u64_be_fixed(&mut input, len)
         };

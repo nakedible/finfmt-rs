@@ -106,17 +106,18 @@ mod tests {
         Ascii, Ebcdic1142, Ebcdic1142Text, EbcdicLength, EbcdicWireLength, Fixed, FixedBinaryBe, FixedNibbleInt, Length, MinusPrefix,
         Numeric, PackNibblesLeft, PackNibblesRight, PadLeft, PadLeftEven, PadRight, PadRightEven, SignPrefix, Track2,
     };
-    use crate::primitive::nibble::{Bcdz, HexEbcdic, HexUpper};
+    use crate::primitive::nibble::{BcdzDigits, EbcdicHexDigits, UpperHexDigits};
     use crate::{AsciiLength, Ebcdic037, Error, Identity, ScalarFmt, WireFixed, WireLength};
 
-    type LlvarPan = Field<Numeric<0, 19>, EbcdicLength<2>, crate::chain!(PadRight<19, b'?'>, PadLeftEven<b'0'>, PackNibblesRight<Bcdz, 0>)>;
-    type LlvarTrack2 = Field<Track2<0, 37>, EbcdicWireLength<2>, crate::chain!(PadRightEven<b'?'>, PackNibblesLeft<Bcdz, 0x0F>)>;
-    type LlvarHexAscii = Field<Ascii<0, 2>, EbcdicLength<2>, crate::chain!(crate::Ebcdic037, PackNibblesRight<HexEbcdic, 0>)>;
-    type N16 = Field<Numeric<1, 16>, EbcdicLength<2>, crate::chain!(PadLeft<16, b'0'>, PackNibblesRight<Bcdz, 0>)>;
+    type LlvarPan =
+        Field<Numeric<0, 19>, EbcdicLength<2>, crate::chain!(PadRight<19, b'?'>, PadLeftEven<b'0'>, PackNibblesRight<BcdzDigits, 0>)>;
+    type LlvarTrack2 = Field<Track2<0, 37>, EbcdicWireLength<2>, crate::chain!(PadRightEven<b'?'>, PackNibblesLeft<BcdzDigits, 0x0F>)>;
+    type LlvarHexAscii = Field<Ascii<0, 2>, EbcdicLength<2>, crate::chain!(crate::Ebcdic037, PackNibblesRight<EbcdicHexDigits, 0>)>;
+    type N16 = Field<Numeric<1, 16>, EbcdicLength<2>, crate::chain!(PadLeft<16, b'0'>, PackNibblesRight<BcdzDigits, 0>)>;
     type CdAmount = SignPrefix<N16>;
     type PlusMinusAmount = SignPrefix<N16, b'+', b'-'>;
     type MinusAmount = MinusPrefix<N16>;
-    type HexLenAscii = Field<Ascii<0, 255>, Length<FixedNibbleInt<HexUpper, 2>>>;
+    type HexLenAscii = Field<Ascii<0, 255>, Length<FixedNibbleInt<UpperHexDigits, 2>>>;
     type BinaryLenAscii = Field<Ascii<0, 255>, Length<FixedBinaryBe<1>>>;
     type FixedEbcdicNumeric2 = Field<
         Numeric<1, 2>,
@@ -124,7 +125,7 @@ mod tests {
         crate::chain!(PadLeft<2, b'0', 1>, crate::DecodeCheck<crate::Ebcdic037, crate::EbcdicPrintable<2, 2>>),
     >;
     type FixedIbm1142<const N: usize> = Field<Ebcdic1142Text<0, N>, Fixed<N>, crate::chain!(Ebcdic1142, PadRight<N, 0x40>)>;
-    type PaddedHex = PaddedField<crate::HexUpperEven<0, 8>, EbcdicWireLength<2>, PackNibblesRight<HexUpper, 0>, 4, 0x40>;
+    type PaddedHex = PaddedField<crate::HexUpperEven<0, 8>, EbcdicWireLength<2>, PackNibblesRight<UpperHexDigits, 0>, 4, 0x40>;
     type FixedAsciiViaEbcdic = Field<Ascii<1, 1>, Fixed<1>, crate::Ebcdic037>;
     type StrictFixedAsciiViaEbcdic = Field<Ascii<1, 1>, Fixed<1>, crate::DecodeCheck<crate::Ebcdic037, crate::EbcdicPrintable<1, 1>>>;
 

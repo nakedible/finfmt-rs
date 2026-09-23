@@ -5,7 +5,7 @@ use crate::Error;
 use crate::primitive::bytes::{is_filled, reserve_bytes, take_bytes};
 use crate::primitive::ebcdic::{EBCDIC_037_TO_ASCII, translate_bytes};
 use crate::primitive::int::decode_signed_magnitude_i64;
-use crate::primitive::nibble::{Bcdz, NibbleAlphabet, pack_nibbles, unpack_padded_nibbles};
+use crate::primitive::nibble::{BcdzDigits, pack_nibbles, unpack_padded_nibbles};
 use crate::primitive::validation::validate_numeric;
 use crate::utils::cold_path;
 
@@ -435,9 +435,9 @@ pub(crate) fn encode_decimal_packed_digits(
             return Err(Error::Invalid);
         };
         *first_out = first.wrapping_sub(b'0');
-        pack_nibbles(&mut &mut *tail, rest, false, sign, &Bcdz::NIBBLES)?;
+        pack_nibbles::<BcdzDigits>(&mut &mut *tail, rest, false, sign)?;
     } else {
-        pack_nibbles(&mut &mut *tail, digits, false, sign, &Bcdz::NIBBLES)?;
+        pack_nibbles::<BcdzDigits>(&mut &mut *tail, digits, false, sign)?;
     }
     Ok(())
 }
@@ -626,7 +626,7 @@ fn decode_decimal_packed_common<'a>(input: &[u8], output: &mut &'a mut [u8], sig
         return Err(Error::BufferOverflow);
     };
     let len = digits.len();
-    unpack_padded_nibbles(&mut &mut *digits, input, len, false, sign, &Bcdz::DIGITS)?;
+    unpack_padded_nibbles::<BcdzDigits>(&mut &mut *digits, input, len, false, sign)?;
     validate_numeric(&*digits, len, len)?;
     Ok(canonical_signed_digits(buf, negative))
 }

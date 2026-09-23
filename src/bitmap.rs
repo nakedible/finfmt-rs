@@ -11,7 +11,8 @@ mod tests {
 
     type BitmapBinaryHalfWord = crate::Field<crate::Binary<4, 4>, crate::Fixed<4>>;
     type BitmapBinaryWord = crate::Field<crate::Binary<8, 8>, crate::Fixed<8>>;
-    type BitmapAsciiHexWord = crate::Field<crate::Binary<8, 8>, crate::Fixed<8>, crate::UnpackNibbles<crate::primitive::nibble::HexUpper>>;
+    type BitmapAsciiHexWord =
+        crate::Field<crate::Binary<8, 8>, crate::Fixed<8>, crate::UnpackNibbles<crate::primitive::nibble::UpperHexDigits>>;
 
     #[test]
     fn test_bitmap_bits_and_words() {

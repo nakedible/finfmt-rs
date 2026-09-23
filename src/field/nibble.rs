@@ -25,14 +25,14 @@ impl<F: NibbleAlphabet, const ALIGN_RIGHT: bool, const PADDING: u8> Step for Pac
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-        pack_nibbles(output, input, ALIGN_RIGHT, PADDING, &F::NIBBLES)
+        pack_nibbles::<F>(output, input, ALIGN_RIGHT, PADDING)
     }
 
     #[inline(always)]
     fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
         match semantic_len {
-            Some(semantic_len) => unpack_padded_nibbles(scratch, input, semantic_len, ALIGN_RIGHT, PADDING, &F::DIGITS).map(|buf| &*buf),
-            None => unpack_nibbles(scratch, input, &F::DIGITS).map(|buf| &*buf),
+            Some(semantic_len) => unpack_padded_nibbles::<F>(scratch, input, semantic_len, ALIGN_RIGHT, PADDING).map(|buf| &*buf),
+            None => unpack_nibbles::<F>(scratch, input).map(|buf| &*buf),
         }
     }
 }
@@ -55,7 +55,7 @@ impl<F: NibbleAlphabet> Step for UnpackNibbles<F> {
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-        unpack_nibbles(output, input, &F::DIGITS)
+        unpack_nibbles::<F>(output, input)
     }
 
     #[inline(always)]
@@ -66,14 +66,14 @@ impl<F: NibbleAlphabet> Step for UnpackNibbles<F> {
             cold_path();
             return Err(Error::Invalid);
         }
-        pack_expanded_nibbles(scratch, input, &F::NIBBLES).map(|buf| &*buf)
+        pack_expanded_nibbles::<F>(scratch, input).map(|buf| &*buf)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::primitive::nibble::HexUpper;
+    use crate::primitive::nibble::UpperHexDigits;
 
     #[test]
     fn unpack_decode_checks_actual_shape_and_requested_length() {
@@ -86,7 +86,10 @@ mod tests {
             (b"AG", Some(1), Err(Error::Invalid)),
         ] {
             let mut output = [0; 2];
-            assert_eq!(UnpackNibbles::<HexUpper>::decode(input, &mut &mut output[..], requested), expected);
+            assert_eq!(
+                UnpackNibbles::<UpperHexDigits>::decode(input, &mut &mut output[..], requested),
+                expected
+            );
         }
     }
 }

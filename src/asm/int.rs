@@ -4,7 +4,7 @@ use crate::primitive::int::{
     encode_be_bytes, encode_binary_i64_be_fixed, encode_binary_u64_be_fixed, encode_nibble_int_fixed, validate_binary_i64_be_fixed,
     validate_nibble_int_fixed,
 };
-use crate::primitive::nibble::HexUpper;
+use crate::primitive::nibble::UpperHexDigits;
 
 #[inline(never)]
 pub fn encode_be_bytes_4_zero(output: &mut &mut [u8], bytes: &[u8]) -> Result<(), Error> {
@@ -18,17 +18,17 @@ pub fn decode_be_bytes_4_zero_to_8(input: &mut &[u8]) -> Result<[u8; 8], Error> 
 
 #[inline(never)]
 pub fn validate_nibble_int_fixed_hex_upper_4(input: &[u8]) -> Result<(), Error> {
-    validate_nibble_int_fixed::<HexUpper>(input, 4)
+    validate_nibble_int_fixed::<UpperHexDigits>(input, 4)
 }
 
 #[inline(never)]
 pub fn encode_nibble_int_fixed_hex_upper_4(output: &mut &mut [u8], value: u64) -> Result<(), Error> {
-    encode_nibble_int_fixed::<HexUpper>(output, value, 4)
+    encode_nibble_int_fixed::<UpperHexDigits>(output, value, 4)
 }
 
 #[inline(never)]
 pub fn decode_nibble_int_fixed_hex_upper_4(input: &mut &[u8]) -> Result<u64, Error> {
-    decode_nibble_int_fixed::<HexUpper>(input, 4)
+    decode_nibble_int_fixed::<UpperHexDigits>(input, 4)
 }
 
 #[inline(never)]
@@ -63,5 +63,5 @@ pub fn decode_signed_magnitude_i64_combine(negative: bool, magnitude: u64) -> Re
 
 #[inline(never)]
 pub fn decode_nibble_int_fixed_hex_upper_17(input: &mut &[u8]) -> Result<u64, Error> {
-    decode_nibble_int_fixed::<HexUpper>(input, 17)
+    decode_nibble_int_fixed::<UpperHexDigits>(input, 17)
 }

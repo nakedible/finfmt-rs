@@ -160,7 +160,7 @@ mod tests {
 
     use super::*;
     use crate::field::Length;
-    use crate::primitive::nibble::{Bcdz, HexUpper};
+    use crate::primitive::nibble::{BcdzDigits, UpperHexDigits};
     use crate::{
         Ascii, AsciiLength, AsciiWireLength, Binary, Ebcdic037, EbcdicLength, EbcdicWireLength, Error, Field, Fixed, Numeric, PadLeft,
         PadRightEven, SignPrefix, Track2, UnpackNibbles, WireFixed,
@@ -173,13 +173,13 @@ mod tests {
     type A4 = Field<crate::Ascii<4, 4>, Fixed<4>>;
     type BitmapBinaryHalfWord = Field<Binary<4, 4>, Fixed<4>>;
     type BitmapBinaryWord = Field<Binary<8, 8>, Fixed<8>>;
-    type Track2Fmt = Field<Track2<1, 37>, EbcdicWireLength<2>, crate::chain!(PadRightEven<b'?'>, crate::PackNibblesLeft<Bcdz, 0x0F>)>;
+    type Track2Fmt = Field<Track2<1, 37>, EbcdicWireLength<2>, crate::chain!(PadRightEven<b'?'>, crate::PackNibblesLeft<BcdzDigits, 0x0F>)>;
     const PIPE_SEPARATOR: u8 = b'|';
 
     fn error_kind<T>(result: Result<T, CompositeError>) -> Result<T, Error> {
         result.map_err(|error| error.kind)
     }
-    type AmountFmt = SignPrefix<Field<Numeric<1, 16>, Fixed<16>, crate::chain!(PadLeft<16, b'0'>, crate::PackNibblesRight<Bcdz, 0>)>>;
+    type AmountFmt = SignPrefix<Field<Numeric<1, 16>, Fixed<16>, crate::chain!(PadLeft<16, b'0'>, crate::PackNibblesRight<BcdzDigits, 0>)>>;
 
     #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     struct FixedTail {
@@ -320,7 +320,7 @@ mod tests {
     }
 
     type FramedFixedTailFmt = Frame<Field<Ascii<0, 12>, AsciiLength<2>>, FixedTailFmt>;
-    type FramedHexFixedTailFmt = Frame<Field<Binary<0, 12>, AsciiWireLength<2>, UnpackNibbles<HexUpper>>, FixedTailFmt>;
+    type FramedHexFixedTailFmt = Frame<Field<Binary<0, 12>, AsciiWireLength<2>, UnpackNibbles<UpperHexDigits>>, FixedTailFmt>;
     type OptionalA3SpaceFmt = OptionalAbsent<String, SerdeScalar<A3>, ByteFill<b' '>, 3>;
 
     #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1059,7 +1059,7 @@ mod tests {
                 assert_eq!(output[5], 0xFF);
             }
         }
-        type Compressed = Field<Numeric<1, 4>, WireFixed<2>, crate::chain!(PadLeft<4, b'0'>, crate::PackNibblesRight<Bcdz, 0>)>;
+        type Compressed = Field<Numeric<1, 4>, WireFixed<2>, crate::chain!(PadLeft<4, b'0'>, crate::PackNibblesRight<BcdzDigits, 0>)>;
         for capacity in 0..=5 {
             let mut output = [0xFF; 3];
             let mut scratch = [0; 5];

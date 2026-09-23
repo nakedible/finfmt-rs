@@ -131,7 +131,7 @@ impl<S: Step, C: Check> Step for DecodeCheck<S, C> {
 #[cfg(test)]
 mod tests {
     use super::Chain;
-    use crate::primitive::nibble::HexUpper as HexDigits;
+    use crate::primitive::nibble::UpperHexDigits as HexDigits;
     use crate::*;
 
     fn encode_without_scratch<F: ScalarFmt>(input: &[u8], expected: &[u8]) {
@@ -212,13 +212,13 @@ mod tests {
 mod proptests {
     use proptest::prelude::*;
 
-    use crate::primitive::nibble::HexUpper;
+    use crate::primitive::nibble::UpperHexDigits;
     use crate::{Binary, Field, PadRight, Rest, ScalarFmt, UnpackNibbles};
 
     proptest! {
         #[test]
         fn padded_hex_roundtrip(value in prop::collection::vec(any::<u8>(), 0..=32)) {
-            type F = Field<Binary<0,32>, Rest, crate::chain!(UnpackNibbles<HexUpper>, PadRight<3>)>;
+            type F = Field<Binary<0,32>, Rest, crate::chain!(UnpackNibbles<UpperHexDigits>, PadRight<3>)>;
             let mut output = [0;64];
             let mut scratch = [0;128];
             let mut out = output.as_mut_slice();

@@ -521,7 +521,7 @@ mod tests {
         FixedBinaryBe, FixedComp3, FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedEbcdic, ImpliedDecimal,
         MinusPrefix, SignPrefix,
     };
-    use crate::primitive::nibble::{HexEbcdic, HexLower, HexUpper};
+    use crate::primitive::nibble::{EbcdicHexDigits, LowerHexDigits, UpperHexDigits};
     use crate::{Error, ScalarFmt};
 
     fn encode_i64<F: ScalarFmt>(value: i64) -> Result<Vec<u8>, Error> {
@@ -600,9 +600,15 @@ mod tests {
         assert_eq!(encode_bytes::<FixedBinaryBe<2>>(b"\x01\x02\x03"), Err(Error::InvalidValueLength));
         assert_eq!(FixedSignedBinaryBe::<2>::encoded_len(b"\x01"), Err(Error::InvalidValueLength));
         assert_eq!(encode_bytes::<FixedSignedBinaryBe<2>>(b"\x01"), Err(Error::InvalidValueLength));
-        assert_eq!(FixedNibbleInt::<HexUpper, 2>::encoded_len(b"F"), Err(Error::InvalidValueLength));
-        assert_eq!(encode_bytes::<FixedNibbleInt<HexUpper, 2>>(b"FFF"), Err(Error::InvalidValueLength));
-        assert_eq!(encode_bytes::<FixedNibbleInt<HexUpper, 2>>(b"G"), Err(Error::Invalid));
+        assert_eq!(
+            FixedNibbleInt::<UpperHexDigits, 2>::encoded_len(b"F"),
+            Err(Error::InvalidValueLength)
+        );
+        assert_eq!(
+            encode_bytes::<FixedNibbleInt<UpperHexDigits, 2>>(b"FFF"),
+            Err(Error::InvalidValueLength)
+        );
+        assert_eq!(encode_bytes::<FixedNibbleInt<UpperHexDigits, 2>>(b"G"), Err(Error::Invalid));
     }
 
     #[test]
@@ -613,17 +619,17 @@ mod tests {
 
     #[test]
     fn test_fixed_nibble_int_numeric_api() {
-        assert_eq!(encode_u64::<FixedNibbleInt<HexUpper, 2>>(0xFF), Ok(b"FF".to_vec()));
-        assert_eq!(encode_u64::<FixedNibbleInt<HexLower, 2>>(0xAB), Ok(b"ab".to_vec()));
-        assert_eq!(encode_u64::<FixedNibbleInt<HexEbcdic, 2>>(0xAF), Ok(b"\xC1\xC6".to_vec()));
-        assert_eq!(encode_u64::<FixedNibbleInt<HexUpper, 3>>(0xABC), Ok(b"ABC".to_vec()));
-        assert_eq!(decode_u64::<FixedNibbleInt<HexUpper, 2>>(b"FF"), Ok(0xFF));
-        assert_eq!(decode_u64::<FixedNibbleInt<HexLower, 2>>(b"ab"), Ok(0xAB));
-        assert_eq!(decode_u64::<FixedNibbleInt<HexEbcdic, 2>>(b"\xC1\xC6"), Ok(0xAF));
-        assert_eq!(decode_u64::<FixedNibbleInt<HexUpper, 3>>(b"ABC"), Ok(0xABC));
+        assert_eq!(encode_u64::<FixedNibbleInt<UpperHexDigits, 2>>(0xFF), Ok(b"FF".to_vec()));
+        assert_eq!(encode_u64::<FixedNibbleInt<LowerHexDigits, 2>>(0xAB), Ok(b"ab".to_vec()));
+        assert_eq!(encode_u64::<FixedNibbleInt<EbcdicHexDigits, 2>>(0xAF), Ok(b"\xC1\xC6".to_vec()));
+        assert_eq!(encode_u64::<FixedNibbleInt<UpperHexDigits, 3>>(0xABC), Ok(b"ABC".to_vec()));
+        assert_eq!(decode_u64::<FixedNibbleInt<UpperHexDigits, 2>>(b"FF"), Ok(0xFF));
+        assert_eq!(decode_u64::<FixedNibbleInt<LowerHexDigits, 2>>(b"ab"), Ok(0xAB));
+        assert_eq!(decode_u64::<FixedNibbleInt<EbcdicHexDigits, 2>>(b"\xC1\xC6"), Ok(0xAF));
+        assert_eq!(decode_u64::<FixedNibbleInt<UpperHexDigits, 3>>(b"ABC"), Ok(0xABC));
 
-        assert_eq!(encode_i64::<FixedNibbleInt<HexUpper, 1>>(-1), Err(Error::Invalid));
-        assert_eq!(encode_u64::<FixedNibbleInt<HexUpper, 2>>(0x100), Err(Error::Invalid));
+        assert_eq!(encode_i64::<FixedNibbleInt<UpperHexDigits, 1>>(-1), Err(Error::Invalid));
+        assert_eq!(encode_u64::<FixedNibbleInt<UpperHexDigits, 2>>(0x100), Err(Error::Invalid));
     }
 
     #[test]
@@ -783,21 +789,24 @@ mod tests {
             numeric_roundtrip::<FixedBinaryBe<1>>(value, value as u64);
             numeric_roundtrip::<FixedBinaryBe<8>>(value, value as u64);
             numeric_roundtrip::<FixedBinaryBe<9>>(value, value as u64);
-            numeric_roundtrip::<FixedNibbleInt<HexUpper, 0>>(value, value as u64);
-            numeric_roundtrip::<FixedNibbleInt<HexUpper, 1>>(value, value as u64);
-            numeric_roundtrip::<FixedNibbleInt<HexUpper, 16>>(value, value as u64);
-            numeric_roundtrip::<FixedNibbleInt<HexUpper, 17>>(value, value as u64);
+            numeric_roundtrip::<FixedNibbleInt<UpperHexDigits, 0>>(value, value as u64);
+            numeric_roundtrip::<FixedNibbleInt<UpperHexDigits, 1>>(value, value as u64);
+            numeric_roundtrip::<FixedNibbleInt<UpperHexDigits, 16>>(value, value as u64);
+            numeric_roundtrip::<FixedNibbleInt<UpperHexDigits, 17>>(value, value as u64);
             numeric_roundtrip::<FixedSignedBinaryBe<1>>(value, value as u64);
             numeric_roundtrip::<FixedSignedBinaryBe<8>>(value, value as u64);
             numeric_roundtrip::<SignPrefix<FixedBinaryBe<8>>>(value, value as u64);
-            numeric_roundtrip::<MinusPrefix<FixedNibbleInt<HexLower, 16>>>(value, value as u64);
+            numeric_roundtrip::<MinusPrefix<FixedNibbleInt<LowerHexDigits, 16>>>(value, value as u64);
         }
         assert_eq!(encode_u64::<SignPrefix<FixedBinaryBe<1>>>(1), Ok(vec![b'C', 1]));
-        assert_eq!(encode_u64::<MinusPrefix<FixedNibbleInt<HexUpper, 1>>>(15), Ok(b"F".to_vec()));
+        assert_eq!(encode_u64::<MinusPrefix<FixedNibbleInt<UpperHexDigits, 1>>>(15), Ok(b"F".to_vec()));
         assert_eq!(decode_u64::<SignPrefix<FixedBinaryBe<1>>>(&[b'D', 0]), Err(Error::Invalid));
-        assert_eq!(decode_u64::<MinusPrefix<FixedNibbleInt<HexUpper, 1>>>(b"-0"), Err(Error::Invalid));
+        assert_eq!(
+            decode_u64::<MinusPrefix<FixedNibbleInt<UpperHexDigits, 1>>>(b"-0"),
+            Err(Error::Invalid)
+        );
         assert_eq!(decode_i64::<SignPrefix<FixedBinaryBe<1>>>(&[b'D', 0]), Ok(0));
-        assert_eq!(decode_i64::<MinusPrefix<FixedNibbleInt<HexUpper, 1>>>(b"-0"), Ok(0));
+        assert_eq!(decode_i64::<MinusPrefix<FixedNibbleInt<UpperHexDigits, 1>>>(b"-0"), Ok(0));
     }
 
     fn scratch_decode<F: ScalarFmt>(wire: &[u8], capacity: usize, expected: Result<&[u8], Error>, consumed: usize) {
@@ -854,7 +863,7 @@ mod proptests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::primitive::nibble::{HexLower, HexUpper};
+    use crate::primitive::nibble::{LowerHexDigits, UpperHexDigits};
 
     proptest! {
         #[test]
@@ -885,11 +894,11 @@ mod proptests {
             super::tests::numeric_roundtrip::<FixedBinaryBe<1>>(signed, unsigned);
             super::tests::numeric_roundtrip::<FixedBinaryBe<7>>(signed, unsigned);
             super::tests::numeric_roundtrip::<FixedBinaryBe<9>>(signed, unsigned);
-            super::tests::numeric_roundtrip::<FixedNibbleInt<HexUpper, 1>>(signed, unsigned);
-            super::tests::numeric_roundtrip::<FixedNibbleInt<HexUpper, 15>>(signed, unsigned);
-            super::tests::numeric_roundtrip::<FixedNibbleInt<HexUpper, 17>>(signed, unsigned);
+            super::tests::numeric_roundtrip::<FixedNibbleInt<UpperHexDigits, 1>>(signed, unsigned);
+            super::tests::numeric_roundtrip::<FixedNibbleInt<UpperHexDigits, 15>>(signed, unsigned);
+            super::tests::numeric_roundtrip::<FixedNibbleInt<UpperHexDigits, 17>>(signed, unsigned);
             super::tests::numeric_roundtrip::<SignPrefix<FixedBinaryBe<8>>>(signed, unsigned);
-            super::tests::numeric_roundtrip::<MinusPrefix<FixedNibbleInt<HexLower, 16>>>(signed, unsigned);
+            super::tests::numeric_roundtrip::<MinusPrefix<FixedNibbleInt<LowerHexDigits, 16>>>(signed, unsigned);
         }
     }
 }

@@ -8,7 +8,7 @@ use crate::primitive::bertlv::{
     MAX_BER_TAG_BYTES, ber_length_width, ber_tag_matches_hex, encode_ber_length, encode_ber_tag, parse_ber_tag_hex,
 };
 use crate::primitive::bytes::reserve_bytes;
-use crate::primitive::nibble::{HexUpper, NibbleAlphabet, pack_expanded_nibbles, unpack_nibbles};
+use crate::primitive::nibble::{UpperHexDigits, pack_expanded_nibbles, unpack_nibbles};
 use crate::utils::cold_path;
 
 #[inline(always)]
@@ -72,7 +72,7 @@ where
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub(super) fn encode_hex_upper<'a>(scratch: &mut &'a mut [u8], bytes: &[u8]) -> Result<&'a str, Error> {
-    let out = unpack_nibbles(scratch, bytes, &HexUpper::DIGITS)?;
+    let out = unpack_nibbles::<UpperHexDigits>(scratch, bytes)?;
     core::str::from_utf8(out).map_err(|_| {
         cold_path();
         Error::Internal
@@ -93,7 +93,7 @@ pub(super) fn encode_unknown_tag_key<'a>(scratch: &mut &'a mut [u8], tag: &[u8])
     let out = reserve_bytes(scratch, needed)?;
     let mut cursor = &mut *out;
     copy_bytes(&mut cursor, b"t")?;
-    unpack_nibbles(&mut cursor, tag, &HexUpper::DIGITS)?;
+    unpack_nibbles::<UpperHexDigits>(&mut cursor, tag)?;
     copy_bytes(&mut cursor, b"_unknown")?;
     core::str::from_utf8(out).map_err(|_| {
         cold_path();
@@ -146,7 +146,7 @@ pub(super) fn encode_unknown_tlv_from_tag(output: &mut &mut [u8], tag: &[u8], va
     encode_ber_tag(&mut head, tag)?;
     encode_ber_length(&mut head, used)?;
     let mut body = body_buf;
-    pack_expanded_nibbles(&mut body, value.as_bytes(), &<HexUpper as NibbleAlphabet>::NIBBLES)?;
+    pack_expanded_nibbles::<UpperHexDigits>(&mut body, value.as_bytes())?;
     Ok(())
 }
 

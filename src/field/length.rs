@@ -439,7 +439,7 @@ mod tests {
         let max = (usize::MAX as u64).to_be_bytes();
         assert_eq!(decode::<PadRightEven, Length<FixedBinaryBe<8>>>(&max), Err(Error::Invalid));
         assert_eq!(
-            decode::<UnpackNibbles<crate::primitive::nibble::HexUpper>, Length<FixedBinaryBe<8>>>(&max),
+            decode::<UnpackNibbles<crate::primitive::nibble::UpperHexDigits>, Length<FixedBinaryBe<8>>>(&max),
             Err(Error::Invalid)
         );
         let mut ascii = [0; 20];
