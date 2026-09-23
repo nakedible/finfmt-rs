@@ -14,7 +14,7 @@ pub use bitmap::{Bitmap, BitmapLayout, BitmapWord, decode_bitmap, encode_bitmap}
 pub use composite::{
     AbsentFmt, BerTlvExtras, BerTlvList, BoundedList, ByteFill, Composite, CompositeFmt, ContextFmt, DirectScalar, Empty, FixedAreaList,
     FixedCount, FixedCountList, Frame, NoTrailingFields, OptionalAbsent, ScalarValue, Separator, SerdeScalar, TrailingField,
-    TrailingLengthFrame,
+    TrailingLengthFrame, decode, encode,
 };
 pub use field::{
     Alpha, Alphanum, Ascii, AsciiLength, AsciiPrintable, AsciiWireLength, Bcd, BcdBytes, Bcdz, Binary, BlankableEbcdicLength, Check,

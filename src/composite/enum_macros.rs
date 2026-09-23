@@ -41,20 +41,20 @@ macro_rules! tagged_format {
             type Decoded<'de> = $ty<'de>;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
+            fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 match value {
                     $(
                         $ty::$variant(inner) => {
                             let expected: &[u8] = $literal_bytes;
                             <$literal_fmt as $crate::ScalarFmt>::encode(output, scratch, expected).map_err($crate::CompositeError::from)?;
-                            <$fmt as $crate::composite::CompositeFmt<_>>::encode_cursor(output, scratch, inner)
+                            <$fmt as $crate::composite::CompositeFmt<_>>::encode(output, scratch, inner)
                         }
                     )+
                 }
             }
 
             #[inline(always)]
-            fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
+            fn decode<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
                 let mut saw_eof = false;
                 $(
                     $crate::__finfmt_tagged_const_decode_arm!(
@@ -89,20 +89,20 @@ macro_rules! tagged_format {
             type Decoded<'de> = $ty;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
+            fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 match value {
                     $(
                         $ty::$variant(inner) => {
                             let expected: &[u8] = $literal_bytes;
                             <$literal_fmt as $crate::ScalarFmt>::encode(output, scratch, expected).map_err($crate::CompositeError::from)?;
-                            <$fmt as $crate::composite::CompositeFmt<_>>::encode_cursor(output, scratch, inner)
+                            <$fmt as $crate::composite::CompositeFmt<_>>::encode(output, scratch, inner)
                         }
                     )+
                 }
             }
 
             #[inline(always)]
-            fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
+            fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
                 let mut saw_eof = false;
                 $(
                     $crate::__finfmt_tagged_const_decode_arm!(
@@ -155,7 +155,7 @@ macro_rules! choice_format {
                                 $crate::__private::cold_path();
                                 return Err($crate::Error::Invalid.into());
                             }
-                            <$fmt as $crate::composite::CompositeFmt<_>>::encode_cursor(output, scratch, inner)
+                            <$fmt as $crate::composite::CompositeFmt<_>>::encode(output, scratch, inner)
                         }
                     )+
                 }
@@ -209,7 +209,7 @@ macro_rules! choice_format {
                                 $crate::__private::cold_path();
                                 return Err($crate::Error::Invalid.into());
                             }
-                            <$fmt as $crate::composite::CompositeFmt<_>>::encode_cursor(output, scratch, inner)
+                            <$fmt as $crate::composite::CompositeFmt<_>>::encode(output, scratch, inner)
                         }
                     )+
                 }
@@ -246,7 +246,7 @@ macro_rules! __finfmt_union_decode_arms {
         $variant:ident($fmt:ty)
     ) => {{
         let source = *$input;
-        match <$fmt as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch) {
+        match <$fmt as $crate::composite::CompositeFmt<_>>::decode($input, $scratch) {
             Ok(inner) => Ok($ty::$variant(inner)),
             Err(error) => {
                 *$input = source;
@@ -261,7 +261,7 @@ macro_rules! __finfmt_union_decode_arms {
         $variant:ident($fmt:ty) $(, $($rest:tt)*)?
     ) => {{
         let source = *$input;
-        match <$fmt as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch) {
+        match <$fmt as $crate::composite::CompositeFmt<_>>::decode($input, $scratch) {
             Ok(inner) => Ok($ty::$variant(inner)),
             Err(error) if $crate::composite::should_retry_union(error.kind) => {
                 *$input = source;
@@ -355,16 +355,16 @@ macro_rules! union_format {
             type Decoded<'de> = $ty<'de>;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
+            fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 match value {
                     $(
-                        $ty::$variant(inner) => <$fmt as $crate::composite::CompositeFmt<_>>::encode_cursor(output, scratch, inner),
+                        $ty::$variant(inner) => <$fmt as $crate::composite::CompositeFmt<_>>::encode(output, scratch, inner),
                     )+
                 }
             }
 
             #[inline(always)]
-            fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
+            fn decode<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
                 $crate::__finfmt_union_decode_arms!(input, scratch, $ty; $($variant($fmt)),+)
             }
         }
@@ -382,16 +382,16 @@ macro_rules! union_format {
             type Decoded<'de> = $ty;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
+            fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 match value {
                     $(
-                        $ty::$variant(inner) => <$fmt as $crate::composite::CompositeFmt<_>>::encode_cursor(output, scratch, inner),
+                        $ty::$variant(inner) => <$fmt as $crate::composite::CompositeFmt<_>>::encode(output, scratch, inner),
                     )+
                 }
             }
 
             #[inline(always)]
-            fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
+            fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
                 let source = *input;
                 let scratch_source = core::mem::take(scratch);
                 $crate::__finfmt_union_decode_owned_arms!(input, scratch, scratch_source, source, $ty; $($variant($fmt)),+)

@@ -74,7 +74,7 @@ where
     type Decoded<'de> = Vec<Item::Decoded<'de>>;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &Vec<T>) -> Result<(), CompositeError> {
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &Vec<T>) -> Result<(), CompositeError> {
         if value.len() > MAX {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());
@@ -88,7 +88,7 @@ where
             let available = output.len();
             let used = {
                 let mut item_out = &mut **output;
-                Item::encode_cursor(&mut item_out, scratch, item).map_err(|error| error.with_index(index))?;
+                Item::encode(&mut item_out, scratch, item).map_err(|error| error.with_index(index))?;
                 available - item_out.len()
             };
             let encoded = output.split_off_mut(..used).ok_or_else(|| {
@@ -106,7 +106,7 @@ where
     }
 
     #[inline(always)]
-    fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
+    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
         let expected = Count::decode_count(input, scratch)?;
         debug_assert_eq!(expected.is_some(), Count::HAS_COUNT);
         if expected.is_some_and(|count| count > MAX) {
@@ -119,7 +119,7 @@ where
             (Some(count), Some(separator)) => {
                 for index in 0..count {
                     let mut segment = decode_delimited_field(input, separator, index + 1 != count)?;
-                    let value = Item::decode_cursor(&mut segment, scratch).map_err(|error| error.with_index(index))?;
+                    let value = Item::decode(&mut segment, scratch).map_err(|error| error.with_index(index))?;
                     if !segment.is_empty() {
                         crate::utils::cold_path();
                         return Err(Error::Invalid.into());
@@ -136,7 +136,7 @@ where
                     }
                     let (mut segment, terminated) = split_delimited_bytes(input, separator);
                     more = terminated;
-                    let value = Item::decode_cursor(&mut segment, scratch).map_err(|error| error.with_index(values.len()))?;
+                    let value = Item::decode(&mut segment, scratch).map_err(|error| error.with_index(values.len()))?;
                     if !segment.is_empty() {
                         crate::utils::cold_path();
                         return Err(Error::Invalid.into());
@@ -146,7 +146,7 @@ where
             }
             (Some(count), None) => {
                 for index in 0..count {
-                    values.push(Item::decode_cursor(input, scratch).map_err(|error| error.with_index(index))?);
+                    values.push(Item::decode(input, scratch).map_err(|error| error.with_index(index))?);
                 }
             }
             (None, None) => {
@@ -156,7 +156,7 @@ where
                         return Err(Error::Invalid.into());
                     }
                     let before = input.len();
-                    let value = Item::decode_cursor(input, scratch).map_err(|error| error.with_index(values.len()))?;
+                    let value = Item::decode(input, scratch).map_err(|error| error.with_index(values.len()))?;
                     if input.len() == before {
                         crate::utils::cold_path();
                         return Err(Error::Internal.into());
@@ -205,7 +205,7 @@ where
     #[inline(always)]
     fn encode_present(output: &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
         let mut slot_out = output;
-        Inner::encode_cursor(&mut slot_out, scratch, value)?;
+        Inner::encode(&mut slot_out, scratch, value)?;
         if !slot_out.is_empty() {
             crate::utils::cold_path();
             return Err(Error::Internal.into());
@@ -216,7 +216,7 @@ where
     #[inline(always)]
     fn decode_present<'de>(input: &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError> {
         let mut slot_in = input;
-        let value = Inner::decode_cursor(&mut slot_in, scratch)?;
+        let value = Inner::decode(&mut slot_in, scratch)?;
         if !slot_in.is_empty() {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());
@@ -275,7 +275,7 @@ where
     type Decoded<'de> = Vec<Slot::Decoded<'de>>;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &Vec<T>) -> Result<(), CompositeError> {
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &Vec<T>) -> Result<(), CompositeError> {
         if value.len() > MAX {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());
@@ -305,7 +305,7 @@ where
     }
 
     #[inline(always)]
-    fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError> {
+    fn decode<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError> {
         let plan = Len::decode_plan(input, scratch)?;
         let logical_len = plan.semantic_len.unwrap_or(plan.wire_len);
         let area_len = fixed_area_lens(Slot::WIRE_LEN, MAX)?;
@@ -358,7 +358,7 @@ mod tests {
     {
         let mut input = wire;
         let mut scratch = [0; 128];
-        let values = F::decode(&mut input, &mut scratch).map_err(|e| e.kind)?;
+        let values = F::decode(&mut input, &mut &mut scratch[..]).map_err(|e| e.kind)?;
         Ok((values, input.to_vec()))
     }
 
@@ -377,7 +377,10 @@ mod tests {
         let error = |result: Result<Vec<String>, CompositeError>| result.unwrap_err().to_string();
         let mut input = &b"3A||B"[..];
         type Counted2 = BoundedList<String, AsciiLength<1>, One, Separator<b'|'>, 4>;
-        assert_eq!(error(Counted2::decode(&mut input, &mut [0; 8])), "[1]: unexpected end of input");
+        assert_eq!(
+            error(Counted2::decode(&mut input, &mut &mut [0; 8][..])),
+            "[1]: unexpected end of input"
+        );
         let values = vec!["A".to_owned(), "BC".to_owned()];
         assert_eq!(
             Counted2::encode(&mut [0; 8].as_mut_slice(), &mut [], &values)
@@ -387,7 +390,10 @@ mod tests {
         );
         type Two = DirectScalar<Field<Ascii<2, 2>, Fixed<2>>>;
         type Area = FixedAreaList<String, AsciiLength<1>, OptionalAbsent<String, Two, ByteFill, 2>, 3>;
-        assert_eq!(error(Area::decode(&mut &b"4AB\xff\xff  "[..], &mut [])), "[1]: invalid data");
+        assert_eq!(
+            error(Area::decode(&mut &b"4AB\xff\xff  "[..], &mut &mut [][..])),
+            "[1]: invalid data"
+        );
     }
 
     #[test]
@@ -439,17 +445,20 @@ mod tests {
         type Zero = FixedCountList<(), Empty<()>, 2>;
         let mut input = &b"TAIL"[..];
         Zero::encode(&mut &mut [][..], &mut [], &vec![(), ()]).unwrap();
-        assert_eq!(Zero::decode(&mut input, &mut []).unwrap(), [(), ()]);
+        assert_eq!(Zero::decode(&mut input, &mut &mut [][..]).unwrap(), [(), ()]);
         assert_eq!(input, b"TAIL");
         type CountedZero = BoundedList<(), AsciiLength<1>, Empty<()>, (), 4>;
         let mut output = [0; 1];
         CountedZero::encode(&mut output.as_mut_slice(), &mut [], &vec![(), ()]).unwrap();
         assert_eq!(output, *b"2");
         let mut input = &b"2TAIL"[..];
-        assert_eq!(CountedZero::decode(&mut input, &mut []).unwrap(), [(), ()]);
+        assert_eq!(CountedZero::decode(&mut input, &mut &mut [][..]).unwrap(), [(), ()]);
         assert_eq!(input, b"TAIL");
         type UncountedZero = BoundedList<(), (), Empty<()>, (), 4>;
-        assert_eq!(UncountedZero::decode(&mut input, &mut []).unwrap_err().kind, Error::Internal);
+        assert_eq!(
+            UncountedZero::decode(&mut input, &mut &mut [][..]).unwrap_err().kind,
+            Error::Internal
+        );
 
         type PlainOne = BoundedList<String, (), One, (), 4>;
         type CountedOne = BoundedList<String, AsciiLength<1>, One, (), 4>;
@@ -468,7 +477,7 @@ mod tests {
         let mut scratch = [0; 2];
         let start = scratch.as_ptr();
         let mut workspace = scratch.as_mut_slice();
-        let values = List::decode_cursor(&mut input, &mut workspace).unwrap();
+        let values = List::decode(&mut input, &mut workspace).unwrap();
         assert_eq!(values, ["A", "B"]);
         assert_eq!(values[0].as_ptr(), start);
         assert_eq!(values[1].as_ptr(), start.wrapping_add(1));
@@ -512,7 +521,7 @@ mod tests {
         type Two = DirectScalar<Field<Ascii<2, 2>, Fixed<2>>>;
         type Optional = OptionalAbsent<String, Two, SpacesOrZeros, 2>;
         type Area = FixedAreaList<String, AsciiLength<1>, Optional, 3>;
-        assert_eq!(Optional::decode(&mut &b"00"[..], &mut []), Ok(None));
+        assert_eq!(Optional::decode(&mut &b"00"[..], &mut &mut [][..]), Ok(None));
         for (wire, expected) in [
             (&b"0  00  "[..], &[][..]),
             (b"2AB00  ", &["AB"]),
@@ -538,7 +547,10 @@ mod tests {
         roundtrip::<Area>(&["AB"], b"2AB    ");
         roundtrip::<Area>(&["AB", "00", "  "], b"6AB00  ");
         type ZeroWidth = FixedAreaList<(), AsciiLength<1>, OptionalAbsent<(), Empty<()>, ByteFill, 0>, 3>;
-        assert_eq!(ZeroWidth::decode(&mut &b"0"[..], &mut []).unwrap_err().kind, Error::Internal);
+        assert_eq!(
+            ZeroWidth::decode(&mut &b"0"[..], &mut &mut [][..]).unwrap_err().kind,
+            Error::Internal
+        );
     }
 
     #[test]
@@ -555,7 +567,7 @@ mod tests {
         let mut scratch = [0; 2];
         let start = scratch.as_ptr();
         let mut workspace = scratch.as_mut_slice();
-        let values = Area::decode_cursor(&mut input, &mut workspace).unwrap();
+        let values = Area::decode(&mut input, &mut workspace).unwrap();
         assert_eq!(values, ["A"]);
         assert_eq!(values[0].as_ptr(), start);
         assert_eq!(workspace.len(), 1);

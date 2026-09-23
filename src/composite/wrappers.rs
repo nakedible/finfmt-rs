@@ -5,12 +5,12 @@ impl<T, F: ScalarFmt, S: CompositeFmt<T>> CompositeFmt<T> for Frame<F, S> {
     type Decoded<'de> = S::Decoded<'de>;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
         // The inner value is staged in scratch, using the unwritten output as its workspace.
         let used = {
             let mut semantic_out = &mut *scratch;
             let available = semantic_out.len();
-            S::encode_cursor(&mut semantic_out, output, value)?;
+            S::encode(&mut semantic_out, output, value)?;
             available - semantic_out.len()
         };
         let (semantic, scratch) = split_scratch(scratch, used)?;
@@ -19,14 +19,14 @@ impl<T, F: ScalarFmt, S: CompositeFmt<T>> CompositeFmt<T> for Frame<F, S> {
     }
 
     #[inline(always)]
-    fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
+    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
         let source = *input;
         let mut input_ptr = source;
         let value_bytes = F::decode(&mut input_ptr, scratch)?;
         advance_input(input, source.len() - input_ptr.len())?;
 
         let mut value_input = value_bytes;
-        let value = S::decode_cursor(&mut value_input, scratch)?;
+        let value = S::decode(&mut value_input, scratch)?;
         if !value_input.is_empty() {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());
@@ -202,11 +202,11 @@ where
     type Decoded<'de> = Body::Decoded<'de>;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
         let full_len = trailing_body_len::<Tails, BASE_LEN>()?;
         let (body, scratch) = split_scratch(scratch, full_len)?;
         let mut body_out = &mut body[..];
-        Body::encode_cursor(&mut body_out, scratch, value)?;
+        Body::encode(&mut body_out, scratch, value)?;
         if !body_out.is_empty() {
             crate::utils::cold_path();
             return Err(Error::Internal.into());
@@ -226,7 +226,7 @@ where
     }
 
     #[inline(always)]
-    fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
+    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
         let plan = Len::decode_plan(input, scratch)?;
         let logical_len = plan.semantic_len.unwrap_or(plan.wire_len);
         if logical_len < BASE_LEN {
@@ -251,7 +251,7 @@ where
         Tails::validate_omitted(tails, tail_len, scratch)?;
 
         let mut body_input = body;
-        let value = Body::decode_cursor(&mut body_input, scratch)?;
+        let value = Body::decode(&mut body_input, scratch)?;
         if !body_input.is_empty() {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());
@@ -268,7 +268,7 @@ where
     type Decoded<'de> = Option<Inner::Decoded<'de>>;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &Option<T>) -> Result<(), CompositeError> {
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &Option<T>) -> Result<(), CompositeError> {
         let area = output.split_off_mut(..N).ok_or_else(|| {
             crate::utils::cold_path();
             CompositeError::from(Error::BufferOverflow)
@@ -276,7 +276,7 @@ where
         let mut area_out = &mut area[..];
         match value {
             None => Absent::encode_absent(&mut area_out, scratch)?,
-            Some(value) => Inner::encode_cursor(&mut area_out, scratch, value)?,
+            Some(value) => Inner::encode(&mut area_out, scratch, value)?,
         }
         if !area_out.is_empty() {
             crate::utils::cold_path();
@@ -286,7 +286,7 @@ where
     }
 
     #[inline(always)]
-    fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
+    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
         let area = input.split_off(..N).ok_or_else(|| {
             crate::utils::cold_path();
             CompositeError::from(Error::UnexpectedEof)
@@ -295,7 +295,7 @@ where
             return Ok(None);
         }
         let mut area_input = area;
-        let value = Inner::decode_cursor(&mut area_input, scratch)?;
+        let value = Inner::decode(&mut area_input, scratch)?;
         if !area_input.is_empty() {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());
@@ -322,12 +322,12 @@ impl<T: Default> CompositeFmt<T> for Empty<T> {
     type Decoded<'de> = T;
 
     #[inline(always)]
-    fn encode_cursor(_output: &mut &mut [u8], _scratch: &mut [u8], _value: &T) -> Result<(), CompositeError> {
+    fn encode(_output: &mut &mut [u8], _scratch: &mut [u8], _value: &T) -> Result<(), CompositeError> {
         Ok(())
     }
 
     #[inline(always)]
-    fn decode_cursor<'a>(_input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
+    fn decode<'a>(_input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
         Ok(T::default())
     }
 }
@@ -367,8 +367,8 @@ mod tests {
             let start = scratch.as_ptr();
             let mut workspace = &mut scratch[..capacity];
             let mut input = &b"---\xC1\xC2\xC3TAIL"[..];
-            assert_eq!(OptionalText::decode_cursor(&mut input, &mut workspace), Ok(None));
-            let text = OptionalText::decode_cursor(&mut input, &mut workspace).unwrap().unwrap();
+            assert_eq!(OptionalText::decode(&mut input, &mut workspace), Ok(None));
+            let text = OptionalText::decode(&mut input, &mut workspace).unwrap().unwrap();
             assert_eq!(text, "ABC");
             assert_eq!(text.as_ptr(), start);
             assert_eq!(workspace.len(), capacity - 3);

@@ -10,7 +10,7 @@ macro_rules! __finfmt_concat_encode_field {
             .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
     }};
     ($value:expr, $output:expr, $scratch:expr, $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?>) => {{
-        <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::encode_cursor($output, $scratch, &$value.$field)
+        <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::encode($output, $scratch, &$value.$field)
             .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
     }};
     ($value:expr, $output:expr, $scratch:expr, $field:ident : Composite<$fmt:ty>::with($context:ident)) => {{
@@ -38,14 +38,14 @@ macro_rules! concat_format {
             type Decoded<'de> = $ty<'de>;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
+            fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 let _ = value;
                 $crate::__finfmt_concat_encode_fields!(value, output, scratch; $($fields)*);
                 Ok(())
             }
 
             #[inline(always)]
-            fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
+            fn decode<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
                 $crate::__finfmt_concat_decode_construct_as!(input, scratch, $ty<'de>, $ty; $($fields)*)
             }
         }
@@ -63,14 +63,14 @@ macro_rules! concat_format {
             type Decoded<'de> = $ty;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
+            fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 let _ = value;
                 $crate::__finfmt_concat_encode_fields!(value, output, scratch; $($fields)*);
                 Ok(())
             }
 
             #[inline(always)]
-            fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
+            fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
                 $crate::__finfmt_concat_decode_construct!(input, scratch, $ty; $($fields)*)
             }
         }
@@ -194,7 +194,7 @@ macro_rules! __finfmt_concat_encode_tail_fields {
                 Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)))?;
             }
             (false, Some(inner)) => {
-                <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::encode_cursor($output, $scratch, inner)
+                <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::encode($output, $scratch, inner)
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
             }
             (false, None) => {
@@ -211,7 +211,7 @@ macro_rules! __finfmt_concat_encode_tail_fields {
                 Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)))?;
             }
             (false, Some(inner)) => {
-                <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::encode_cursor($output, $scratch, inner)
+                <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::encode($output, $scratch, inner)
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
             }
             (false, None) => {
@@ -228,7 +228,7 @@ macro_rules! __finfmt_concat_encode_tail_fields {
                 Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)))?;
             }
             (false, Some(inner)) => {
-                <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::encode_cursor($output, $scratch, inner)
+                <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::encode($output, $scratch, inner)
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
             }
             (false, None) => {
@@ -245,7 +245,7 @@ macro_rules! __finfmt_concat_encode_tail_fields {
                 Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)))?;
             }
             (false, Some(inner)) => {
-                <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::encode_cursor($output, $scratch, inner)
+                <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::encode($output, $scratch, inner)
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
             }
             (false, None) => {
@@ -358,7 +358,7 @@ macro_rules! __finfmt_concat_decode_build {
         )
     }};
     ($input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : Composite<$fmt:ty> $(, $($rest:tt)*)?) => {{
-        let $field = <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch)
+        let $field = <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::decode($input, $scratch)
             .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
         $crate::__finfmt_concat_decode_build!($input, $scratch, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
@@ -368,7 +368,7 @@ macro_rules! __finfmt_concat_decode_build {
         $crate::__finfmt_concat_decode_build!($input, $scratch, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
     ($input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?> $(, $($rest:tt)*)?) => {{
-        let $field = <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch)
+        let $field = <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode($input, $scratch)
             .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
         $crate::__finfmt_concat_decode_build!($input, $scratch, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
@@ -390,7 +390,7 @@ macro_rules! __finfmt_concat_decode_tail_build {
             None
         } else {
             Some(
-                <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch)
+                <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::decode($input, $scratch)
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
             )
         };
@@ -401,7 +401,7 @@ macro_rules! __finfmt_concat_decode_tail_build {
             None
         } else {
             Some(
-                <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch)
+                <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::decode($input, $scratch)
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
             )
         };
@@ -412,7 +412,7 @@ macro_rules! __finfmt_concat_decode_tail_build {
             None
         } else {
             Some(
-                <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch)
+                <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode($input, $scratch)
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
             )
         };
@@ -423,7 +423,7 @@ macro_rules! __finfmt_concat_decode_tail_build {
             None
         } else {
             Some(
-                <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode_cursor($input, $scratch)
+                <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode($input, $scratch)
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
             )
         };

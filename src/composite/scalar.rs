@@ -82,13 +82,13 @@ impl<T: ScalarValue, F: ScalarFmt> CompositeFmt<T> for DirectScalar<F> {
     type Decoded<'de> = T;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
         T::encode_with::<F>(value, output, scratch)?;
         Ok(())
     }
 
     #[inline(always)]
-    fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<T, CompositeError> {
+    fn decode<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<T, CompositeError> {
         let value = T::decode_with::<F>(input, scratch)?;
         Ok(value)
     }
@@ -98,13 +98,13 @@ impl<'value, F: ScalarFmt> CompositeFmt<&'value str> for DirectScalar<F, &'value
     type Decoded<'de> = &'de str;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &&'value str) -> Result<(), CompositeError> {
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &&'value str) -> Result<(), CompositeError> {
         F::encode_str(output, scratch, value)?;
         Ok(())
     }
 
     #[inline(always)]
-    fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError> {
+    fn decode<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError> {
         Ok(F::decode_str(input, scratch)?)
     }
 }
@@ -113,12 +113,12 @@ impl<T, F: CompositeFmt<T>> CompositeFmt<T> for Composite<F> {
     type Decoded<'de> = F::Decoded<'de>;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
-        F::encode_cursor(output, scratch, value)
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
+        F::encode(output, scratch, value)
     }
 
     #[inline(always)]
-    fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError> {
-        F::decode_cursor(input, scratch)
+    fn decode<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError> {
+        F::decode(input, scratch)
     }
 }

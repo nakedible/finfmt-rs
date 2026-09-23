@@ -644,13 +644,13 @@ where
     type Decoded<'de> = T;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
         encode_serde_scalar::<T, F>(value, output, scratch)?;
         Ok(())
     }
 
     #[inline(always)]
-    fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<T, CompositeError> {
+    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<T, CompositeError> {
         let value = decode_serde_scalar::<T, F>(input, scratch)?;
         Ok(value)
     }

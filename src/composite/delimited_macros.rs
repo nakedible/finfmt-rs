@@ -273,14 +273,14 @@ macro_rules! delimited_format {
             type Decoded<'de> = $ty<'de>;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
+            fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 let _ = value;
                 $crate::__finfmt_delimited_encode_fields!(value, output, scratch, $separator; $($fields)*);
                 Ok(())
             }
 
             #[inline(always)]
-            fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
+            fn decode<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
                 $crate::__finfmt_delimited_decode_construct_as!(input, scratch, $separator, $ty<'de>, $ty; $($fields)*)
             }
         }
@@ -298,14 +298,14 @@ macro_rules! delimited_format {
             type Decoded<'de> = $ty;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
+            fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 let _ = value;
                 $crate::__finfmt_delimited_encode_fields!(value, output, scratch, $separator; $($fields)*);
                 Ok(())
             }
 
             #[inline(always)]
-            fn decode_cursor<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
+            fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
                 $crate::__finfmt_delimited_decode_construct!(input, scratch, $separator, $ty; $($fields)*)
             }
         }
