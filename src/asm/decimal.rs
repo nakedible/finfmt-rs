@@ -112,13 +112,13 @@ pub fn encode_decimal_ascii_fixed_3(output: &mut &mut [u8], value: usize) -> Res
 #[inline(never)]
 pub fn encode_ascii_ll_field(output: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
     use crate::{AsciiLength, Binary, Field, ScalarFmt};
-    Field::<Binary<0, 99>, AsciiLength<2>>::encode(output, &mut &mut [][..], input)
+    Field::<Binary<0, 99>, AsciiLength<2>>::encode(output, &mut [][..], input)
 }
 
 #[inline(never)]
 pub fn encode_ascii_lll_field(output: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
     use crate::{AsciiLength, Binary, Field, ScalarFmt};
-    Field::<Binary<0, 999>, AsciiLength<3>>::encode(output, &mut &mut [][..], input)
+    Field::<Binary<0, 999>, AsciiLength<3>>::encode(output, &mut [][..], input)
 }
 
 #[inline(never)]

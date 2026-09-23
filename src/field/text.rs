@@ -19,7 +19,7 @@ impl Step for Identity {
     }
 
     #[inline(always)]
-    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         copy_bytes(output, input)
     }
 
@@ -54,7 +54,7 @@ impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadRigh
     }
 
     #[inline(always)]
-    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         encode_bytes(output, input, PAD_TO, false, CHAR)
     }
 
@@ -78,7 +78,7 @@ impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadLeft
     }
 
     #[inline(always)]
-    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         encode_bytes(output, input, PAD_TO, true, CHAR)
     }
 
@@ -105,7 +105,7 @@ impl<const CHAR: u8> Step for PadRightEven<CHAR> {
     }
 
     #[inline(always)]
-    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         encode_bytes(output, input, Self::encoded_len(input.len())?, false, CHAR)
     }
 
@@ -132,7 +132,7 @@ impl<const CHAR: u8> Step for PadLeftEven<CHAR> {
     }
 
     #[inline(always)]
-    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         encode_bytes(output, input, Self::encoded_len(input.len())?, true, CHAR)
     }
 

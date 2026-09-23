@@ -24,7 +24,7 @@ pub struct Composite<F>(PhantomData<F>);
 /// need custom encode/decode behavior can implement this trait directly and
 /// then use `field: DirectScalar<Fmt>` in the composite format definition.
 pub trait ScalarValue {
-    fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error>;
+    fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error>;
     fn decode_with<'de, F: ScalarFmt>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self, Error>
     where
         Self: Sized;
@@ -32,7 +32,7 @@ pub trait ScalarValue {
 
 impl ScalarValue for String {
     #[inline(always)]
-    fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error> {
+    fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
         F::encode_str(output, scratch, self)
     }
 
@@ -44,7 +44,7 @@ impl ScalarValue for String {
 
 impl ScalarValue for u64 {
     #[inline(always)]
-    fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error> {
+    fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
         F::encode_u64(output, scratch, *self)
     }
 
@@ -56,7 +56,7 @@ impl ScalarValue for u64 {
 
 impl ScalarValue for usize {
     #[inline(always)]
-    fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error> {
+    fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
         F::encode_usize(output, scratch, *self)
     }
 
@@ -68,7 +68,7 @@ impl ScalarValue for usize {
 
 impl ScalarValue for i64 {
     #[inline(always)]
-    fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error> {
+    fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
         F::encode_i64(output, scratch, *self)
     }
 
@@ -82,7 +82,7 @@ impl<T: ScalarValue, F: ScalarFmt> CompositeFmt<T> for DirectScalar<F> {
     type Decoded<'de> = T;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), CompositeError> {
+    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
         T::encode_with::<F>(value, output, scratch)?;
         Ok(())
     }
@@ -98,7 +98,7 @@ impl<'value, F: ScalarFmt> CompositeFmt<&'value str> for DirectScalar<F, &'value
     type Decoded<'de> = &'de str;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &&'value str) -> Result<(), CompositeError> {
+    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &&'value str) -> Result<(), CompositeError> {
         F::encode_str(output, scratch, value)?;
         Ok(())
     }
@@ -113,7 +113,7 @@ impl<T, F: CompositeFmt<T>> CompositeFmt<T> for Composite<F> {
     type Decoded<'de> = F::Decoded<'de>;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), CompositeError> {
+    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
         F::encode_cursor(output, scratch, value)
     }
 

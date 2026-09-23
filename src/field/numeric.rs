@@ -103,7 +103,7 @@ impl<F: ScalarFmt, const POS: u8, const NEG: u8> ScalarFmt for SignPrefix<F, POS
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
         Self::validate_signs()?;
         let (negative, digits) = split_signed_input(input)?;
         encode_sign(output, negative, POS, NEG)?;
@@ -131,7 +131,7 @@ impl<F: ScalarFmt, const POS: u8, const NEG: u8> ScalarFmt for SignPrefix<F, POS
     }
 
     #[inline(always)]
-    fn encode_u64(output: &mut &mut [u8], scratch: &mut &mut [u8], input: u64) -> Result<(), Error> {
+    fn encode_u64(output: &mut &mut [u8], scratch: &mut [u8], input: u64) -> Result<(), Error> {
         Self::validate_signs()?;
         encode_sign(output, false, POS, NEG)?;
         F::encode_u64(output, scratch, input)
@@ -157,7 +157,7 @@ impl<F: ScalarFmt, const POS: u8, const NEG: u8> ScalarFmt for SignPrefix<F, POS
     }
 
     #[inline(always)]
-    fn encode_i64(output: &mut &mut [u8], scratch: &mut &mut [u8], input: i64) -> Result<(), Error> {
+    fn encode_i64(output: &mut &mut [u8], scratch: &mut [u8], input: i64) -> Result<(), Error> {
         Self::validate_signs()?;
         encode_sign(output, input < 0, POS, NEG)?;
         F::encode_u64(output, scratch, input.unsigned_abs())
@@ -184,7 +184,7 @@ impl<F: ScalarFmt, const NEG: u8> ScalarFmt for MinusPrefix<F, NEG> {
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
         let (negative, digits) = split_signed_input(input)?;
         encode_negative_prefix(output, negative, NEG)?;
         F::encode(output, scratch, digits)
@@ -206,7 +206,7 @@ impl<F: ScalarFmt, const NEG: u8> ScalarFmt for MinusPrefix<F, NEG> {
     }
 
     #[inline(always)]
-    fn encode_u64(output: &mut &mut [u8], scratch: &mut &mut [u8], input: u64) -> Result<(), Error> {
+    fn encode_u64(output: &mut &mut [u8], scratch: &mut [u8], input: u64) -> Result<(), Error> {
         F::encode_u64(output, scratch, input)
     }
 
@@ -229,7 +229,7 @@ impl<F: ScalarFmt, const NEG: u8> ScalarFmt for MinusPrefix<F, NEG> {
     }
 
     #[inline(always)]
-    fn encode_i64(output: &mut &mut [u8], scratch: &mut &mut [u8], input: i64) -> Result<(), Error> {
+    fn encode_i64(output: &mut &mut [u8], scratch: &mut [u8], input: i64) -> Result<(), Error> {
         encode_negative_prefix(output, input < 0, NEG)?;
         F::encode_u64(output, scratch, input.unsigned_abs())
     }
@@ -250,7 +250,7 @@ impl<F: NibbleAlphabet, const N: usize> ScalarFmt for FixedNibbleInt<F, N> {
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
         validate_nibble_int_fixed::<F>(input, N)?;
         encode_exact_bytes(output, input, N)
     }
@@ -272,7 +272,7 @@ impl<F: NibbleAlphabet, const N: usize> ScalarFmt for FixedNibbleInt<F, N> {
     }
 
     #[inline(always)]
-    fn encode_u64(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: u64) -> Result<(), Error> {
+    fn encode_u64(output: &mut &mut [u8], _scratch: &mut [u8], input: u64) -> Result<(), Error> {
         encode_nibble_int_fixed::<F>(output, input, N)
     }
 
@@ -291,7 +291,7 @@ impl<F: NibbleAlphabet, const N: usize> ScalarFmt for FixedNibbleInt<F, N> {
     }
 
     #[inline(always)]
-    fn encode_i64(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: i64) -> Result<(), Error> {
+    fn encode_i64(output: &mut &mut [u8], _scratch: &mut [u8], input: i64) -> Result<(), Error> {
         if input < 0 {
             cold_path();
             return Err(Error::Invalid);
@@ -317,7 +317,7 @@ impl<const N: usize> ScalarFmt for FixedBinaryBe<N> {
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
         encode_exact_bytes(output, input, N)
     }
 
@@ -336,7 +336,7 @@ impl<const N: usize> ScalarFmt for FixedBinaryBe<N> {
     }
 
     #[inline(always)]
-    fn encode_u64(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: u64) -> Result<(), Error> {
+    fn encode_u64(output: &mut &mut [u8], _scratch: &mut [u8], input: u64) -> Result<(), Error> {
         encode_binary_u64_be_fixed(output, input, N)
     }
 
@@ -355,7 +355,7 @@ impl<const N: usize> ScalarFmt for FixedBinaryBe<N> {
     }
 
     #[inline(always)]
-    fn encode_i64(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: i64) -> Result<(), Error> {
+    fn encode_i64(output: &mut &mut [u8], _scratch: &mut [u8], input: i64) -> Result<(), Error> {
         if input < 0 {
             cold_path();
             return Err(Error::Invalid);
@@ -381,7 +381,7 @@ impl<const N: usize> ScalarFmt for FixedSignedBinaryBe<N> {
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
         encode_exact_bytes(output, input, N)
     }
 
@@ -400,7 +400,7 @@ impl<const N: usize> ScalarFmt for FixedSignedBinaryBe<N> {
     }
 
     #[inline(always)]
-    fn encode_u64(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: u64) -> Result<(), Error> {
+    fn encode_u64(output: &mut &mut [u8], _scratch: &mut [u8], input: u64) -> Result<(), Error> {
         let input = i64::try_from(input).map_err(|_| {
             cold_path();
             Error::Invalid
@@ -424,7 +424,7 @@ impl<const N: usize> ScalarFmt for FixedSignedBinaryBe<N> {
     }
 
     #[inline(always)]
-    fn encode_i64(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: i64) -> Result<(), Error> {
+    fn encode_i64(output: &mut &mut [u8], _scratch: &mut [u8], input: i64) -> Result<(), Error> {
         encode_binary_i64_be_fixed(output, input, N)
     }
 
@@ -442,7 +442,7 @@ impl<const N: usize> ScalarFmt for FixedComp3<N> {
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
         encode_decimal_packed_fixed(output, input, N)
     }
 
@@ -460,7 +460,7 @@ impl<const N: usize> ScalarFmt for FixedSignedComp3<N> {
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
         encode_decimal_packed_signed_fixed(output, input, N)
     }
 
@@ -478,7 +478,7 @@ impl<const N: usize> ScalarFmt for FixedSignedZonedEbcdic<N> {
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
         encode_ebcdic_zoned_decimal(output, input, N)
     }
 
@@ -496,8 +496,8 @@ impl<F: FixedDecimalCodec, const SCALE: usize> ScalarFmt for ImpliedDecimal<F, S
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
-        let digits = encode_decimal_implied(scratch, input, SCALE, F::max_digits()?, F::SIGNED)?;
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
+        let digits = encode_decimal_implied(&mut &mut *scratch, input, SCALE, F::max_digits()?, F::SIGNED)?;
         let (negative, digits) = split_signed_input(digits)?;
         F::encode_digits(output, digits, negative)
     }
@@ -525,8 +525,8 @@ mod tests {
         let used = {
             let mut out_ptr = output.as_mut_slice();
             let mut scratch = [];
-            let mut scratch_ptr = scratch.as_mut_slice();
-            F::encode_i64(&mut out_ptr, &mut scratch_ptr, value)?;
+            let scratch_ptr = scratch.as_mut_slice();
+            F::encode_i64(&mut out_ptr, scratch_ptr, value)?;
             total - out_ptr.len()
         };
         Ok(output[..used].to_vec())
@@ -552,8 +552,8 @@ mod tests {
         let used = {
             let mut out_ptr = output.as_mut_slice();
             let mut scratch = [0u8; 32];
-            let mut scratch_ptr = scratch.as_mut_slice();
-            F::encode(&mut out_ptr, &mut scratch_ptr, input)?;
+            let scratch_ptr = scratch.as_mut_slice();
+            F::encode(&mut out_ptr, scratch_ptr, input)?;
             total - out_ptr.len()
         };
         Ok(output[..used].to_vec())
@@ -572,8 +572,8 @@ mod tests {
         let used = {
             let mut out_ptr = output.as_mut_slice();
             let mut scratch = [0u8; 32];
-            let mut scratch_ptr = scratch.as_mut_slice();
-            F::encode_u64(&mut out_ptr, &mut scratch_ptr, value)?;
+            let scratch_ptr = scratch.as_mut_slice();
+            F::encode_u64(&mut out_ptr, scratch_ptr, value)?;
             total - out_ptr.len()
         };
         Ok(output[..used].to_vec())
@@ -717,8 +717,8 @@ mod tests {
         let mut output = [0; 64];
         let mut scratch = [0; 128];
         let mut out = output.as_mut_slice();
-        let mut work = scratch.as_mut_slice();
-        let result = F::encode_i64(&mut out, &mut work, signed);
+        let work = scratch.as_mut_slice();
+        let result = F::encode_i64(&mut out, work, signed);
         let used = 64 - out.len();
         assert_eq!(result.map(|()| used), F::encoded_len_i64(signed));
         if result.is_ok() {
@@ -728,8 +728,8 @@ mod tests {
             assert!(input.is_empty());
         }
         let mut out = output.as_mut_slice();
-        let mut work = scratch.as_mut_slice();
-        let result = F::encode_u64(&mut out, &mut work, unsigned);
+        let work = scratch.as_mut_slice();
+        let result = F::encode_u64(&mut out, work, unsigned);
         let used = 64 - out.len();
         assert_eq!(result.map(|()| used), F::encoded_len_u64(unsigned));
         if result.is_ok() {
@@ -847,7 +847,7 @@ mod proptests {
                 let mut wire = [0;16];
                 let mut scratch = [0;64];
                 let mut out = wire.as_mut_slice();
-                F::encode(&mut out, &mut scratch.as_mut_slice(), text.as_bytes()).unwrap();
+                F::encode(&mut out, scratch.as_mut_slice(), text.as_bytes()).unwrap();
                 let used = 16-out.len();
                 assert_eq!(F::encoded_len(text.as_bytes()), Ok(used));
                 let mut input = &wire[..used];

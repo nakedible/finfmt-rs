@@ -5,21 +5,16 @@ impl<T, F: ScalarFmt, S: CompositeFmt<T>> CompositeFmt<T> for Frame<F, S> {
     type Decoded<'de> = S::Decoded<'de>;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), CompositeError> {
-        let scratch_len = scratch.len();
+    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
+        // The inner value is staged in scratch, using the unwritten output as its workspace.
         let used = {
-            let mut semantic_out = &mut **scratch;
-            let mut nested_scratch = &mut output[..];
-            S::encode_cursor(&mut semantic_out, &mut nested_scratch, value)?;
-            scratch_len - semantic_out.len()
+            let mut semantic_out = &mut *scratch;
+            let available = semantic_out.len();
+            S::encode_cursor(&mut semantic_out, output, value)?;
+            available - semantic_out.len()
         };
-        let mut scratch_tail = core::mem::take(scratch);
-        let semantic = scratch_tail.split_off_mut(..used).ok_or_else(|| {
-            crate::utils::cold_path();
-            CompositeError::from(Error::BufferOverflow)
-        })?;
-        F::encode(output, &mut scratch_tail, semantic)?;
-        *scratch = scratch_tail;
+        let (semantic, scratch) = split_scratch(scratch, used)?;
+        F::encode(output, scratch, semantic)?;
         Ok(())
     }
 
@@ -207,12 +202,11 @@ where
     type Decoded<'de> = Body::Decoded<'de>;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), CompositeError> {
+    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
         let full_len = trailing_body_len::<Tails, BASE_LEN>()?;
-        let mut scratch_tail = core::mem::take(scratch);
-        let body = take_scratch(&mut scratch_tail, full_len)?;
+        let (body, scratch) = split_scratch(scratch, full_len)?;
         let mut body_out = &mut body[..];
-        Body::encode_cursor(&mut body_out, &mut scratch_tail, value)?;
+        Body::encode_cursor(&mut body_out, scratch, value)?;
         if !body_out.is_empty() {
             crate::utils::cold_path();
             return Err(Error::Internal.into());
@@ -221,14 +215,13 @@ where
             crate::utils::cold_path();
             CompositeError::from(Error::Internal)
         })?;
-        let tail_len = Tails::trim_len(tails, &mut scratch_tail)?;
+        let tail_len = Tails::trim_len(tails, &mut &mut *scratch)?;
         let logical_len = BASE_LEN.checked_add(tail_len).ok_or_else(|| {
             crate::utils::cold_path();
             CompositeError::from(Error::BufferOverflow)
         })?;
-        Len::encode(output, &mut scratch_tail, logical_len, logical_len)?;
+        Len::encode(output, scratch, logical_len, logical_len)?;
         copy_bytes(output, body)?;
-        *scratch = scratch_tail;
         Ok(())
     }
 
@@ -275,7 +268,7 @@ where
     type Decoded<'de> = Option<Inner::Decoded<'de>>;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &Option<T>) -> Result<(), CompositeError> {
+    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &Option<T>) -> Result<(), CompositeError> {
         let area = output.split_off_mut(..N).ok_or_else(|| {
             crate::utils::cold_path();
             CompositeError::from(Error::BufferOverflow)
@@ -313,7 +306,7 @@ where
 
 impl<const BYTE: u8> AbsentFmt for ByteFill<BYTE> {
     #[inline(always)]
-    fn encode_absent(output: &mut &mut [u8], _scratch: &mut &mut [u8]) -> Result<(), Error> {
+    fn encode_absent(output: &mut &mut [u8], _scratch: &mut [u8]) -> Result<(), Error> {
         let area = core::mem::take(output);
         fill_tail(area, 0, BYTE)?;
         Ok(())
@@ -329,7 +322,7 @@ impl<T: Default> CompositeFmt<T> for Empty<T> {
     type Decoded<'de> = T;
 
     #[inline(always)]
-    fn encode_cursor(_output: &mut &mut [u8], _scratch: &mut &mut [u8], _value: &T) -> Result<(), CompositeError> {
+    fn encode_cursor(_output: &mut &mut [u8], _scratch: &mut [u8], _value: &T) -> Result<(), CompositeError> {
         Ok(())
     }
 

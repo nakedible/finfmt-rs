@@ -36,7 +36,7 @@ pub fn encode_ebcdic_1142_runtime<'a>(output: &mut &'a mut [u8], input: &[u8]) -
 
 #[inline(never)]
 pub fn encode_ebcdic_1142_field(output: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
-    Field::<Ebcdic1142Text<0, 99>, Rest, Ebcdic1142>::encode(output, &mut &mut [][..], input)
+    Field::<Ebcdic1142Text<0, 99>, Rest, Ebcdic1142>::encode(output, &mut [][..], input)
 }
 
 #[inline(never)]

@@ -34,7 +34,7 @@ impl Step for Ebcdic037 {
     }
 
     #[inline(always)]
-    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         let buf = copy_bytes(output, input)?;
         translate_bytes_inplace(buf, &ASCII_TO_EBCDIC_037);
         Ok(buf)
@@ -78,7 +78,7 @@ impl Step for Ebcdic1142 {
     }
 
     #[inline(always)]
-    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         encode_ebcdic_1142_validated(output, input)
     }
 

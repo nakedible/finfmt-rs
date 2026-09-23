@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 
 use super::Check;
 use crate::Error;
-use crate::utils::{cold_path, take_scratch};
+use crate::utils::{cold_path, split_scratch};
 
 /// A transform between validated semantic data and its byte representation.
 /// Encoding assumes the caller established the transform's input repertoire;
@@ -22,7 +22,7 @@ pub trait Step {
     /// must be checked by `decode`, not rejected during capacity calculation.
     fn decoded_max_len(input_len: usize) -> Result<usize, Error>;
 
-    fn encode<'a>(output: &mut &'a mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error>;
+    fn encode<'a>(output: &mut &'a mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error>;
 
     /// Decode an already framed representation. `semantic_len`, when known, is
     /// the required decoded logical length, not a byte-capacity limit. Padding
@@ -62,16 +62,15 @@ impl<First: Step, Rest: Step> Step for Chain<First, Rest> {
     }
 
     #[inline(always)]
-    fn encode<'a>(output: &mut &'a mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+    fn encode<'a>(output: &mut &'a mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         if Rest::ENCODE_IN_PLACE {
             let buf = First::encode(output, scratch, input)?;
             Rest::encode_in_place(buf)?;
             return Ok(buf);
         }
         let mid_len = First::encoded_len(input.len())?;
-        let mid_buf = take_scratch(scratch, mid_len)?;
-        let mut mid_out = mid_buf;
-        let mid = First::encode(&mut mid_out, scratch, input)?;
+        let (mid_buf, scratch) = split_scratch(scratch, mid_len)?;
+        let mid = First::encode(&mut &mut *mid_buf, scratch, input)?;
         Rest::encode(output, scratch, mid)
     }
 
@@ -106,7 +105,7 @@ impl<S: Step, C: Check> Step for DecodeCheck<S, C> {
     }
 
     #[inline(always)]
-    fn encode<'a>(output: &mut &'a mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+    fn encode<'a>(output: &mut &'a mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         S::encode(output, scratch, input)
     }
 
@@ -138,7 +137,7 @@ mod tests {
     fn encode_without_scratch<F: ScalarFmt>(input: &[u8], expected: &[u8]) {
         let mut output = [0xEE; 16];
         let mut out = &mut output[..];
-        F::encode(&mut out, &mut &mut [][..], input).unwrap();
+        F::encode(&mut out, &mut [][..], input).unwrap();
         assert_eq!(out.len(), 16 - expected.len());
         assert_eq!(&output[..expected.len()], expected);
     }
@@ -196,7 +195,7 @@ mod tests {
         );
         let mut output = [0; 1];
         assert_eq!(
-            DecodeCheck::<Identity, Numeric<1, 1>>::encode(&mut &mut output[..], &mut &mut [][..], b"?").as_deref(),
+            DecodeCheck::<Identity, Numeric<1, 1>>::encode(&mut &mut output[..], &mut [][..], b"?").as_deref(),
             Ok(&b"?"[..])
         );
     }
@@ -223,7 +222,7 @@ mod proptests {
             let mut output = [0;64];
             let mut scratch = [0;128];
             let mut out = output.as_mut_slice();
-            F::encode(&mut out, &mut scratch.as_mut_slice(), &value).unwrap();
+            F::encode(&mut out, scratch.as_mut_slice(), &value).unwrap();
             let used = 64 - out.len();
             prop_assert_eq!(F::encoded_len(&value), Ok(used));
             let mut wire = &output[..used];

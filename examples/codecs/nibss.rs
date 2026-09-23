@@ -220,7 +220,6 @@ finfmt::bitmap_format! {
 
 #[cfg(test)]
 mod tests {
-    use finfmt::CompositeFmt;
 
     use super::*;
 

@@ -237,7 +237,7 @@ mod tests {
             BitmapBinaryWord::encoded_len(input)
         }
 
-        fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<(), crate::Error> {
+        fn encode(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<(), crate::Error> {
             BitmapBinaryWord::encode(output, scratch, input)
         }
 

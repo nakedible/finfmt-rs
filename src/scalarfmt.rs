@@ -11,7 +11,7 @@ use crate::utils::cold_path;
 /// # Buffer Protocol
 ///
 /// Both encode and decode use the slice advancement pattern:
-/// - Buffers are `&mut &[u8]` (input) or `&mut &mut [u8]` (output/scratch)
+/// - Buffers are `&mut &[u8]` (input) or `&mut &mut [u8]` (output, decode scratch)
 /// - Functions consume/produce bytes and advance the slice
 /// - After the call, the slice reflects remaining capacity/data
 ///
@@ -21,9 +21,10 @@ use crate::utils::cold_path;
 ///
 /// # Scratch Buffer
 ///
-/// The scratch buffer is used for intermediate transformations (e.g., charset
-/// conversion before nibble packing). It must have sufficient capacity for
-/// the field's intermediate representation.
+/// Encoding receives scratch as a workspace for this call only: the callee may
+/// use all of it, and nothing it writes there outlives the call. Decoding
+/// receives scratch as an arena cursor: decoded values may borrow from it, so
+/// the callee advances it past every byte it keeps.
 ///
 /// # Numeric Encoding
 ///
@@ -51,7 +52,7 @@ pub trait ScalarFmt {
     ///
     /// Writes the encoded bytes to `output` and advances it past the written portion.
     /// Uses `scratch` for intermediate transformations if needed.
-    fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error>;
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<(), Error>;
 
     /// Decode wire format to user bytes.
     ///
@@ -72,7 +73,7 @@ pub trait ScalarFmt {
     ///
     /// Default delegates to `encode` via `as_bytes()`.
     #[inline(always)]
-    fn encode_str(output: &mut &mut [u8], scratch: &mut &mut [u8], input: &str) -> Result<(), Error> {
+    fn encode_str(output: &mut &mut [u8], scratch: &mut [u8], input: &str) -> Result<(), Error> {
         Self::encode(output, scratch, input.as_bytes())
     }
 
@@ -125,7 +126,7 @@ pub trait ScalarFmt {
     ///
     /// Override for binary integer encodings.
     #[inline(always)]
-    fn encode_u64(output: &mut &mut [u8], scratch: &mut &mut [u8], input: u64) -> Result<(), Error> {
+    fn encode_u64(output: &mut &mut [u8], scratch: &mut [u8], input: u64) -> Result<(), Error> {
         let mut digits = [0u8; MAX_INTEGER_TEXT_LEN];
         Self::encode(output, scratch, format_u64(&mut digits, input))
     }
@@ -134,7 +135,7 @@ pub trait ScalarFmt {
     ///
     /// Default implementation delegates to `encode_u64`.
     #[inline(always)]
-    fn encode_usize(output: &mut &mut [u8], scratch: &mut &mut [u8], input: usize) -> Result<(), Error> {
+    fn encode_usize(output: &mut &mut [u8], scratch: &mut [u8], input: usize) -> Result<(), Error> {
         Self::encode_u64(output, scratch, input as u64)
     }
 
@@ -166,7 +167,7 @@ pub trait ScalarFmt {
     ///
     /// Override for binary integer encodings or special sign handling (e.g., C/D prefix).
     #[inline(always)]
-    fn encode_i64(output: &mut &mut [u8], scratch: &mut &mut [u8], input: i64) -> Result<(), Error> {
+    fn encode_i64(output: &mut &mut [u8], scratch: &mut [u8], input: i64) -> Result<(), Error> {
         let mut digits = [0u8; MAX_INTEGER_TEXT_LEN];
         Self::encode(output, scratch, format_i64(&mut digits, input))
     }

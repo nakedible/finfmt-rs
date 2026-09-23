@@ -24,7 +24,7 @@ impl<F: NibbleAlphabet, const ALIGN_RIGHT: bool, const PADDING: u8> Step for Pac
     }
 
     #[inline(always)]
-    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         pack_nibbles(output, input, ALIGN_RIGHT, PADDING, &F::NIBBLES)
     }
 
@@ -54,7 +54,7 @@ impl<F: NibbleAlphabet> Step for UnpackNibbles<F> {
     }
 
     #[inline(always)]
-    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         unpack_nibbles(output, input, &F::DIGITS)
     }
 

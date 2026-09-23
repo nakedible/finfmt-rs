@@ -1,13 +1,12 @@
 use super::*;
 use crate::field::{Identity, LengthSpec};
 use crate::primitive::bytes::{contains_byte, fill_repeated_block, split_delimited_bytes};
-use crate::utils::take_scratch;
 
 impl ListCountPolicy for () {
     const HAS_COUNT: bool = false;
 
     #[inline(always)]
-    fn encode_count(_output: &mut &mut [u8], _scratch: &mut &mut [u8], _len: usize) -> Result<(), Error> {
+    fn encode_count(_output: &mut &mut [u8], _scratch: &mut [u8], _len: usize) -> Result<(), Error> {
         Ok(())
     }
 
@@ -21,7 +20,7 @@ impl<F: LengthSpec<Identity>> ListCountPolicy for F {
     const HAS_COUNT: bool = true;
 
     #[inline(always)]
-    fn encode_count(output: &mut &mut [u8], scratch: &mut &mut [u8], len: usize) -> Result<(), Error> {
+    fn encode_count(output: &mut &mut [u8], scratch: &mut [u8], len: usize) -> Result<(), Error> {
         F::encode(output, scratch, len, len)
     }
 
@@ -36,7 +35,7 @@ impl<const COUNT: usize> ListCountPolicy for FixedCount<COUNT> {
     const HAS_COUNT: bool = true;
 
     #[inline(always)]
-    fn encode_count(_output: &mut &mut [u8], _scratch: &mut &mut [u8], len: usize) -> Result<(), Error> {
+    fn encode_count(_output: &mut &mut [u8], _scratch: &mut [u8], len: usize) -> Result<(), Error> {
         if len != COUNT {
             crate::utils::cold_path();
             return Err(Error::Invalid);
@@ -75,7 +74,7 @@ where
     type Decoded<'de> = Vec<Item::Decoded<'de>>;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &Vec<T>) -> Result<(), CompositeError> {
+    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &Vec<T>) -> Result<(), CompositeError> {
         if value.len() > MAX {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());
@@ -181,9 +180,9 @@ pub trait FixedAreaSlot<T>: sealed::FixedAreaSlotSealed {
 
     const WIRE_LEN: usize;
 
-    fn encode_present(output: &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), CompositeError>;
+    fn encode_present(output: &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError>;
     fn decode_present<'de>(input: &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError>;
-    fn encode_absent_slots(output: &mut [u8], scratch: &mut &mut [u8]) -> Result<(), CompositeError>;
+    fn encode_absent_slots(output: &mut [u8], scratch: &mut [u8]) -> Result<(), CompositeError>;
     fn validate_absent_slots(input: &[u8], scratch: &mut &mut [u8]) -> Result<(), CompositeError>;
 }
 
@@ -204,7 +203,7 @@ where
     const WIRE_LEN: usize = N;
 
     #[inline(always)]
-    fn encode_present(output: &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), CompositeError> {
+    fn encode_present(output: &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
         let mut slot_out = output;
         Inner::encode_cursor(&mut slot_out, scratch, value)?;
         if !slot_out.is_empty() {
@@ -226,11 +225,11 @@ where
     }
 
     #[inline(always)]
-    fn encode_absent_slots(output: &mut [u8], scratch: &mut &mut [u8]) -> Result<(), CompositeError> {
+    fn encode_absent_slots(output: &mut [u8], scratch: &mut [u8]) -> Result<(), CompositeError> {
         if output.is_empty() {
             return Ok(());
         }
-        let absent = take_scratch(scratch, Self::WIRE_LEN)?;
+        let (absent, scratch) = split_scratch(scratch, Self::WIRE_LEN)?;
         let mut slot_out = &mut absent[..];
         Absent::encode_absent(&mut slot_out, scratch)?;
         if !slot_out.is_empty() {
@@ -276,7 +275,7 @@ where
     type Decoded<'de> = Vec<Slot::Decoded<'de>>;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &Vec<T>) -> Result<(), CompositeError> {
+    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &Vec<T>) -> Result<(), CompositeError> {
         if value.len() > MAX {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());
@@ -498,7 +497,7 @@ mod tests {
     struct SpacesOrZeros;
 
     impl AbsentFmt for SpacesOrZeros {
-        fn encode_absent(output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error> {
+        fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
             ByteFill::<b' '>::encode_absent(output, scratch)
         }
 
@@ -546,7 +545,7 @@ mod tests {
     fn unused_slot_checks_preserve_borrowed_values_and_workspace() {
         struct Canonical;
         impl AbsentFmt for Canonical {
-            fn encode_absent(output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error> {
+            fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
                 ByteFill::<b'_'>::encode_absent(output, scratch)
             }
         }

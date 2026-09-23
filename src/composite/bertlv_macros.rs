@@ -474,7 +474,7 @@ macro_rules! ber_tlv_format {
             type Decoded<'de> = $ty<'de>;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_encode_fields!(value, output, scratch; $($fields)*);
                 $crate::composite::BerTlvExtras::encode_unknowns(&value.$extras, output, scratch, $crate::__finfmt_ber_tlv_known_tags!($($fields)*))
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($extras)))?;
@@ -502,7 +502,7 @@ macro_rules! ber_tlv_format {
             type Decoded<'de> = $ty<'de>;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_encode_fields!(value, output, scratch; $($fields)*);
                 Ok(())
             }
@@ -529,7 +529,7 @@ macro_rules! ber_tlv_format {
             type Decoded<'de> = $ty;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_encode_fields!(value, output, scratch; $($fields)*);
                 $crate::composite::BerTlvExtras::encode_unknowns(&value.$extras, output, scratch, $crate::__finfmt_ber_tlv_known_tags!($($fields)*))
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($extras)))?;
@@ -557,7 +557,7 @@ macro_rules! ber_tlv_format {
             type Decoded<'de> = $ty;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_encode_fields!(value, output, scratch; $($fields)*);
                 Ok(())
             }

@@ -29,7 +29,7 @@ impl<F: ScalarFmt, const MAX_LEN: usize, const KEEP_RIGHT: bool> ScalarFmt for T
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
         F::encode(output, scratch, truncate_bytes(input, MAX_LEN, KEEP_RIGHT))
     }
 
@@ -44,7 +44,7 @@ impl<F: ScalarFmt, const MAX_LEN: usize, const KEEP_RIGHT: bool> ScalarFmt for T
     }
 
     #[inline(always)]
-    fn encode_str(output: &mut &mut [u8], scratch: &mut &mut [u8], input: &str) -> Result<(), Error> {
+    fn encode_str(output: &mut &mut [u8], scratch: &mut [u8], input: &str) -> Result<(), Error> {
         F::encode_str(output, scratch, truncate_str_bytes(input, MAX_LEN, KEEP_RIGHT)?)
     }
 
@@ -69,17 +69,17 @@ impl<F: ScalarFmt, const MAX_LEN: usize, const KEEP_RIGHT: bool> ScalarFmt for T
     }
 
     #[inline(always)]
-    fn encode_u64(output: &mut &mut [u8], scratch: &mut &mut [u8], input: u64) -> Result<(), Error> {
+    fn encode_u64(output: &mut &mut [u8], scratch: &mut [u8], input: u64) -> Result<(), Error> {
         F::encode_u64(output, scratch, input)
     }
 
     #[inline(always)]
-    fn encode_usize(output: &mut &mut [u8], scratch: &mut &mut [u8], input: usize) -> Result<(), Error> {
+    fn encode_usize(output: &mut &mut [u8], scratch: &mut [u8], input: usize) -> Result<(), Error> {
         F::encode_usize(output, scratch, input)
     }
 
     #[inline(always)]
-    fn encode_i64(output: &mut &mut [u8], scratch: &mut &mut [u8], input: i64) -> Result<(), Error> {
+    fn encode_i64(output: &mut &mut [u8], scratch: &mut [u8], input: i64) -> Result<(), Error> {
         F::encode_i64(output, scratch, input)
     }
 
@@ -109,7 +109,7 @@ mod tests {
     fn encode<F: ScalarFmt>(input: &[u8]) -> Result<Vec<u8>, Error> {
         let mut output = [0xAA; 32];
         let mut out = output.as_mut_slice();
-        F::encode(&mut out, &mut &mut [][..], input)?;
+        F::encode(&mut out, &mut [][..], input)?;
         let written = 32 - out.len();
         assert_eq!(F::encoded_len(input), Ok(written));
         assert!(out.iter().all(|&byte| byte == 0xAA));
@@ -129,7 +129,7 @@ mod tests {
         assert_eq!(encode::<Exact>(b"AB"), Err(Error::InvalidValueLength));
         assert_eq!(encode::<Exact>(b"ABCDE"), Ok(b"ABCD".to_vec()));
         assert_eq!(
-            Exact::encode(&mut &mut [0; 3][..], &mut &mut [][..], b"ABCDE"),
+            Exact::encode(&mut &mut [0; 3][..], &mut [][..], b"ABCDE"),
             Err(Error::BufferOverflow)
         );
     }
@@ -161,7 +161,7 @@ mod tests {
         fn encoded_len(_: &[u8]) -> Result<usize, Error> {
             Err(Error::Internal)
         }
-        fn encode(_: &mut &mut [u8], _: &mut &mut [u8], _: &[u8]) -> Result<(), Error> {
+        fn encode(_: &mut &mut [u8], _: &mut [u8], _: &[u8]) -> Result<(), Error> {
             Err(Error::Internal)
         }
         fn decode<'a>(_: &mut &'a [u8], _: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
@@ -170,7 +170,7 @@ mod tests {
         fn encoded_len_str(input: &str) -> Result<usize, Error> {
             Ok(input.len())
         }
-        fn encode_str(output: &mut &mut [u8], _: &mut &mut [u8], input: &str) -> Result<(), Error> {
+        fn encode_str(output: &mut &mut [u8], _: &mut [u8], input: &str) -> Result<(), Error> {
             crate::primitive::bytes::copy_bytes(output, input.as_bytes()).map(|_| ())
         }
         fn decode_str<'a>(input: &mut &'a [u8], _: &mut &'a mut [u8]) -> Result<&'a str, Error> {
@@ -188,10 +188,10 @@ mod tests {
         assert_eq!(Right::encoded_len_str("éX"), Err(Error::Invalid));
         let mut output = [0xAA; 4];
         let mut out = output.as_mut_slice();
-        assert_eq!(Left::encode_str(&mut out, &mut &mut [][..], "Xé"), Err(Error::Invalid));
+        assert_eq!(Left::encode_str(&mut out, &mut [][..], "Xé"), Err(Error::Invalid));
         assert_eq!(out, &[0xAA; 4]);
-        Left::encode_str(&mut out, &mut &mut [][..], "éX").unwrap();
-        Right::encode_str(&mut out, &mut &mut [][..], "Xé").unwrap();
+        Left::encode_str(&mut out, &mut [][..], "éX").unwrap();
+        Right::encode_str(&mut out, &mut [][..], "Xé").unwrap();
         assert!(out.is_empty());
         assert_eq!(output, *"éé".as_bytes());
         let mut input = "ABCDE".as_bytes();
@@ -208,9 +208,9 @@ mod tests {
         assert_eq!(Signed::encoded_len_i64(-128), Ok(1));
         let mut output = [0u8; 3];
         let mut out = output.as_mut_slice();
-        Unsigned::encode_u64(&mut out, &mut &mut [][..], 255).unwrap();
-        Unsigned::encode_usize(&mut out, &mut &mut [][..], 254).unwrap();
-        Signed::encode_i64(&mut out, &mut &mut [][..], -128).unwrap();
+        Unsigned::encode_u64(&mut out, &mut [][..], 255).unwrap();
+        Unsigned::encode_usize(&mut out, &mut [][..], 254).unwrap();
+        Signed::encode_i64(&mut out, &mut [][..], -128).unwrap();
         assert!(out.is_empty());
         assert_eq!(output, [255, 254, 128]);
         let mut input = output.as_slice();

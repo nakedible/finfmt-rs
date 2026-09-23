@@ -21,7 +21,7 @@ impl<C: Check, L: LengthSpec<S>, S: Step> ScalarFmt for Field<C, L, S> {
         })
     }
 
-    fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
         let semantic_len = C::validate(input)?;
         let wire_len = S::encoded_len(semantic_len)?;
         L::encode(output, scratch, semantic_len, wire_len)?;
@@ -64,7 +64,7 @@ impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> S
         })
     }
 
-    fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
         let semantic_len = C::validate(input)?;
         let wire_len = S::encoded_len(semantic_len)?;
         if wire_len > PAD_TO {
@@ -137,8 +137,8 @@ mod tests {
         let total = out.len();
         let used = {
             let mut out_ptr = out.as_mut_slice();
-            let mut scratch_ptr = scratch.as_mut_slice();
-            F::encode(&mut out_ptr, &mut scratch_ptr, input)?;
+            let scratch_ptr = scratch.as_mut_slice();
+            F::encode(&mut out_ptr, scratch_ptr, input)?;
             total - out_ptr.len()
         };
         Ok(out[..used].to_vec())
@@ -158,8 +158,8 @@ mod tests {
         let total = out.len();
         let used = {
             let mut out_ptr = out.as_mut_slice();
-            let mut scratch_ptr = scratch.as_mut_slice();
-            F::encode_str(&mut out_ptr, &mut scratch_ptr, input)?;
+            let scratch_ptr = scratch.as_mut_slice();
+            F::encode_str(&mut out_ptr, scratch_ptr, input)?;
             total - out_ptr.len()
         };
         Ok(out[..used].to_vec())
@@ -230,8 +230,8 @@ mod tests {
         let mut scratch = [0u8; 32];
         let total = out.len();
         let mut out_ptr = &mut out[..];
-        let mut scratch_ptr = &mut scratch[..];
-        CdAmount::encode_i64(&mut out_ptr, &mut scratch_ptr, -42).unwrap();
+        let scratch_ptr = &mut scratch[..];
+        CdAmount::encode_i64(&mut out_ptr, scratch_ptr, -42).unwrap();
         let used = total - out_ptr.len();
         let mut input = &out[..used];
         let mut scratch_ptr = &mut scratch[..];
@@ -260,16 +260,16 @@ mod tests {
         let mut scratch = [0u8; 32];
         let total = out.len();
         let mut out_ptr = &mut out[..];
-        let mut scratch_ptr = &mut scratch[..];
-        MinusAmount::encode_i64(&mut out_ptr, &mut scratch_ptr, -42).unwrap();
+        let scratch_ptr = &mut scratch[..];
+        MinusAmount::encode_i64(&mut out_ptr, scratch_ptr, -42).unwrap();
         let used = total - out_ptr.len();
         let mut input = &out[..used];
         let mut scratch_ptr = &mut scratch[..];
         assert_eq!(MinusAmount::decode_i64(&mut input, &mut scratch_ptr).unwrap(), -42);
 
         let mut out_ptr = &mut out[..];
-        let mut scratch_ptr = &mut scratch[..];
-        MinusAmount::encode_i64(&mut out_ptr, &mut scratch_ptr, 42).unwrap();
+        let scratch_ptr = &mut scratch[..];
+        MinusAmount::encode_i64(&mut out_ptr, scratch_ptr, 42).unwrap();
         let used = total - out_ptr.len();
         let mut input = &out[..used];
         let mut scratch_ptr = &mut scratch[..];
@@ -434,7 +434,7 @@ mod tests {
             assert!(
                 std::panic::catch_unwind(|| {
                     let mut output = [0; 16];
-                    F::encode(&mut &mut output[..], &mut &mut [][..], "€".as_bytes()).unwrap();
+                    F::encode(&mut &mut output[..], &mut [][..], "€".as_bytes()).unwrap();
                 })
                 .is_err()
             );
@@ -460,7 +460,7 @@ mod proptests {
             prop_assert_eq!(expected, bytes.len() + 2);
             let mut output = vec![0; expected];
             let mut out = output.as_mut_slice();
-            F::encode(&mut out, &mut &mut [][..], text.as_bytes()).unwrap();
+            F::encode(&mut out, &mut [][..], text.as_bytes()).unwrap();
             prop_assert!(out.is_empty());
             prop_assert_eq!(&output[2..], &bytes);
             prop_assert_eq!(((output[0] - b'0') * 10 + output[1] - b'0') as usize, bytes.len());

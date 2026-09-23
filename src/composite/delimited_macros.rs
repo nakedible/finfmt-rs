@@ -273,7 +273,7 @@ macro_rules! delimited_format {
             type Decoded<'de> = $ty<'de>;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 let _ = value;
                 $crate::__finfmt_delimited_encode_fields!(value, output, scratch, $separator; $($fields)*);
                 Ok(())
@@ -298,7 +298,7 @@ macro_rules! delimited_format {
             type Decoded<'de> = $ty;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 let _ = value;
                 $crate::__finfmt_delimited_encode_fields!(value, output, scratch, $separator; $($fields)*);
                 Ok(())

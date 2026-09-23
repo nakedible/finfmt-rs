@@ -37,7 +37,7 @@ pub struct DecodePlan {
 pub trait LengthSpec<S: Step> {
     /// Encoded prefix size, excluding the payload, after checking length limits.
     fn encoded_len(semantic_len: usize, wire_len: usize) -> Result<usize, Error>;
-    fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], semantic_len: usize, wire_len: usize) -> Result<(), Error>;
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], semantic_len: usize, wire_len: usize) -> Result<(), Error>;
     fn decode_plan<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error>;
 }
 
@@ -54,7 +54,7 @@ impl<const N: usize, S: Step> LengthSpec<S> for Fixed<N> {
     }
 
     #[inline(always)]
-    fn encode(_output: &mut &mut [u8], _scratch: &mut &mut [u8], semantic_len: usize, wire_len: usize) -> Result<(), Error> {
+    fn encode(_output: &mut &mut [u8], _scratch: &mut [u8], semantic_len: usize, wire_len: usize) -> Result<(), Error> {
         <Self as LengthSpec<S>>::encoded_len(semantic_len, wire_len)?;
         Ok(())
     }
@@ -81,7 +81,7 @@ impl<const N: usize, S: Step> LengthSpec<S> for WireFixed<N> {
     }
 
     #[inline(always)]
-    fn encode(_output: &mut &mut [u8], _scratch: &mut &mut [u8], semantic_len: usize, wire_len: usize) -> Result<(), Error> {
+    fn encode(_output: &mut &mut [u8], _scratch: &mut [u8], semantic_len: usize, wire_len: usize) -> Result<(), Error> {
         <Self as LengthSpec<S>>::encoded_len(semantic_len, wire_len)?;
         Ok(())
     }
@@ -104,7 +104,7 @@ impl<F: ScalarFmt, S: Step> LengthSpec<S> for Length<F> {
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
         F::encode_usize(output, scratch, semantic_len)
     }
 
@@ -128,7 +128,7 @@ impl<F: ScalarFmt, S: Step> LengthSpec<S> for WireLength<F> {
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], _semantic_len: usize, wire_len: usize) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], _semantic_len: usize, wire_len: usize) -> Result<(), Error> {
         F::encode_usize(output, scratch, wire_len)
     }
 
@@ -151,7 +151,7 @@ impl<const N: usize, S: Step> LengthSpec<S> for AsciiLength<N> {
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
         encode_decimal_ascii_fixed(output, semantic_len, N)
     }
 
@@ -175,7 +175,7 @@ impl<const N: usize, S: Step> LengthSpec<S> for AsciiWireLength<N> {
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], _semantic_len: usize, wire_len: usize) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], _semantic_len: usize, wire_len: usize) -> Result<(), Error> {
         encode_decimal_ascii_fixed(output, wire_len, N)
     }
 
@@ -198,7 +198,7 @@ impl<const N: usize, S: Step> LengthSpec<S> for EbcdicLength<N> {
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
         encode_decimal_ebcdic_fixed(output, semantic_len, N)
     }
 
@@ -226,7 +226,7 @@ impl<const N: usize, S: Step> LengthSpec<S> for BlankableEbcdicLength<N> {
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
         encode_decimal_ebcdic_blank_zero_fixed(output, semantic_len, N)
     }
 
@@ -250,7 +250,7 @@ impl<const N: usize, S: Step> LengthSpec<S> for EbcdicWireLength<N> {
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], _scratch: &mut &mut [u8], _semantic_len: usize, wire_len: usize) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], _semantic_len: usize, wire_len: usize) -> Result<(), Error> {
         encode_decimal_ebcdic_fixed(output, wire_len, N)
     }
 
@@ -275,7 +275,7 @@ impl<S: Step> LengthSpec<S> for Rest {
     }
 
     #[inline(always)]
-    fn encode(_output: &mut &mut [u8], _scratch: &mut &mut [u8], _semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
+    fn encode(_output: &mut &mut [u8], _scratch: &mut [u8], _semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
         Ok(())
     }
 
@@ -301,7 +301,7 @@ mod tests {
     fn encode_length<L: LengthSpec<Identity>>(semantic_len: usize, wire_len: usize) -> Result<Vec<u8>, Error> {
         let mut output = [0; 32];
         let mut out = output.as_mut_slice();
-        let encoded = L::encode(&mut out, &mut &mut [][..], semantic_len, wire_len);
+        let encoded = L::encode(&mut out, &mut [][..], semantic_len, wire_len);
         let written = 32 - out.len();
         assert_eq!(L::encoded_len(semantic_len, wire_len), encoded.map(|()| written));
         encoded.map(|()| output[..written].to_vec())
@@ -342,7 +342,7 @@ mod tests {
         let mut output = [0u8; 2];
         let mut out = output.as_mut_slice();
         let mut scratch = [0u8; 0];
-        assert!(<AsciiLength<2> as LengthSpec<Identity>>::encode(&mut out, &mut scratch.as_mut_slice(), 100, 0).is_err());
+        assert!(<AsciiLength<2> as LengthSpec<Identity>>::encode(&mut out, scratch.as_mut_slice(), 100, 0).is_err());
 
         let mut input = &b"A0"[..];
         let mut scratch = [];
@@ -375,7 +375,7 @@ mod tests {
         fn check<L: LengthSpec<Identity>>() {
             for len in [0, 1, 3] {
                 let predicted = std::panic::catch_unwind(|| L::encoded_len(len, len));
-                let encoded = std::panic::catch_unwind(|| L::encode(&mut &mut [][..], &mut &mut [][..], len, len));
+                let encoded = std::panic::catch_unwind(|| L::encode(&mut &mut [][..], &mut [][..], len, len));
                 if cfg!(debug_assertions) {
                     assert!(predicted.is_err());
                     assert!(encoded.is_err());
@@ -396,13 +396,13 @@ mod tests {
         type Exact = Field<Ascii<2, 2>, Fixed<2>>;
         assert_eq!(Exact::encoded_len(b"ABC"), Err(Error::InvalidValueLength));
         assert_eq!(
-            Exact::encode(&mut &mut [0; 8][..], &mut &mut [][..], b"ABC"),
+            Exact::encode(&mut &mut [0; 8][..], &mut [][..], b"ABC"),
             Err(Error::InvalidValueLength)
         );
         type Padded = Field<Numeric<1, 4>, Fixed<4>, PadLeft<4, b'0'>>;
         let mut output = [0; 4];
         assert_eq!(Padded::encoded_len(b"7"), Ok(4));
-        Padded::encode(&mut &mut output[..], &mut &mut [][..], b"7").unwrap();
+        Padded::encode(&mut &mut output[..], &mut [][..], b"7").unwrap();
         assert_eq!(output, *b"0007");
     }
     #[test]

@@ -19,7 +19,7 @@
 use core::marker::PhantomData;
 
 use crate::primitive::bytes::{contains_byte, copy_bytes, split_delimited_bytes};
-use crate::utils::take_scratch;
+use crate::utils::{split_scratch, take_scratch};
 use crate::{CompositeError, Error, ScalarFmt};
 
 pub trait CompositeFmt<T> {
@@ -27,8 +27,8 @@ pub trait CompositeFmt<T> {
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
-        let mut scratch_ptr = scratch;
-        Self::encode_cursor(output, &mut scratch_ptr, value)
+        let scratch_ptr = scratch;
+        Self::encode_cursor(output, scratch_ptr, value)
     }
 
     #[inline(always)]
@@ -37,7 +37,7 @@ pub trait CompositeFmt<T> {
         Self::decode_cursor(input, &mut scratch_ptr)
     }
 
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), CompositeError>;
+    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError>;
     fn decode_cursor<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError>;
 }
 
@@ -45,7 +45,7 @@ pub trait CompositeFmt<T> {
 pub trait ContextFmt<T, C: ?Sized> {
     type Decoded<'de>;
 
-    fn encode_with(output: &mut &mut [u8], scratch: &mut &mut [u8], context: &C, value: &T) -> Result<(), CompositeError>;
+    fn encode_with(output: &mut &mut [u8], scratch: &mut [u8], context: &C, value: &T) -> Result<(), CompositeError>;
     fn decode_with<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8], context: &C) -> Result<Self::Decoded<'de>, CompositeError>;
 }
 
@@ -57,7 +57,7 @@ pub trait ContextFmt<T, C: ?Sized> {
 /// Formats using this for `Option<T>` should choose a present-side format that
 /// cannot encode the absent bytes unless that lossy mapping is intentional.
 pub trait AbsentFmt {
-    fn encode_absent(output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error>;
+    fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error>;
 
     /// Match the canonical absent bytes, or override to accept additional encodings.
     #[inline(always)]
@@ -65,7 +65,7 @@ pub trait AbsentFmt {
         let mut workspace = &mut **scratch;
         let absent = take_scratch(&mut workspace, input.len())?;
         let mut absent_out = &mut absent[..];
-        Self::encode_absent(&mut absent_out, &mut workspace)?;
+        Self::encode_absent(&mut absent_out, workspace)?;
         if !absent_out.is_empty() {
             crate::utils::cold_path();
             return Err(Error::Internal);
@@ -557,7 +557,7 @@ mod tests {
     struct ManualProcessingCode(String);
 
     impl ScalarValue for ManualProcessingCode {
-        fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error> {
+        fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
             F::encode_str(output, scratch, &self.0)
         }
 
@@ -570,7 +570,7 @@ mod tests {
     struct ManualStan(u32);
 
     impl ScalarValue for ManualStan {
-        fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error> {
+        fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
             F::encode_u64(output, scratch, u64::from(self.0))
         }
 
@@ -662,7 +662,7 @@ mod tests {
     struct DualStan(u8);
 
     impl ScalarValue for DualStan {
-        fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error> {
+        fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
             F::encode_u64(output, scratch, u64::from(self.0) + 10)
         }
 
@@ -1018,7 +1018,7 @@ mod tests {
             let mut out = output.as_mut_slice();
             let result = error_kind(encode_delimited_value::<_, DirectScalar<Compressed>>(
                 &mut out,
-                &mut &mut scratch[..capacity],
+                &mut scratch[..capacity],
                 &"1".to_owned(),
                 Some(b'|'),
             ));
@@ -1917,8 +1917,8 @@ mod tests {
         let borrowed = BorrowedVariantData::B(BorrowedVariantTail { tail: "WXYZ" });
         let used = {
             let mut out = output.as_mut_slice();
-            let mut scratch_ptr = scratch.as_mut_slice();
-            BorrowedRetainedVariantDataFmt::encode_with(&mut out, &mut scratch_ptr, &selector, &borrowed).map(|_| total - out.len())
+            let scratch_ptr = scratch.as_mut_slice();
+            BorrowedRetainedVariantDataFmt::encode_with(&mut out, scratch_ptr, &selector, &borrowed).map(|_| total - out.len())
         }
         .unwrap();
         assert_eq!(&output[..used], b"WXYZ");
@@ -2513,7 +2513,7 @@ pub trait ListCountPolicy {
     /// `decode_count` must return `Some` exactly when this is true.
     const HAS_COUNT: bool;
 
-    fn encode_count(output: &mut &mut [u8], scratch: &mut &mut [u8], len: usize) -> Result<(), Error>;
+    fn encode_count(output: &mut &mut [u8], scratch: &mut [u8], len: usize) -> Result<(), Error>;
     fn decode_count<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Option<usize>, Error>;
 }
 
@@ -2524,7 +2524,7 @@ pub trait ListSeparatorPolicy {
 pub trait BerTlvExtras {
     /// Encode extras, rejecting tags declared in `known_tags`, even if their fields are absent.
     /// The declarations use uppercase tag hex; pass an empty slice for standalone extras.
-    fn encode_unknowns(&self, output: &mut &mut [u8], scratch: &mut &mut [u8], known_tags: &[&str]) -> Result<(), Error>;
+    fn encode_unknowns(&self, output: &mut &mut [u8], scratch: &mut [u8], known_tags: &[&str]) -> Result<(), Error>;
     fn decode_unknown(&mut self, tag: &[u8], value: &[u8], scratch: &mut &mut [u8]) -> Result<(), Error>;
 }
 
@@ -2550,11 +2550,7 @@ pub fn wrap_composite_error<E: Into<CompositeError>>(error: E, field: &'static s
 
 #[inline(always)]
 #[doc(hidden)]
-pub fn encode_nested_value<T, F: CompositeFmt<T>>(
-    value: &T,
-    output: &mut &mut [u8],
-    scratch: &mut &mut [u8],
-) -> Result<(), CompositeError> {
+pub fn encode_nested_value<T, F: CompositeFmt<T>>(value: &T, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), CompositeError> {
     F::encode_cursor(output, scratch, value)
 }
 
@@ -2562,13 +2558,13 @@ pub fn encode_nested_value<T, F: CompositeFmt<T>>(
 #[doc(hidden)]
 pub fn encode_ber_tlv_field<F>(
     output: &mut &mut [u8],
-    scratch: &mut &mut [u8],
+    scratch: &mut [u8],
     tag_hex: &str,
     field: &'static str,
     encode_value: F,
 ) -> Result<(), CompositeError>
 where
-    F: FnOnce(&mut &mut [u8], &mut &mut [u8]) -> Result<(), CompositeError>,
+    F: FnOnce(&mut &mut [u8], &mut [u8]) -> Result<(), CompositeError>,
 {
     let (tag_bytes, tag_len) =
         crate::primitive::bertlv::parse_ber_tag_hex(tag_hex).map_err(|_| wrap_composite_error(Error::Internal, field))?;
@@ -2632,14 +2628,9 @@ where
 }
 
 #[inline]
-fn encode_delimited_segment<E>(
-    output: &mut &mut [u8],
-    scratch: &mut &mut [u8],
-    separator: Option<u8>,
-    encode: E,
-) -> Result<(), CompositeError>
+fn encode_delimited_segment<E>(output: &mut &mut [u8], scratch: &mut [u8], separator: Option<u8>, encode: E) -> Result<(), CompositeError>
 where
-    E: FnOnce(&mut &mut [u8], &mut &mut [u8]) -> Result<(), CompositeError>,
+    E: FnOnce(&mut &mut [u8], &mut [u8]) -> Result<(), CompositeError>,
 {
     let available = output.len();
     let used = {
@@ -2665,7 +2656,7 @@ where
 #[doc(hidden)]
 pub fn encode_delimited_value<T, S: CompositeFmt<T>>(
     output: &mut &mut [u8],
-    scratch: &mut &mut [u8],
+    scratch: &mut [u8],
     value: &T,
     separator: Option<u8>,
 ) -> Result<(), CompositeError> {
@@ -2678,7 +2669,7 @@ pub fn encode_delimited_value<T, S: CompositeFmt<T>>(
 #[doc(hidden)]
 pub fn encode_delimited_context<T, C: ?Sized, S: ContextFmt<T, C>>(
     output: &mut &mut [u8],
-    scratch: &mut &mut [u8],
+    scratch: &mut [u8],
     context: &C,
     value: &T,
     separator: Option<u8>,
@@ -2692,7 +2683,7 @@ pub fn encode_delimited_context<T, C: ?Sized, S: ContextFmt<T, C>>(
 #[doc(hidden)]
 pub fn encode_delimited_serde_value<T, F: ScalarFmt>(
     output: &mut &mut [u8],
-    scratch: &mut &mut [u8],
+    scratch: &mut [u8],
     value: &T,
     separator: Option<u8>,
 ) -> Result<(), CompositeError>
@@ -2768,7 +2759,7 @@ where
 #[doc(hidden)]
 pub fn encode_delimited_literal<F: ScalarFmt>(
     output: &mut &mut [u8],
-    scratch: &mut &mut [u8],
+    scratch: &mut [u8],
     expected: &[u8],
     separator: Option<u8>,
 ) -> Result<(), CompositeError> {
@@ -2839,7 +2830,7 @@ mod ber_tag_boundary_tests {
         for tag in ["9F", "5A5B", "00", "9f02"] {
             let mut storage = [0u8; 16];
             let mut scratch = [0u8; 16];
-            let result = encode_ber_tlv_field(&mut &mut storage[..], &mut &mut scratch[..], tag, "field", |_, _| Ok(()));
+            let result = encode_ber_tlv_field(&mut &mut storage[..], &mut scratch[..], tag, "field", |_, _| Ok(()));
             assert_eq!(result.unwrap_err().kind, Error::Internal);
             let result = decode_ber_tlv_field(&[0x5A], tag, &mut &[][..], &mut &mut scratch[..], &mut None, "field", |_, _| Ok(()));
             assert_eq!(result.unwrap_err().kind, Error::Internal);
@@ -2955,7 +2946,7 @@ mod tagged_tests {
         fn encoded_len(value: &[u8]) -> Result<usize, Error> {
             A1::encoded_len(value)
         }
-        fn encode(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &[u8]) -> Result<(), Error> {
+        fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &[u8]) -> Result<(), Error> {
             A1::encode(output, scratch, value)
         }
         fn decode<'a>(_input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {

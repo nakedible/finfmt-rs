@@ -38,7 +38,7 @@ macro_rules! concat_format {
             type Decoded<'de> = $ty<'de>;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 let _ = value;
                 $crate::__finfmt_concat_encode_fields!(value, output, scratch; $($fields)*);
                 Ok(())
@@ -63,7 +63,7 @@ macro_rules! concat_format {
             type Decoded<'de> = $ty;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 let _ = value;
                 $crate::__finfmt_concat_encode_fields!(value, output, scratch; $($fields)*);
                 Ok(())
@@ -90,7 +90,7 @@ macro_rules! absent_format {
 
         impl $crate::composite::AbsentFmt for $name {
             #[inline(always)]
-            fn encode_absent(output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), $crate::Error> {
+            fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), $crate::Error> {
                 $crate::absent_format!(@encode output, scratch; $($fields)*);
                 Ok(())
             }

@@ -1248,7 +1248,7 @@ struct BerTlvSerializer<'a, 'b> {
 }
 
 #[inline(always)]
-pub(crate) fn encode_ber_tlv_serde<T: ?Sized + Serialize>(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), Error> {
+pub(crate) fn encode_ber_tlv_serde<T: ?Sized + Serialize>(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), Error> {
     value.serialize(BerTlvSerializer { output, scratch })
 }
 
@@ -1259,7 +1259,7 @@ where
     type Decoded<'de> = T;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), CompositeError> {
+    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
         encode_ber_tlv_serde(output, scratch, value)?;
         Ok(())
     }
@@ -1522,8 +1522,8 @@ mod tests {
         let capacity = output.len();
         let mut out = output.as_mut_slice();
         let mut storage = [0; 64];
-        let mut scratch = &mut storage[..scratch_len];
-        encode_ber_tlv_serde(&mut out, &mut scratch, value)?;
+        let scratch = &mut storage[..scratch_len];
+        encode_ber_tlv_serde(&mut out, scratch, value)?;
         assert_eq!(scratch.len(), scratch_len);
         let used = capacity - out.len();
         Ok(output[..used].to_vec())
@@ -1553,7 +1553,7 @@ mod tests {
             assert_eq!(encode(&[("t59_unknown", Formatted(value))].as_slice(), 11), Err(Error::Invalid));
         }
         assert_eq!(
-            encode_ber_tlv_serde(&mut [0; 3].as_mut_slice(), &mut [0; 11].as_mut_slice(), &map),
+            encode_ber_tlv_serde(&mut [0; 3].as_mut_slice(), [0; 11].as_mut_slice(), &map),
             Err(Error::BufferOverflow)
         );
     }

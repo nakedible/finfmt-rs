@@ -47,7 +47,7 @@ where
     V: AsRef<str> + FromStr,
 {
     #[inline(always)]
-    fn encode_unknowns(&self, output: &mut &mut [u8], _scratch: &mut &mut [u8], known_tags: &[&str]) -> Result<(), Error> {
+    fn encode_unknowns(&self, output: &mut &mut [u8], _scratch: &mut [u8], known_tags: &[&str]) -> Result<(), Error> {
         for (key, value) in self {
             encode_unknown_entry(output, key, value, known_tags)?;
         }

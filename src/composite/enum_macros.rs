@@ -41,7 +41,7 @@ macro_rules! tagged_format {
             type Decoded<'de> = $ty<'de>;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 match value {
                     $(
                         $ty::$variant(inner) => {
@@ -89,7 +89,7 @@ macro_rules! tagged_format {
             type Decoded<'de> = $ty;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 match value {
                     $(
                         $ty::$variant(inner) => {
@@ -143,7 +143,7 @@ macro_rules! choice_format {
             #[inline(always)]
             fn encode_with(
                 output: &mut &mut [u8],
-                scratch: &mut &mut [u8],
+                scratch: &mut [u8],
                 context: &$selector_ty,
                 value: &$ty<$lt>,
             ) -> Result<(), $crate::CompositeError> {
@@ -197,7 +197,7 @@ macro_rules! choice_format {
             #[inline(always)]
             fn encode_with(
                 output: &mut &mut [u8],
-                scratch: &mut &mut [u8],
+                scratch: &mut [u8],
                 context: &$selector_ty,
                 value: &$ty,
             ) -> Result<(), $crate::CompositeError> {
@@ -355,7 +355,7 @@ macro_rules! union_format {
             type Decoded<'de> = $ty<'de>;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 match value {
                     $(
                         $ty::$variant(inner) => <$fmt as $crate::composite::CompositeFmt<_>>::encode_cursor(output, scratch, inner),
@@ -382,7 +382,7 @@ macro_rules! union_format {
             type Decoded<'de> = $ty;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 match value {
                     $(
                         $ty::$variant(inner) => <$fmt as $crate::composite::CompositeFmt<_>>::encode_cursor(output, scratch, inner),

@@ -34,13 +34,13 @@ impl de::Error for Error {
     }
 }
 
-struct ScalarValueSerializer<'a, 'out, 'scratch, F: ScalarFmt> {
+struct ScalarValueSerializer<'a, 'out, F: ScalarFmt> {
     output: &'a mut &'out mut [u8],
-    scratch: &'a mut &'scratch mut [u8],
+    scratch: &'a mut [u8],
     _marker: PhantomData<F>,
 }
 
-impl<F: ScalarFmt> ScalarValueSerializer<'_, '_, '_, F> {
+impl<F: ScalarFmt> ScalarValueSerializer<'_, '_, F> {
     #[inline(always)]
     fn encode_str(self, value: &str) -> Result<(), Error> {
         F::encode_str(self.output, self.scratch, value)
@@ -57,7 +57,7 @@ impl<F: ScalarFmt> ScalarValueSerializer<'_, '_, '_, F> {
     }
 }
 
-impl<F: ScalarFmt> serde::Serializer for ScalarValueSerializer<'_, '_, '_, F> {
+impl<F: ScalarFmt> serde::Serializer for ScalarValueSerializer<'_, '_, F> {
     type Ok = ();
     type Error = Error;
     type SerializeSeq = Impossible<(), Error>;
@@ -264,19 +264,19 @@ impl<F: ScalarFmt> serde::Serializer for ScalarValueSerializer<'_, '_, '_, F> {
 
         let capacity = self.scratch.len();
         let used = {
-            let mut remaining = &mut **self.scratch;
+            let mut remaining = &mut *self.scratch;
             write!(&mut remaining, "{value}").map_err(|_| {
                 crate::utils::cold_path();
                 Error::BufferOverflow
             })?;
             capacity - remaining.len()
         };
-        let text = take_scratch(self.scratch, used)?;
+        let (text, scratch) = split_scratch(self.scratch, used)?;
         let text = core::str::from_utf8(text).map_err(|_| {
             crate::utils::cold_path();
             Error::Internal
         })?;
-        F::encode_str(self.output, self.scratch, text)
+        F::encode_str(self.output, scratch, text)
     }
 
     #[inline(always)]
@@ -614,7 +614,7 @@ impl<'de, F: ScalarFmt> serde::Deserializer<'de> for ScalarValueDeserializer<'_,
 }
 
 #[inline(always)]
-pub fn encode_serde_scalar<T, F: ScalarFmt>(value: &T, output: &mut &mut [u8], scratch: &mut &mut [u8]) -> Result<(), Error>
+pub fn encode_serde_scalar<T, F: ScalarFmt>(value: &T, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error>
 where
     T: ?Sized + Serialize,
 {
@@ -644,7 +644,7 @@ where
     type Decoded<'de> = T;
 
     #[inline(always)]
-    fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &T) -> Result<(), CompositeError> {
+    fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
         encode_serde_scalar::<T, F>(value, output, scratch)?;
         Ok(())
     }
@@ -681,11 +681,10 @@ mod tests {
         let mut output = [0xAA; 64];
         let mut scratch = [0xAA; 128];
         let mut out = &mut output[..output_len];
-        let mut space = &mut scratch[..scratch_len];
-        encode_serde_scalar::<_, F>(&format_args!("{value}"), &mut out, &mut space)?;
+        encode_serde_scalar::<_, F>(&format_args!("{value}"), &mut out, &mut scratch[..scratch_len])?;
         let used = output_len - out.len();
         assert!(out.iter().all(|&byte| byte == 0xAA));
-        assert!(space.iter().all(|&byte| byte == 0xAA));
+        assert!(scratch[scratch_len..].iter().all(|&byte| byte == 0xAA));
         Ok(output[..used].to_vec())
     }
 
@@ -782,7 +781,7 @@ mod tests {
 
         let mut output = [0u8; 4];
         let mut out = output.as_mut_slice();
-        encode_serde_scalar::<_, A4>(&Code::Value, &mut out, &mut &mut [][..]).unwrap();
+        encode_serde_scalar::<_, A4>(&Code::Value, &mut out, &mut [][..]).unwrap();
         assert!(out.is_empty());
         assert_eq!(&output, b"ABCD");
         assert_eq!(

@@ -327,12 +327,12 @@ macro_rules! bitmap_format {
             type Decoded<'de> = $ty<'de>;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 $crate::__finfmt_concat_encode_fields!(value, output, scratch; $($head)*);
 
                 let mut bitmap = $crate::bitmap::Bitmap::new();
                 $crate::__finfmt_bitmap_set_fields!(bitmap, value; $($fields)*);
-                $crate::bitmap::encode_bitmap::<$bitmap_word>(output, &mut **scratch, &bitmap, $layout).map_err($crate::CompositeError::from)?;
+                $crate::bitmap::encode_bitmap::<$bitmap_word>(output, &mut *scratch, &bitmap, $layout).map_err($crate::CompositeError::from)?;
                 $crate::__finfmt_bitmap_encode_fields!(value, output, scratch; $($fields)*);
                 Ok(())
             }
@@ -373,12 +373,12 @@ macro_rules! bitmap_format {
             type Decoded<'de> = $ty;
 
             #[inline(always)]
-            fn encode_cursor(output: &mut &mut [u8], scratch: &mut &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
+            fn encode_cursor(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 $crate::__finfmt_concat_encode_fields!(value, output, scratch; $($head)*);
 
                 let mut bitmap = $crate::bitmap::Bitmap::new();
                 $crate::__finfmt_bitmap_set_fields!(bitmap, value; $($fields)*);
-                $crate::bitmap::encode_bitmap::<$bitmap_word>(output, &mut **scratch, &bitmap, $layout).map_err($crate::CompositeError::from)?;
+                $crate::bitmap::encode_bitmap::<$bitmap_word>(output, &mut *scratch, &bitmap, $layout).map_err($crate::CompositeError::from)?;
                 $crate::__finfmt_bitmap_encode_fields!(value, output, scratch; $($fields)*);
                 Ok(())
             }

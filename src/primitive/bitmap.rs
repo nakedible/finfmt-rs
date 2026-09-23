@@ -196,7 +196,7 @@ fn continuation_mask(layout: BitmapLayout, index: usize) -> u64 {
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 fn encode_bitmap_word<F: BitmapWord>(output: &mut &mut [u8], scratch: &mut [u8], word: u64) -> Result<(), Error> {
-    let mut scratch_ptr = &mut scratch[..];
+    let scratch_ptr = &mut scratch[..];
     let word = word.to_be_bytes();
     debug_assert!(
         word.get(F::DECODED_BYTES..).is_some_and(|tail| all_bytes_eq(tail, 0)),
@@ -206,7 +206,7 @@ fn encode_bitmap_word<F: BitmapWord>(output: &mut &mut [u8], scratch: &mut [u8],
         cold_path();
         Error::Internal
     })?;
-    F::encode(output, &mut scratch_ptr, bytes)
+    F::encode(output, scratch_ptr, bytes)
 }
 
 #[inline(always)]
