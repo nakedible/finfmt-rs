@@ -46,8 +46,7 @@ pub struct CompositeError {
     pub kind: Error,
     path_len: u8,
     path: [&'static str; 4],
-    /// Whether intermediate path entries were dropped because the fixed path buffer filled up.
-    pub truncated: bool,
+    truncated: bool,
 }
 
 impl CompositeError {
@@ -79,6 +78,12 @@ impl CompositeError {
             self.truncated = true;
         }
         self
+    }
+
+    /// Whether intermediate path entries were dropped because the fixed path buffer filled up.
+    #[inline(always)]
+    pub fn is_truncated(&self) -> bool {
+        self.truncated
     }
 
     /// Stored field names; when truncated, omitted names precede the last entry.
@@ -155,7 +160,7 @@ mod tests {
                 .rev()
                 .fold(CompositeError::from(Error::Invalid), |error, field| error.with_field(field));
             assert_eq!(error.path(), path);
-            assert_eq!(error.truncated, depth > CompositeError::MAX_DEPTH);
+            assert_eq!(error.is_truncated(), depth > CompositeError::MAX_DEPTH);
             assert_eq!(error.to_string(), display);
         }
         assert_eq!(
@@ -185,10 +190,10 @@ mod proptests {
                 expected = fields[..3].iter().copied().chain(fields.last().copied()).collect();
             }
             prop_assert_eq!(error.path(), expected.as_slice());
-            prop_assert_eq!(error.truncated, fields.len() > CompositeError::MAX_DEPTH);
+            prop_assert_eq!(error.is_truncated(), fields.len() > CompositeError::MAX_DEPTH);
             prop_assert_eq!(error.kind, Error::Invalid);
             let mut display = expected;
-            if error.truncated {
+            if error.is_truncated() {
                 display.insert(3, "<truncated>");
             }
             let prefix = if display.is_empty() { String::new() } else { format!("{}: ", display.join(".")) };
