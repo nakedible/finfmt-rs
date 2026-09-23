@@ -35,17 +35,35 @@ impl core::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-/// Composite encode/decode error with field path context.
+/// One step in a [`CompositeError`] path.
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd, Hash)]
+pub enum PathSegment {
+    /// A named field.
+    Field(&'static str),
+    /// A position in a list, counted from zero.
+    Index(usize),
+}
+
+impl core::fmt::Display for PathSegment {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Field(name) => f.write_str(name),
+            Self::Index(index) => write!(f, "[{index}]"),
+        }
+    }
+}
+
+/// Composite encode/decode error with path context.
 ///
 /// The underlying failure kind is kept in [`Error`], while the composite layer
-/// records up to four nested field names from outermost to innermost. For deeper
-/// paths, it retains the three outermost names and the innermost name.
+/// records up to four nested path segments from outermost to innermost. For
+/// deeper paths, it retains the three outermost segments and the innermost one.
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd, Hash)]
 pub struct CompositeError {
     /// Underlying error kind.
     pub kind: Error,
     path_len: u8,
-    path: [&'static str; 4],
+    path: [PathSegment; 4],
     truncated: bool,
 }
 
@@ -57,13 +75,25 @@ impl CompositeError {
         Self {
             kind,
             path_len: 0,
-            path: [""; 4],
+            path: [PathSegment::Field(""); 4],
             truncated: false,
         }
     }
 
+    /// Prepend an enclosing field name.
     #[inline(always)]
-    pub fn with_field(mut self, field: &'static str) -> Self {
+    pub fn with_field(self, field: &'static str) -> Self {
+        self.with_segment(PathSegment::Field(field))
+    }
+
+    /// Prepend an enclosing list position.
+    #[inline(always)]
+    pub fn with_index(self, index: usize) -> Self {
+        self.with_segment(PathSegment::Index(index))
+    }
+
+    #[inline(always)]
+    fn with_segment(mut self, segment: PathSegment) -> Self {
         let len = self.path_len as usize;
         let keep = if len < Self::MAX_DEPTH { len } else { Self::MAX_DEPTH - 2 };
         let mut idx = keep;
@@ -71,7 +101,7 @@ impl CompositeError {
             self.path[idx] = self.path[idx - 1];
             idx -= 1;
         }
-        self.path[0] = field;
+        self.path[0] = segment;
         if len < Self::MAX_DEPTH {
             self.path_len += 1;
         } else {
@@ -80,15 +110,15 @@ impl CompositeError {
         self
     }
 
-    /// Whether intermediate path entries were dropped because the fixed path buffer filled up.
+    /// Whether intermediate path segments were dropped because the fixed path buffer filled up.
     #[inline(always)]
     pub fn is_truncated(&self) -> bool {
         self.truncated
     }
 
-    /// Stored field names; when truncated, omitted names precede the last entry.
+    /// Stored path segments; when truncated, omitted segments precede the last entry.
     #[inline(always)]
-    pub fn path(&self) -> &[&'static str] {
+    pub fn path(&self) -> &[PathSegment] {
         &self.path[..self.path_len as usize]
     }
 }
@@ -100,25 +130,22 @@ impl From<Error> for CompositeError {
     }
 }
 
+/// Displays as `outer.list[2].field: <kind>`.
 impl core::fmt::Display for CompositeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if self.path_len == 0 {
-            return self.kind.fmt(f);
-        }
-
-        let mut idx = 0usize;
-        while idx < self.path_len as usize {
-            if idx != 0 {
-                if self.truncated && idx + 1 == self.path_len as usize {
-                    f.write_str(".<truncated>")?;
-                }
+        let path = self.path();
+        for (idx, segment) in path.iter().enumerate() {
+            if idx != 0 && self.truncated && idx + 1 == path.len() {
+                f.write_str(".<truncated>")?;
+            }
+            if idx != 0 && matches!(segment, PathSegment::Field(_)) {
                 f.write_str(".")?;
             }
-            f.write_str(self.path[idx])?;
-            idx += 1;
+            segment.fmt(f)?;
         }
-
-        f.write_str(": ")?;
+        if !path.is_empty() {
+            f.write_str(": ")?;
+        }
         self.kind.fmt(f)
     }
 }
@@ -131,7 +158,7 @@ impl std::error::Error for CompositeError {
 
 #[cfg(test)]
 mod tests {
-    use super::{CompositeError, Error};
+    use super::{CompositeError, Error, PathSegment};
 
     #[test]
     fn test_error_display_messages() {
@@ -159,7 +186,7 @@ mod tests {
                 .iter()
                 .rev()
                 .fold(CompositeError::from(Error::Invalid), |error, field| error.with_field(field));
-            assert_eq!(error.path(), path);
+            assert_eq!(error.path(), path.iter().map(|&name| PathSegment::Field(name)).collect::<Vec<_>>());
             assert_eq!(error.is_truncated(), depth > CompositeError::MAX_DEPTH);
             assert_eq!(error.to_string(), display);
         }
@@ -171,13 +198,34 @@ mod tests {
             "outer.inner: semantic value length out of bounds"
         );
     }
+
+    #[test]
+    fn test_index_segments() {
+        let error = CompositeError::from(Error::Invalid)
+            .with_field("amount")
+            .with_index(2)
+            .with_field("items");
+        assert_eq!(
+            error.path(),
+            [PathSegment::Field("items"), PathSegment::Index(2), PathSegment::Field("amount")]
+        );
+        assert_eq!(error.to_string(), "items[2].amount: invalid data");
+        assert_eq!(CompositeError::from(Error::Invalid).with_index(0).to_string(), "[0]: invalid data");
+        let deep = ["a", "b", "c"]
+            .iter()
+            .rev()
+            .fold(CompositeError::from(Error::Invalid).with_index(7), |e, f| e.with_field(f));
+        assert_eq!(deep.to_string(), "a.b.c[7]: invalid data");
+        assert_eq!(deep.with_field("x").to_string(), "x.a.b.<truncated>[7]: invalid data");
+        assert_eq!(size_of::<CompositeError>(), 72);
+    }
 }
 
 #[cfg(test)]
 mod proptests {
     use proptest::prelude::*;
 
-    use super::{CompositeError, Error};
+    use super::{CompositeError, Error, PathSegment};
 
     proptest! {
         #[test]
@@ -189,7 +237,7 @@ mod proptests {
             if fields.len() > CompositeError::MAX_DEPTH {
                 expected = fields[..3].iter().copied().chain(fields.last().copied()).collect();
             }
-            prop_assert_eq!(error.path(), expected.as_slice());
+            prop_assert_eq!(error.path(), expected.iter().map(|&name| PathSegment::Field(name)).collect::<Vec<_>>());
             prop_assert_eq!(error.is_truncated(), fields.len() > CompositeError::MAX_DEPTH);
             prop_assert_eq!(error.kind, Error::Invalid);
             let mut display = expected;

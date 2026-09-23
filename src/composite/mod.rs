@@ -1218,7 +1218,7 @@ mod tests {
         let mut out = output.as_mut_slice();
         let error = DelimitedSlotsFmt::encode(&mut out, scratch.as_mut_slice(), &invalid).unwrap_err();
         assert_eq!(error.kind, Error::Invalid);
-        assert_eq!(error.path(), ["first"]);
+        assert_eq!(error.path(), [crate::PathSegment::Field("first")]);
         assert!(!error.is_truncated());
 
         let nested = NestedConcat {
@@ -1233,7 +1233,7 @@ mod tests {
         let mut out = output.as_mut_slice();
         let error = NestedConcatFmt::encode(&mut out, scratch.as_mut_slice(), &nested).unwrap_err();
         assert_eq!(error.kind, Error::InvalidValueLength);
-        assert_eq!(error.path(), ["inner", "c"]);
+        assert_eq!(error.path(), [crate::PathSegment::Field("inner"), crate::PathSegment::Field("c")]);
         assert!(!error.is_truncated());
     }
 

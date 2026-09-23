@@ -89,7 +89,7 @@ where
             let available = output.len();
             let used = {
                 let mut item_out = &mut **output;
-                Item::encode_cursor(&mut item_out, scratch, item)?;
+                Item::encode_cursor(&mut item_out, scratch, item).map_err(|error| error.with_index(index))?;
                 available - item_out.len()
             };
             let encoded = output.split_off_mut(..used).ok_or_else(|| {
@@ -120,7 +120,7 @@ where
             (Some(count), Some(separator)) => {
                 for index in 0..count {
                     let mut segment = decode_delimited_field(input, separator, index + 1 != count)?;
-                    let value = Item::decode_cursor(&mut segment, scratch)?;
+                    let value = Item::decode_cursor(&mut segment, scratch).map_err(|error| error.with_index(index))?;
                     if !segment.is_empty() {
                         crate::utils::cold_path();
                         return Err(Error::Invalid.into());
@@ -137,7 +137,7 @@ where
                     }
                     let (mut segment, terminated) = split_delimited_bytes(input, separator);
                     more = terminated;
-                    let value = Item::decode_cursor(&mut segment, scratch)?;
+                    let value = Item::decode_cursor(&mut segment, scratch).map_err(|error| error.with_index(values.len()))?;
                     if !segment.is_empty() {
                         crate::utils::cold_path();
                         return Err(Error::Invalid.into());
@@ -146,8 +146,8 @@ where
                 }
             }
             (Some(count), None) => {
-                for _ in 0..count {
-                    values.push(Item::decode_cursor(input, scratch)?);
+                for index in 0..count {
+                    values.push(Item::decode_cursor(input, scratch).map_err(|error| error.with_index(index))?);
                 }
             }
             (None, None) => {
@@ -157,7 +157,7 @@ where
                         return Err(Error::Invalid.into());
                     }
                     let before = input.len();
-                    let value = Item::decode_cursor(input, scratch)?;
+                    let value = Item::decode_cursor(input, scratch).map_err(|error| error.with_index(values.len()))?;
                     if input.len() == before {
                         crate::utils::cold_path();
                         return Err(Error::Internal.into());
@@ -294,12 +294,12 @@ where
             CompositeError::from(Error::BufferOverflow)
         })?;
         let mut area_out = area;
-        for item in value {
+        for (index, item) in value.iter().enumerate() {
             let slot = area_out.split_off_mut(..Slot::WIRE_LEN).ok_or_else(|| {
                 crate::utils::cold_path();
                 CompositeError::from(Error::Internal)
             })?;
-            Slot::encode_present(slot, scratch, item)?;
+            Slot::encode_present(slot, scratch, item).map_err(|error| error.with_index(index))?;
         }
         Slot::encode_absent_slots(area_out, scratch)?;
         Ok(())
@@ -322,12 +322,12 @@ where
         let count = logical_len / Slot::WIRE_LEN;
         let mut values = Vec::with_capacity(count);
         let mut slots = area;
-        for _ in 0..count {
+        for index in 0..count {
             let slot = slots.split_off(..Slot::WIRE_LEN).ok_or_else(|| {
                 crate::utils::cold_path();
                 CompositeError::from(Error::Internal)
             })?;
-            values.push(Slot::decode_present(slot, scratch)?);
+            values.push(Slot::decode_present(slot, scratch).map_err(|error| error.with_index(index))?);
         }
         Slot::validate_absent_slots(slots, scratch)?;
         Ok(values)
@@ -371,6 +371,24 @@ mod tests {
         let (values, rest) = decode::<F>(wire).unwrap();
         assert_eq!(values, texts);
         assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn item_errors_carry_their_index() {
+        let error = |result: Result<Vec<String>, CompositeError>| result.unwrap_err().to_string();
+        let mut input = &b"3A||B"[..];
+        type Counted2 = BoundedList<String, AsciiLength<1>, One, Separator<b'|'>, 4>;
+        assert_eq!(error(Counted2::decode(&mut input, &mut [0; 8])), "[1]: unexpected end of input");
+        let values = vec!["A".to_owned(), "BC".to_owned()];
+        assert_eq!(
+            Counted2::encode(&mut [0; 8].as_mut_slice(), &mut [], &values)
+                .unwrap_err()
+                .to_string(),
+            "[1]: semantic value length out of bounds"
+        );
+        type Two = DirectScalar<Field<Ascii<2, 2>, Fixed<2>>>;
+        type Area = FixedAreaList<String, AsciiLength<1>, OptionalAbsent<String, Two, ByteFill, 2>, 3>;
+        assert_eq!(error(Area::decode(&mut &b"4AB\xff\xff  "[..], &mut [])), "[1]: invalid data");
     }
 
     #[test]

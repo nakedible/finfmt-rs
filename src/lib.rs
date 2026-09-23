@@ -25,7 +25,7 @@ pub use field::{
     Track2, TruncateBytes, UnpackNibbles, UpperAlpha, UpperAlphanum, UpperAsciiPrintable, WireFixed, WireLength,
 };
 pub use scalarfmt::ScalarFmt;
-pub use types::{CompositeError, Error};
+pub use types::{CompositeError, Error, PathSegment};
 
 #[doc(hidden)]
 pub mod __private {
