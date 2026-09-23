@@ -1,3 +1,11 @@
+//! EBCDIC code pages.
+//!
+//! CP037 is a permissive ASCII byte map: ASCII round-trips exactly and every
+//! other byte becomes SUB, like a lossy UTF-8 conversion. It never fails; pair
+//! it with a check when a field must be strict. CP1142 is a strict codec between
+//! UTF-8 and the full code page, with an ASCII fast path and a cold path for
+//! everything else.
+
 #[cfg(all(not(debug_assertions), feature = "no-panic"))]
 use no_panic::no_panic;
 

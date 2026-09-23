@@ -156,6 +156,13 @@ Validation functions are still primitives. They are the explicit tools for
 checking byte classes, character-set representability, ranges, decimal shapes,
 and fixed/even lengths where a format boundary requires that check.
 
+Character codecs come in two deliberate kinds. A permissive byte map, such as
+CP037, converts ASCII exactly and replaces anything else with SUB in both
+directions, much like a lossy UTF-8 conversion; it never fails, and a field that
+must be strict pairs it with a check. A strict codec, such as CP1142, converts
+between UTF-8 text and the full code page and rejects unrepresentable text or
+invalid UTF-8. Both keep ASCII on a fast path, since most traffic is ASCII.
+
 ## Errors
 
 `Error` is the scalar and primitive error type:
