@@ -1,6 +1,6 @@
 use crate::primitive::bytes::{copy_bytes, reserve_bytes};
 use crate::primitive::ebcdic::{
-    ASCII_TO_EBCDIC_037, EBCDIC_037_TO_ASCII, decode_ebcdic_1142, encode_ebcdic_1142_validated, translate_bytes, translate_bytes_inplace,
+    ASCII_TO_EBCDIC_037, EBCDIC_037_TO_ASCII, decode_ebcdic_1142, encode_ebcdic_1142, translate_bytes, translate_bytes_inplace,
 };
 use crate::utils::cold_path;
 use crate::{Error, Step};
@@ -15,9 +15,9 @@ use crate::{Error, Step};
 /// encode and `DecodeCheck<Ebcdic037, Ebcdic037Ascii<MIN, MAX>>` on decode.
 /// Validation after conversion cannot distinguish replacements from genuine SUB.
 pub struct Ebcdic037;
-/// Transform validated IBM1142 text to wire bytes, and wire bytes to UTF-8.
-/// Encoding requires the IBM1142 repertoire (for example `Ebcdic1142Text` or
-/// an ASCII check); its logical length is the Unicode scalar count.
+/// Strict conversion between UTF-8 text and IBM1142 wire bytes. Encoding
+/// rejects invalid UTF-8 and characters outside IBM1142; pair it with
+/// `Ebcdic1142Text` to also check the length, which counts Unicode scalars.
 pub struct Ebcdic1142;
 
 impl Step for Ebcdic037 {
@@ -76,7 +76,7 @@ impl Step for Ebcdic1142 {
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-        encode_ebcdic_1142_validated(output, input)
+        encode_ebcdic_1142(output, input)
     }
 
     #[inline(always)]

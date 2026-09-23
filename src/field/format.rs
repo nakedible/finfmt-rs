@@ -423,6 +423,17 @@ mod tests {
         assert_eq!(decode_field::<F>(&max, 0), Err(Error::UnexpectedEof));
     }
     #[test]
+    fn unchecked_ebcdic_1142_rejects_unrepresentable_text() {
+        for input in ["😀".as_bytes(), "\u{A4}".as_bytes(), b"\xFF"] {
+            let mut output = [0; 8];
+            assert_eq!(
+                <Ebcdic1142 as crate::Step>::encode(&mut &mut output[..], &mut [][..], input).map(|_| ()),
+                Err(Error::Invalid)
+            );
+        }
+    }
+
+    #[test]
     #[cfg(debug_assertions)]
     fn incompatible_length_units_are_diagnosed_in_debug() {
         type WrongBytes = Field<Ebcdic1142Text<1, 1>, AsciiLength<2>>;
