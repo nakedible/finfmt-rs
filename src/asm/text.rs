@@ -1,29 +1,29 @@
 use crate::Error;
-use crate::primitive::text::{decode_ascii, decode_bytes, encode_ascii, encode_bytes, truncate_bytes};
+use crate::primitive::text::{decode_ascii, decode_padded, encode_ascii, encode_padded, truncate_bytes};
 
 #[inline(never)]
-pub fn encode_bytes_pad_right_8_space<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-    encode_bytes(output, input, 8, false, b' ')
+pub fn encode_padded_right_8_space<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+    encode_padded(output, input, 8, false, b' ')
 }
 
 #[inline(never)]
-pub fn encode_bytes_pad_left_8_space<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-    encode_bytes(output, input, 8, true, b' ')
+pub fn encode_padded_left_8_space<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+    encode_padded(output, input, 8, true, b' ')
 }
 
 #[inline(never)]
-pub fn encode_bytes_fixed_8_space<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-    encode_bytes(output, truncate_bytes(input, 8, false), 8, false, b' ')
+pub fn encode_padded_fixed_8_space<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+    encode_padded(output, truncate_bytes(input, 8, false), 8, false, b' ')
 }
 
 #[inline(never)]
-pub fn decode_bytes_strip_right_8_space(input: &[u8; 8]) -> Result<&[u8], Error> {
-    Ok(decode_bytes(input, 0, false, b' '))
+pub fn decode_padded_right_8_space(input: &[u8; 8]) -> Result<&[u8], Error> {
+    Ok(decode_padded(input, 0, false, b' '))
 }
 
 #[inline(never)]
-pub fn decode_bytes_strip_left_8_space(input: &[u8; 8]) -> Result<&[u8], Error> {
-    Ok(decode_bytes(input, 0, true, b' '))
+pub fn decode_padded_left_8_space(input: &[u8; 8]) -> Result<&[u8], Error> {
+    Ok(decode_padded(input, 0, true, b' '))
 }
 
 #[inline(never)]
@@ -63,6 +63,6 @@ pub fn encode_truncated_ascii_4(output: &mut &mut [u8], input: &str) -> Result<(
 }
 
 #[inline(never)]
-pub fn decode_bytes_protected_6(input: &[u8; 8]) -> Result<&[u8], Error> {
-    Ok(decode_bytes(input, 6, false, b' '))
+pub fn decode_padded_protected_6(input: &[u8; 8]) -> Result<&[u8], Error> {
+    Ok(decode_padded(input, 6, false, b' '))
 }

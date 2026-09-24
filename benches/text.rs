@@ -13,36 +13,36 @@ const PADDED_RIGHT: &[u8; 8] = b"Hi      ";
 const PADDED_LEFT: &[u8; 8] = b"      Hi";
 
 fn bench_encode_bytes(suite: &mut Suite) {
-    suite.group("encode_bytes", |group| {
+    suite.group("encode_padded", |group| {
         quick(group);
-        group.bench("encode_bytes_pad_right_8_space", |b| {
+        group.bench("encode_padded_right_8_space", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 16];
                 let mut out = &mut buf[..];
-                let _ = encode_bytes_pad_right_8_space(&mut out, black_box(SHORT_BYTES));
+                let _ = encode_padded_right_8_space(&mut out, black_box(SHORT_BYTES));
                 black_box(buf)
             })
         });
-        group.bench("encode_bytes_pad_left_8_space", |b| {
+        group.bench("encode_padded_left_8_space", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 16];
                 let mut out = &mut buf[..];
-                let _ = encode_bytes_pad_left_8_space(&mut out, black_box(SHORT_BYTES));
+                let _ = encode_padded_left_8_space(&mut out, black_box(SHORT_BYTES));
                 black_box(buf)
             })
         });
-        group.bench("encode_bytes_fixed_8_space", |b| {
+        group.bench("encode_padded_fixed_8_space", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 8];
                 let mut out = &mut buf[..];
-                let _ = encode_bytes_fixed_8_space(&mut out, black_box(SHORT_BYTES));
+                let _ = encode_padded_fixed_8_space(&mut out, black_box(SHORT_BYTES));
                 black_box(buf)
             })
         });
-        group.bench("encode_bytes_no_padding", |b| {
+        group.bench("encode_padded_no_padding", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 16];
-                let _ = encode_bytes_pad_right_8_space(&mut buf.as_mut_slice(), black_box(b"123456789ABC"));
+                let _ = encode_padded_right_8_space(&mut buf.as_mut_slice(), black_box(b"123456789ABC"));
                 black_box(buf)
             })
         });
@@ -56,22 +56,22 @@ fn bench_encode_bytes(suite: &mut Suite) {
 }
 
 fn bench_decode_bytes(suite: &mut Suite) {
-    suite.group("decode_bytes", |group| {
+    suite.group("decode_padded", |group| {
         quick(group);
-        group.bench("decode_bytes_strip_right_8_space", |b| {
+        group.bench("decode_padded_right_8_space", |b| {
             b.iter(|| {
                 let input = black_box(PADDED_RIGHT);
-                black_box(decode_bytes_strip_right_8_space(input))
+                black_box(decode_padded_right_8_space(input))
             })
         });
-        group.bench("decode_bytes_strip_left_8_space", |b| {
+        group.bench("decode_padded_left_8_space", |b| {
             b.iter(|| {
                 let input = black_box(PADDED_LEFT);
-                black_box(decode_bytes_strip_left_8_space(input))
+                black_box(decode_padded_left_8_space(input))
             })
         });
-        group.bench("decode_bytes_protected_6", |b| {
-            b.iter(|| black_box(decode_bytes_protected_6(black_box(b"        "))))
+        group.bench("decode_padded_protected_6", |b| {
+            b.iter(|| black_box(decode_padded_protected_6(black_box(b"        "))))
         });
     });
 }

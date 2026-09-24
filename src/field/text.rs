@@ -1,5 +1,5 @@
 use crate::primitive::bytes::copy_bytes;
-use crate::primitive::text::{decode_bytes, encode_bytes};
+use crate::primitive::text::{decode_padded, encode_padded};
 use crate::utils::cold_path;
 use crate::{Error, Step};
 
@@ -55,12 +55,12 @@ impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadRigh
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-        encode_bytes(output, input, PAD_TO, false, CHAR)
+        encode_padded(output, input, PAD_TO, false, CHAR)
     }
 
     #[inline(always)]
     fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
-        Ok(decode_bytes(input, semantic_len.unwrap_or(MIN_LEN).max(MIN_LEN), false, CHAR))
+        Ok(decode_padded(input, semantic_len.unwrap_or(MIN_LEN).max(MIN_LEN), false, CHAR))
     }
 }
 
@@ -79,12 +79,12 @@ impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadLeft
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-        encode_bytes(output, input, PAD_TO, true, CHAR)
+        encode_padded(output, input, PAD_TO, true, CHAR)
     }
 
     #[inline(always)]
     fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
-        Ok(decode_bytes(input, semantic_len.unwrap_or(MIN_LEN).max(MIN_LEN), true, CHAR))
+        Ok(decode_padded(input, semantic_len.unwrap_or(MIN_LEN).max(MIN_LEN), true, CHAR))
     }
 }
 
@@ -106,12 +106,12 @@ impl<const CHAR: u8> Step for PadRightEven<CHAR> {
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-        encode_bytes(output, input, Self::encoded_len(input.len())?, false, CHAR)
+        encode_padded(output, input, Self::encoded_len(input.len())?, false, CHAR)
     }
 
     #[inline(always)]
     fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
-        Ok(decode_bytes(input, semantic_len.unwrap_or(0), false, CHAR))
+        Ok(decode_padded(input, semantic_len.unwrap_or(0), false, CHAR))
     }
 }
 
@@ -133,11 +133,11 @@ impl<const CHAR: u8> Step for PadLeftEven<CHAR> {
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-        encode_bytes(output, input, Self::encoded_len(input.len())?, true, CHAR)
+        encode_padded(output, input, Self::encoded_len(input.len())?, true, CHAR)
     }
 
     #[inline(always)]
     fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
-        Ok(decode_bytes(input, semantic_len.unwrap_or(0), true, CHAR))
+        Ok(decode_padded(input, semantic_len.unwrap_or(0), true, CHAR))
     }
 }

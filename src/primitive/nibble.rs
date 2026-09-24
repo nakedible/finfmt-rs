@@ -77,14 +77,14 @@ fn unpack_nibbles_exact<A: NibbleAlphabet>(dst: &mut [u8], src: &[u8]) {
 pub fn pack_nibbles<'a, A: NibbleAlphabet>(
     output: &mut &'a mut [u8],
     input: &[u8],
-    align_right: bool,
+    pad_left: bool,
     padding: u8,
 ) -> Result<&'a mut [u8], Error> {
     debug_assert!(padding < 16, "Invalid padding nibble for packing");
     let buf = reserve_bytes(output, input.len().div_ceil(2))?;
     if input.len().is_multiple_of(2) {
         pack_nibbles_exact::<A>(buf, input);
-    } else if align_right {
+    } else if pad_left {
         let ([first, rest @ ..], [firstout, buf_rest @ ..]) = (input, &mut *buf) else {
             cold_path();
             return Err(Error::BufferOverflow);
@@ -154,7 +154,7 @@ pub fn unpack_padded_nibbles<'a, A: NibbleAlphabet>(
     output: &mut &'a mut [u8],
     input: &[u8],
     output_len: usize,
-    align_right: bool,
+    pad_left: bool,
     padding: u8,
 ) -> Result<&'a mut [u8], Error> {
     debug_assert!(padding < 16, "Invalid padding nibble for unpacking");
@@ -165,7 +165,7 @@ pub fn unpack_padded_nibbles<'a, A: NibbleAlphabet>(
     let buf = reserve_bytes(output, output_len)?;
     if output_len.is_multiple_of(2) {
         unpack_nibbles_exact::<A>(buf, input);
-    } else if align_right {
+    } else if pad_left {
         let ([first, rest @ ..], [firstout, buf_rest @ ..]) = (input, &mut *buf) else {
             cold_path();
             return Err(Error::Invalid);
@@ -195,11 +195,11 @@ pub fn unpack_padded_nibbles<'a, A: NibbleAlphabet>(
 mod tests {
     use super::*;
 
-    fn pack<A: NibbleAlphabet>(input: &[u8], align_right: bool, padding: u8) -> Vec<u8> {
+    fn pack<A: NibbleAlphabet>(input: &[u8], pad_left: bool, padding: u8) -> Vec<u8> {
         let mut output = [0u8; 64];
         let initial_len = output.len();
         let mut outptr = &mut output[..];
-        let result = pack_nibbles::<A>(&mut outptr, input, align_right, padding).unwrap();
+        let result = pack_nibbles::<A>(&mut outptr, input, pad_left, padding).unwrap();
         assert_eq!(outptr.len(), initial_len - result.len(), "cursor advancement");
         result.to_vec()
     }
@@ -485,12 +485,12 @@ mod proptests {
         #[test]
         fn odd_padding_position(input in "[0-9]{1,21}", padding in 0u8..16) {
             let odd = if input.len() % 2 == 0 { &input[..input.len()-1] } else { &input[..] };
-            // Right align: padding in high nibble of first byte
+            // Pad left: padding in high nibble of first byte
             let mut out = [0u8; 64];
             let mut ptr = &mut out[..];
             let result = pack_nibbles::<BcdzDigits>(&mut ptr, odd.as_bytes(), true, padding).unwrap();
             prop_assert_eq!(result[0] >> 4, padding);
-            // Left align: padding in low nibble of last byte
+            // Pad right: padding in low nibble of last byte
             let mut out = [0u8; 64];
             let mut ptr = &mut out[..];
             let result = pack_nibbles::<BcdzDigits>(&mut ptr, odd.as_bytes(), false, padding).unwrap();

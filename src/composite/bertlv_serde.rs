@@ -1268,7 +1268,7 @@ where
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<T, CompositeError> {
         let value = decode_ber_tlv_serde::<T, ALLOW_ZERO_PADDING>(input, scratch)?;
         if ALLOW_ZERO_PADDING {
-            *input = crate::primitive::text::decode_bytes(input, 0, true, 0);
+            *input = crate::primitive::text::decode_padded(input, 0, true, 0);
         }
         if !input.is_empty() {
             cold_path();

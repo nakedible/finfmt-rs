@@ -551,7 +551,7 @@ mod tests {
         F::decode_u64(&mut input, &mut scratch_ptr)
     }
 
-    fn encode_bytes<F: ScalarFmt>(input: &[u8]) -> Result<Vec<u8>, Error> {
+    fn encode_padded<F: ScalarFmt>(input: &[u8]) -> Result<Vec<u8>, Error> {
         let mut output = [0u8; 32];
         let total = output.len();
         let used = {
@@ -564,7 +564,7 @@ mod tests {
         Ok(output[..used].to_vec())
     }
 
-    fn decode_bytes<F: ScalarFmt>(input: &[u8]) -> Result<Vec<u8>, Error> {
+    fn decode_padded<F: ScalarFmt>(input: &[u8]) -> Result<Vec<u8>, Error> {
         let mut input = input;
         let mut scratch = [0u8; 32];
         let mut scratch_ptr = scratch.as_mut_slice();
@@ -597,18 +597,18 @@ mod tests {
     #[test]
     fn wrong_length_values_are_value_length_errors() {
         assert_eq!(FixedBinaryBe::<2>::encoded_len(b"\x01"), Err(Error::InvalidValueLength));
-        assert_eq!(encode_bytes::<FixedBinaryBe<2>>(b"\x01\x02\x03"), Err(Error::InvalidValueLength));
+        assert_eq!(encode_padded::<FixedBinaryBe<2>>(b"\x01\x02\x03"), Err(Error::InvalidValueLength));
         assert_eq!(FixedSignedBinaryBe::<2>::encoded_len(b"\x01"), Err(Error::InvalidValueLength));
-        assert_eq!(encode_bytes::<FixedSignedBinaryBe<2>>(b"\x01"), Err(Error::InvalidValueLength));
+        assert_eq!(encode_padded::<FixedSignedBinaryBe<2>>(b"\x01"), Err(Error::InvalidValueLength));
         assert_eq!(
             FixedNibbleInt::<UpperHexDigits, 2>::encoded_len(b"F"),
             Err(Error::InvalidValueLength)
         );
         assert_eq!(
-            encode_bytes::<FixedNibbleInt<UpperHexDigits, 2>>(b"FFF"),
+            encode_padded::<FixedNibbleInt<UpperHexDigits, 2>>(b"FFF"),
             Err(Error::InvalidValueLength)
         );
-        assert_eq!(encode_bytes::<FixedNibbleInt<UpperHexDigits, 2>>(b"G"), Err(Error::Invalid));
+        assert_eq!(encode_padded::<FixedNibbleInt<UpperHexDigits, 2>>(b"G"), Err(Error::Invalid));
     }
 
     #[test]
@@ -643,13 +643,13 @@ mod tests {
 
     #[test]
     fn test_fixed_signed_zoned_ebcdic_byte_api() {
-        assert_eq!(encode_bytes::<FixedSignedZonedEbcdic<2>>(b"-7"), Ok(vec![0xF0, 0xD7]));
-        assert_eq!(encode_bytes::<FixedSignedZonedEbcdic<3>>(b"12"), Ok(vec![0xF0, 0xF1, 0xC2]));
-        assert_eq!(decode_bytes::<FixedSignedZonedEbcdic<2>>(b"\xF0\xD7"), Ok(b"-7".to_vec()));
-        assert_eq!(decode_bytes::<FixedSignedZonedEbcdic<3>>(b"\xF0\xF0\xC0"), Ok(b"0".to_vec()));
-        assert_eq!(encode_bytes::<FixedSignedZonedEbcdic<2>>(b"+7"), Err(Error::Invalid));
-        assert_eq!(encode_bytes::<FixedSignedZonedEbcdic<2>>(b"123"), Err(Error::InvalidValueLength));
-        assert_eq!(decode_bytes::<FixedSignedZonedEbcdic<2>>(b"\xC1\xC2"), Err(Error::Invalid));
+        assert_eq!(encode_padded::<FixedSignedZonedEbcdic<2>>(b"-7"), Ok(vec![0xF0, 0xD7]));
+        assert_eq!(encode_padded::<FixedSignedZonedEbcdic<3>>(b"12"), Ok(vec![0xF0, 0xF1, 0xC2]));
+        assert_eq!(decode_padded::<FixedSignedZonedEbcdic<2>>(b"\xF0\xD7"), Ok(b"-7".to_vec()));
+        assert_eq!(decode_padded::<FixedSignedZonedEbcdic<3>>(b"\xF0\xF0\xC0"), Ok(b"0".to_vec()));
+        assert_eq!(encode_padded::<FixedSignedZonedEbcdic<2>>(b"+7"), Err(Error::Invalid));
+        assert_eq!(encode_padded::<FixedSignedZonedEbcdic<2>>(b"123"), Err(Error::InvalidValueLength));
+        assert_eq!(decode_padded::<FixedSignedZonedEbcdic<2>>(b"\xC1\xC2"), Err(Error::Invalid));
     }
 
     #[test]
@@ -663,14 +663,14 @@ mod tests {
 
     #[test]
     fn test_fixed_comp3_byte_api() {
-        assert_eq!(encode_bytes::<FixedComp3<2>>(b"12"), Ok(vec![0x01, 0x2F]));
-        assert_eq!(encode_bytes::<FixedComp3<2>>(b"123"), Ok(vec![0x12, 0x3F]));
-        assert_eq!(decode_bytes::<FixedComp3<2>>(b"\x01\x2C"), Ok(b"12".to_vec()));
-        assert_eq!(decode_bytes::<FixedComp3<2>>(b"\x01\x2F"), Ok(b"12".to_vec()));
-        assert_eq!(decode_bytes::<FixedComp3<2>>(b"\x00\x0C"), Ok(b"0".to_vec()));
-        assert_eq!(encode_bytes::<FixedComp3<2>>(b"-7"), Err(Error::Invalid));
-        assert_eq!(encode_bytes::<FixedComp3<2>>(b"1234"), Err(Error::InvalidValueLength));
-        assert_eq!(decode_bytes::<FixedComp3<2>>(b"\x01\x2D"), Err(Error::Invalid));
+        assert_eq!(encode_padded::<FixedComp3<2>>(b"12"), Ok(vec![0x01, 0x2F]));
+        assert_eq!(encode_padded::<FixedComp3<2>>(b"123"), Ok(vec![0x12, 0x3F]));
+        assert_eq!(decode_padded::<FixedComp3<2>>(b"\x01\x2C"), Ok(b"12".to_vec()));
+        assert_eq!(decode_padded::<FixedComp3<2>>(b"\x01\x2F"), Ok(b"12".to_vec()));
+        assert_eq!(decode_padded::<FixedComp3<2>>(b"\x00\x0C"), Ok(b"0".to_vec()));
+        assert_eq!(encode_padded::<FixedComp3<2>>(b"-7"), Err(Error::Invalid));
+        assert_eq!(encode_padded::<FixedComp3<2>>(b"1234"), Err(Error::InvalidValueLength));
+        assert_eq!(decode_padded::<FixedComp3<2>>(b"\x01\x2D"), Err(Error::Invalid));
     }
 
     #[test]
@@ -684,24 +684,24 @@ mod tests {
 
     #[test]
     fn test_fixed_signed_comp3_byte_api() {
-        assert_eq!(encode_bytes::<FixedSignedComp3<2>>(b"-7"), Ok(vec![0x00, 0x7D]));
-        assert_eq!(encode_bytes::<FixedSignedComp3<2>>(b"12"), Ok(vec![0x01, 0x2C]));
-        assert_eq!(decode_bytes::<FixedSignedComp3<2>>(b"\x00\x7D"), Ok(b"-7".to_vec()));
-        assert_eq!(decode_bytes::<FixedSignedComp3<2>>(b"\x00\x0D"), Ok(b"0".to_vec()));
-        assert_eq!(encode_bytes::<FixedSignedComp3<2>>(b"+7"), Err(Error::Invalid));
-        assert_eq!(encode_bytes::<FixedSignedComp3<2>>(b"1234"), Err(Error::InvalidValueLength));
-        assert_eq!(decode_bytes::<FixedSignedComp3<2>>(b"\x1A\x2C"), Err(Error::Invalid));
+        assert_eq!(encode_padded::<FixedSignedComp3<2>>(b"-7"), Ok(vec![0x00, 0x7D]));
+        assert_eq!(encode_padded::<FixedSignedComp3<2>>(b"12"), Ok(vec![0x01, 0x2C]));
+        assert_eq!(decode_padded::<FixedSignedComp3<2>>(b"\x00\x7D"), Ok(b"-7".to_vec()));
+        assert_eq!(decode_padded::<FixedSignedComp3<2>>(b"\x00\x0D"), Ok(b"0".to_vec()));
+        assert_eq!(encode_padded::<FixedSignedComp3<2>>(b"+7"), Err(Error::Invalid));
+        assert_eq!(encode_padded::<FixedSignedComp3<2>>(b"1234"), Err(Error::InvalidValueLength));
+        assert_eq!(decode_padded::<FixedSignedComp3<2>>(b"\x1A\x2C"), Err(Error::Invalid));
     }
 
     #[test]
     fn test_implied_decimal_signed_zoned() {
         type F = ImpliedDecimal<FixedSignedZonedEbcdic<5>, 2>;
-        assert_eq!(encode_bytes::<F>(b"123.45"), Ok(vec![0xF1, 0xF2, 0xF3, 0xF4, 0xC5]));
-        assert_eq!(encode_bytes::<F>(b"-0.05"), Ok(vec![0xF0, 0xF0, 0xF0, 0xF0, 0xD5]));
-        assert_eq!(decode_bytes::<F>(b"\xF1\xF2\xF3\xF4\xC5"), Ok(b"123.45".to_vec()));
-        assert_eq!(decode_bytes::<F>(b"\xF0\xF0\xF1\xF2\xC0"), Ok(b"1.2".to_vec()));
-        assert_eq!(encode_bytes::<F>(b"1.234"), Err(Error::Invalid));
-        assert_eq!(encode_bytes::<F>(b"1234.56"), Err(Error::InvalidValueLength));
+        assert_eq!(encode_padded::<F>(b"123.45"), Ok(vec![0xF1, 0xF2, 0xF3, 0xF4, 0xC5]));
+        assert_eq!(encode_padded::<F>(b"-0.05"), Ok(vec![0xF0, 0xF0, 0xF0, 0xF0, 0xD5]));
+        assert_eq!(decode_padded::<F>(b"\xF1\xF2\xF3\xF4\xC5"), Ok(b"123.45".to_vec()));
+        assert_eq!(decode_padded::<F>(b"\xF0\xF0\xF1\xF2\xC0"), Ok(b"1.2".to_vec()));
+        assert_eq!(encode_padded::<F>(b"1.234"), Err(Error::Invalid));
+        assert_eq!(encode_padded::<F>(b"1234.56"), Err(Error::InvalidValueLength));
     }
 
     #[test]
@@ -718,21 +718,21 @@ mod tests {
     #[test]
     fn test_implied_decimal_comp3() {
         type F = ImpliedDecimal<FixedComp3<3>, 2>;
-        assert_eq!(encode_bytes::<F>(b"123.45"), Ok(vec![0x12, 0x34, 0x5F]));
-        assert_eq!(decode_bytes::<F>(b"\x12\x34\x5C"), Ok(b"123.45".to_vec()));
-        assert_eq!(decode_bytes::<F>(b"\x12\x34\x5F"), Ok(b"123.45".to_vec()));
-        assert_eq!(decode_bytes::<F>(b"\x00\x12\x0C"), Ok(b"1.2".to_vec()));
-        assert_eq!(encode_bytes::<F>(b"-1.23"), Err(Error::Invalid));
+        assert_eq!(encode_padded::<F>(b"123.45"), Ok(vec![0x12, 0x34, 0x5F]));
+        assert_eq!(decode_padded::<F>(b"\x12\x34\x5C"), Ok(b"123.45".to_vec()));
+        assert_eq!(decode_padded::<F>(b"\x12\x34\x5F"), Ok(b"123.45".to_vec()));
+        assert_eq!(decode_padded::<F>(b"\x00\x12\x0C"), Ok(b"1.2".to_vec()));
+        assert_eq!(encode_padded::<F>(b"-1.23"), Err(Error::Invalid));
     }
 
     #[test]
     fn test_implied_decimal_signed_comp3() {
         type F = ImpliedDecimal<FixedSignedComp3<3>, 3>;
-        assert_eq!(encode_bytes::<F>(b"-12.34"), Ok(vec![0x12, 0x34, 0x0D]));
-        assert_eq!(encode_bytes::<F>(b"12"), Ok(vec![0x12, 0x00, 0x0C]));
-        assert_eq!(decode_bytes::<F>(b"\x12\x34\x0D"), Ok(b"-12.34".to_vec()));
-        assert_eq!(decode_bytes::<F>(b"\x12\x00\x0C"), Ok(b"12".to_vec()));
-        assert_eq!(encode_bytes::<F>(b"-.1"), Err(Error::Invalid));
+        assert_eq!(encode_padded::<F>(b"-12.34"), Ok(vec![0x12, 0x34, 0x0D]));
+        assert_eq!(encode_padded::<F>(b"12"), Ok(vec![0x12, 0x00, 0x0C]));
+        assert_eq!(decode_padded::<F>(b"\x12\x34\x0D"), Ok(b"-12.34".to_vec()));
+        assert_eq!(decode_padded::<F>(b"\x12\x00\x0C"), Ok(b"12".to_vec()));
+        assert_eq!(encode_padded::<F>(b"-.1"), Err(Error::Invalid));
     }
 
     pub(super) fn numeric_roundtrip<F: ScalarFmt>(signed: i64, unsigned: u64) {
@@ -774,10 +774,10 @@ mod tests {
         assert_eq!(F::encoded_len(b"1"), Err(Error::Internal));
         assert_eq!(F::encoded_len_i64(-1), Err(Error::Internal));
         assert_eq!(F::encoded_len_u64(1), Err(Error::Internal));
-        assert_eq!(encode_bytes::<F>(b"1"), Err(Error::Internal));
+        assert_eq!(encode_padded::<F>(b"1"), Err(Error::Internal));
         assert_eq!(encode_i64::<F>(-1), Err(Error::Internal));
         assert_eq!(encode_u64::<F>(1), Err(Error::Internal));
-        assert_eq!(decode_bytes::<F>(&[b'X', 1]), Err(Error::Internal));
+        assert_eq!(decode_padded::<F>(&[b'X', 1]), Err(Error::Internal));
         assert_eq!(decode_i64::<F>(&[b'X', 1]), Err(Error::Internal));
         assert_eq!(decode_u64::<F>(&[b'X', 1]), Err(Error::Internal));
     }
@@ -854,7 +854,7 @@ mod tests {
             ImpliedDecimal::<FixedComp3<{ usize::MAX / 2 + 1 }>, 0>::encoded_len(b"0"),
             Err(Error::Invalid)
         );
-        assert_eq!(encode_bytes::<ImpliedDecimal<FixedSignedComp3<0>, 0>>(b"0"), Err(Error::Invalid));
+        assert_eq!(encode_padded::<ImpliedDecimal<FixedSignedComp3<0>, 0>>(b"0"), Err(Error::Invalid));
     }
 }
 

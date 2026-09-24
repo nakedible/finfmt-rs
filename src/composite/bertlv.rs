@@ -157,7 +157,7 @@ pub fn decode_ber_tlv_collection_entry<'a, const ALLOW_ZERO_PADDING: bool>(
     input: &mut &'a [u8],
 ) -> Result<Option<crate::primitive::bertlv::BerTlvEntry<'a>>, Error> {
     if ALLOW_ZERO_PADDING {
-        *input = crate::primitive::text::decode_bytes(input, 0, true, 0);
+        *input = crate::primitive::text::decode_padded(input, 0, true, 0);
     }
     crate::primitive::bertlv::decode_ber_tlv_entry(input)
 }
