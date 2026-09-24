@@ -167,13 +167,10 @@ pub fn parse_ber_tag_hex(tag: &str) -> Result<([u8; MAX_BER_TAG_BYTES], usize), 
         return Err(Error::Invalid);
     }
     let mut out = [0u8; MAX_BER_TAG_BYTES];
-    let packed = pack_nibbles_checked::<UpperHexDigits>(&mut &mut out[..], bytes).map_err(|error| {
+    // The length check above means packing can only fail on a non-hex digit.
+    let packed = pack_nibbles_checked::<UpperHexDigits>(&mut &mut out[..], bytes).map_err(|_| {
         cold_path();
-        if error == Error::BufferOverflow {
-            Error::Internal
-        } else {
-            Error::Invalid
-        }
+        Error::Invalid
     })?;
     let mut input = &*packed;
     let tag = decode_ber_tag(&mut input).map_err(|_| {
