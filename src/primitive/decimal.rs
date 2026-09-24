@@ -3,7 +3,6 @@ use no_panic::no_panic;
 
 use crate::Error;
 use crate::primitive::bytes::{is_filled, reserve_bytes, take_bytes};
-use crate::primitive::ebcdic::{EBCDIC_037_TO_ASCII, translate_bytes};
 use crate::primitive::int::decode_signed_magnitude_i64;
 use crate::primitive::nibble::{BcdzDigits, pack_nibbles, unpack_padded_nibbles};
 use crate::primitive::validation::validate_numeric;
@@ -599,8 +598,13 @@ pub fn decode_ebcdic_zoned_decimal<'a>(input: &mut &[u8], output: &mut &'a mut [
         cold_path();
         return Err(Error::BufferOverflow);
     };
-    translate_bytes(digits, body, &EBCDIC_037_TO_ASCII)?;
-    validate_numeric(&*digits, body.len(), body.len())?;
+    if !body.iter().all(|byte| (0xF0..=0xF9).contains(byte)) {
+        cold_path();
+        return Err(Error::Invalid);
+    }
+    for (digit, &byte) in digits.iter_mut().zip(body) {
+        *digit = byte - 0xC0;
+    }
     *last_out = b'0' + last_digit;
     Ok(canonical_signed_digits(buf, negative))
 }
