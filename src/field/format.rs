@@ -125,7 +125,7 @@ mod tests {
         crate::chain!(PadLeft<2, b'0', 1>, crate::DecodeCheck<crate::Ebcdic037, crate::EbcdicPrintable<2, 2>>),
     >;
     type FixedIbm1142<const N: usize> = Field<Ebcdic1142Text<0, N>, Fixed<N>, crate::chain!(Ebcdic1142, PadRight<N, 0x40>)>;
-    type PaddedHex = PaddedField<crate::HexUpperEven<0, 8>, EbcdicWireLength<2>, PackNibblesRight<UpperHexDigits, 0>, 4, 0x40>;
+    type PaddedHex = PaddedField<crate::UpperHexEven<0, 8>, EbcdicWireLength<2>, PackNibblesRight<UpperHexDigits, 0>, 4, 0x40>;
     type FixedAsciiViaEbcdic = Field<Ascii<1, 1>, Fixed<1>, crate::Ebcdic037>;
     type StrictFixedAsciiViaEbcdic = Field<Ascii<1, 1>, Fixed<1>, crate::DecodeCheck<crate::Ebcdic037, crate::EbcdicPrintable<1, 1>>>;
 

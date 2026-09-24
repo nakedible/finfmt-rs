@@ -1,15 +1,15 @@
 use compact_str::CompactString;
-use finfmt::primitive::validation::validate_hex_upper_even;
+use finfmt::primitive::validation::validate_upper_hex_even;
 use finfmt::{Alphanum, Ascii, AsciiLength, Check, Error, Field, Fixed, Numeric, PadLeft, SignPrefix};
 use serde::{Deserialize, Serialize};
 
 #[cold]
 const fn cold_path() {}
 
-pub struct HexUpperEven<const MIN: usize, const MAX: usize>;
-impl<const MIN: usize, const MAX: usize> Check for HexUpperEven<MIN, MAX> {
+pub struct UpperHexEven<const MIN: usize, const MAX: usize>;
+impl<const MIN: usize, const MAX: usize> Check for UpperHexEven<MIN, MAX> {
     fn validate(input: &[u8]) -> Result<usize, Error> {
-        validate_hex_upper_even(input, MIN, MAX)
+        validate_upper_hex_even(input, MIN, MAX)
     }
 }
 
@@ -35,14 +35,14 @@ pub type FixedAsciiNumeric<const N: usize> = Field<Numeric<N, N>, Fixed<N>>;
 pub type FixedAsciiAmount<const N: usize> = Field<Numeric<1, N>, Fixed<N>, PadLeft<N, b'0'>>;
 pub type FixedAsciiAlphanum<const N: usize> = Field<Alphanum<N, N>, Fixed<N>>;
 pub type FixedAscii<const N: usize> = Field<Ascii<N, N>, Fixed<N>>;
-pub type FixedAsciiHex<const N: usize> = Field<HexUpperEven<N, N>, Fixed<N>>;
+pub type FixedAsciiHex<const N: usize> = Field<UpperHexEven<N, N>, Fixed<N>>;
 pub type LlvarAsciiNumeric<const MIN: usize, const MAX: usize> = Field<Numeric<MIN, MAX>, AsciiLength<2>>;
 pub type LlvarAsciiAlphanum<const MIN: usize, const MAX: usize> = Field<Alphanum<MIN, MAX>, AsciiLength<2>>;
 pub type LlvarAscii<const MIN: usize, const MAX: usize> = Field<Ascii<MIN, MAX>, AsciiLength<2>>;
 pub type LllvarAsciiNumeric<const MIN: usize, const MAX: usize> = Field<Numeric<MIN, MAX>, AsciiLength<3>>;
 pub type LllvarAscii<const MAX: usize> = Field<Ascii<0, MAX>, AsciiLength<3>>;
 pub type LlllvarAscii<const MAX: usize> = Field<Ascii<0, MAX>, AsciiLength<4>>;
-pub type LllvarAsciiHex<const MAX: usize> = Field<HexUpperEven<0, MAX>, AsciiLength<3>>;
+pub type LllvarAsciiHex<const MAX: usize> = Field<UpperHexEven<0, MAX>, AsciiLength<3>>;
 pub type FixedSignedAsciiAmount8 = SignPrefix<Field<Numeric<1, 8>, Fixed<8>, PadLeft<8, b'0'>>>;
 pub type LlvarTrack2 = Field<Track2Nibss<1, 37>, AsciiLength<2>>;
 

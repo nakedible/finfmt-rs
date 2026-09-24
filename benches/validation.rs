@@ -59,20 +59,20 @@ fn bench_hex(suite: &mut Suite) {
         group.bench("validate_hex_1_99", |b| {
             b.iter(|| black_box(validate_hex_1_99(black_box(HEX_MIXED))))
         });
-        group.bench("validate_hex_upper_1_99", |b| {
-            b.iter(|| black_box(validate_hex_upper_1_99(black_box(HEX_UPPER))))
+        group.bench("validate_upper_hex_1_99", |b| {
+            b.iter(|| black_box(validate_upper_hex_1_99(black_box(HEX_UPPER))))
         });
-        group.bench("validate_hex_lower_1_99", |b| {
-            b.iter(|| black_box(validate_hex_lower_1_99(black_box(HEX_LOWER))))
+        group.bench("validate_lower_hex_1_99", |b| {
+            b.iter(|| black_box(validate_lower_hex_1_99(black_box(HEX_LOWER))))
         });
         group.bench("validate_hex_even_2_98", |b| {
             b.iter(|| black_box(validate_hex_even_2_98(black_box(HEX_MIXED))))
         });
-        group.bench("validate_hex_upper_even_2_98", |b| {
-            b.iter(|| black_box(validate_hex_upper_even_2_98(black_box(HEX_UPPER))))
+        group.bench("validate_upper_hex_even_2_98", |b| {
+            b.iter(|| black_box(validate_upper_hex_even_2_98(black_box(HEX_UPPER))))
         });
-        group.bench("validate_hex_lower_even_2_98", |b| {
-            b.iter(|| black_box(validate_hex_lower_even_2_98(black_box(HEX_LOWER))))
+        group.bench("validate_lower_hex_even_2_98", |b| {
+            b.iter(|| black_box(validate_lower_hex_even_2_98(black_box(HEX_LOWER))))
         });
     });
 }

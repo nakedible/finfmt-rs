@@ -1,9 +1,9 @@
 use crate::Error;
 use crate::primitive::validation::{
     validate_alpha, validate_alphanum, validate_ascii, validate_ascii_printable, validate_bcd_bytes, validate_bcdz, validate_byte_length,
-    validate_ebcdic_037_ascii, validate_ebcdic_1142_text, validate_ebcdic_printable, validate_hex, validate_hex_even, validate_hex_lower,
-    validate_hex_lower_even, validate_hex_upper, validate_hex_upper_even, validate_numeric, validate_track2_chars, validate_upper_alpha,
-    validate_upper_alphanum, validate_upper_ascii_printable,
+    validate_ebcdic_037_ascii, validate_ebcdic_1142_text, validate_ebcdic_printable, validate_hex, validate_hex_even, validate_lower_hex,
+    validate_lower_hex_even, validate_numeric, validate_track2_chars, validate_upper_alpha, validate_upper_alphanum,
+    validate_upper_ascii_printable, validate_upper_hex, validate_upper_hex_even,
 };
 
 /// Validate semantic input and return its logical length. All built-in checks
@@ -85,19 +85,19 @@ impl<const MIN: usize, const MAX: usize> Check for Hex<MIN, MAX> {
     }
 }
 
-pub struct HexUpper<const MIN: usize, const MAX: usize>;
-impl<const MIN: usize, const MAX: usize> Check for HexUpper<MIN, MAX> {
+pub struct UpperHex<const MIN: usize, const MAX: usize>;
+impl<const MIN: usize, const MAX: usize> Check for UpperHex<MIN, MAX> {
     #[inline(always)]
     fn validate(input: &[u8]) -> Result<usize, Error> {
-        validate_hex_upper(input, MIN, MAX)
+        validate_upper_hex(input, MIN, MAX)
     }
 }
 
-pub struct HexLower<const MIN: usize, const MAX: usize>;
-impl<const MIN: usize, const MAX: usize> Check for HexLower<MIN, MAX> {
+pub struct LowerHex<const MIN: usize, const MAX: usize>;
+impl<const MIN: usize, const MAX: usize> Check for LowerHex<MIN, MAX> {
     #[inline(always)]
     fn validate(input: &[u8]) -> Result<usize, Error> {
-        validate_hex_lower(input, MIN, MAX)
+        validate_lower_hex(input, MIN, MAX)
     }
 }
 
@@ -109,19 +109,19 @@ impl<const MIN: usize, const MAX: usize> Check for HexEven<MIN, MAX> {
     }
 }
 
-pub struct HexUpperEven<const MIN: usize, const MAX: usize>;
-impl<const MIN: usize, const MAX: usize> Check for HexUpperEven<MIN, MAX> {
+pub struct UpperHexEven<const MIN: usize, const MAX: usize>;
+impl<const MIN: usize, const MAX: usize> Check for UpperHexEven<MIN, MAX> {
     #[inline(always)]
     fn validate(input: &[u8]) -> Result<usize, Error> {
-        validate_hex_upper_even(input, MIN, MAX)
+        validate_upper_hex_even(input, MIN, MAX)
     }
 }
 
-pub struct HexLowerEven<const MIN: usize, const MAX: usize>;
-impl<const MIN: usize, const MAX: usize> Check for HexLowerEven<MIN, MAX> {
+pub struct LowerHexEven<const MIN: usize, const MAX: usize>;
+impl<const MIN: usize, const MAX: usize> Check for LowerHexEven<MIN, MAX> {
     #[inline(always)]
     fn validate(input: &[u8]) -> Result<usize, Error> {
-        validate_hex_lower_even(input, MIN, MAX)
+        validate_lower_hex_even(input, MIN, MAX)
     }
 }
 

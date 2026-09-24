@@ -1,9 +1,9 @@
 use crate::Error;
 use crate::primitive::validation::{
     validate_alpha, validate_alphanum, validate_ascii, validate_ascii_printable, validate_bcd_bytes, validate_bcdz, validate_byte_length,
-    validate_ebcdic_037_ascii, validate_ebcdic_1142_text, validate_ebcdic_printable, validate_hex, validate_hex_even, validate_hex_lower,
-    validate_hex_lower_even, validate_hex_upper, validate_hex_upper_even, validate_iso8859_1_str, validate_numeric, validate_range,
-    validate_track2_chars, validate_upper_alpha, validate_upper_alphanum, validate_upper_ascii_printable,
+    validate_ebcdic_037_ascii, validate_ebcdic_1142_text, validate_ebcdic_printable, validate_hex, validate_hex_even,
+    validate_iso8859_1_str, validate_lower_hex, validate_lower_hex_even, validate_numeric, validate_range, validate_track2_chars,
+    validate_upper_alpha, validate_upper_alphanum, validate_upper_ascii_printable, validate_upper_hex, validate_upper_hex_even,
 };
 
 #[inline(never)]
@@ -52,13 +52,13 @@ pub fn validate_hex_1_99(input: &[u8]) -> Result<usize, Error> {
 }
 
 #[inline(never)]
-pub fn validate_hex_upper_1_99(input: &[u8]) -> Result<usize, Error> {
-    validate_hex_upper(input, 1, 99)
+pub fn validate_upper_hex_1_99(input: &[u8]) -> Result<usize, Error> {
+    validate_upper_hex(input, 1, 99)
 }
 
 #[inline(never)]
-pub fn validate_hex_lower_1_99(input: &[u8]) -> Result<usize, Error> {
-    validate_hex_lower(input, 1, 99)
+pub fn validate_lower_hex_1_99(input: &[u8]) -> Result<usize, Error> {
+    validate_lower_hex(input, 1, 99)
 }
 
 #[inline(never)]
@@ -67,13 +67,13 @@ pub fn validate_hex_even_2_98(input: &[u8]) -> Result<usize, Error> {
 }
 
 #[inline(never)]
-pub fn validate_hex_upper_even_2_98(input: &[u8]) -> Result<usize, Error> {
-    validate_hex_upper_even(input, 2, 98)
+pub fn validate_upper_hex_even_2_98(input: &[u8]) -> Result<usize, Error> {
+    validate_upper_hex_even(input, 2, 98)
 }
 
 #[inline(never)]
-pub fn validate_hex_lower_even_2_98(input: &[u8]) -> Result<usize, Error> {
-    validate_hex_lower_even(input, 2, 98)
+pub fn validate_lower_hex_even_2_98(input: &[u8]) -> Result<usize, Error> {
+    validate_lower_hex_even(input, 2, 98)
 }
 
 #[inline(never)]

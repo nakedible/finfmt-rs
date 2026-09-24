@@ -112,13 +112,13 @@ pub fn validate_hex(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Re
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_hex_upper(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_upper_hex(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, |b| matches!(b, b'0'..=b'9' | b'A'..=b'F'))
 }
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_hex_lower(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_lower_hex(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, |b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
@@ -130,13 +130,13 @@ pub fn validate_hex_even(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) 
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_hex_upper_even(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_upper_hex_even(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_even_bytes(input, minlen, maxlen, |b| matches!(b, b'0'..=b'9' | b'A'..=b'F'))
 }
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_hex_lower_even(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_lower_hex_even(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_even_bytes(input, minlen, maxlen, |b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
@@ -352,15 +352,15 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_hex_upper() {
-        assert_eq!(validate_hex_upper("0123456789ABCDEF", 0, 99), Ok(16));
-        assert_eq!(validate_hex_upper("abcdef", 0, 99), Err(Error::Invalid));
+    fn test_validate_upper_hex() {
+        assert_eq!(validate_upper_hex("0123456789ABCDEF", 0, 99), Ok(16));
+        assert_eq!(validate_upper_hex("abcdef", 0, 99), Err(Error::Invalid));
     }
 
     #[test]
-    fn test_validate_hex_lower() {
-        assert_eq!(validate_hex_lower("0123456789abcdef", 0, 99), Ok(16));
-        assert_eq!(validate_hex_lower("ABCDEF", 0, 99), Err(Error::Invalid));
+    fn test_validate_lower_hex() {
+        assert_eq!(validate_lower_hex("0123456789abcdef", 0, 99), Ok(16));
+        assert_eq!(validate_lower_hex("ABCDEF", 0, 99), Err(Error::Invalid));
     }
 
     #[test]
@@ -373,17 +373,17 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_hex_upper_even() {
-        assert_eq!(validate_hex_upper_even("0123ABCD", 0, 99), Ok(8));
-        assert_eq!(validate_hex_upper_even("012", 0, 99), Err(Error::InvalidValueLength));
-        assert_eq!(validate_hex_upper_even("0123abcd", 0, 99), Err(Error::Invalid));
+    fn test_validate_upper_hex_even() {
+        assert_eq!(validate_upper_hex_even("0123ABCD", 0, 99), Ok(8));
+        assert_eq!(validate_upper_hex_even("012", 0, 99), Err(Error::InvalidValueLength));
+        assert_eq!(validate_upper_hex_even("0123abcd", 0, 99), Err(Error::Invalid));
     }
 
     #[test]
-    fn test_validate_hex_lower_even() {
-        assert_eq!(validate_hex_lower_even("0123abcd", 0, 99), Ok(8));
-        assert_eq!(validate_hex_lower_even("012", 0, 99), Err(Error::InvalidValueLength));
-        assert_eq!(validate_hex_lower_even("0123ABCD", 0, 99), Err(Error::Invalid));
+    fn test_validate_lower_hex_even() {
+        assert_eq!(validate_lower_hex_even("0123abcd", 0, 99), Ok(8));
+        assert_eq!(validate_lower_hex_even("012", 0, 99), Err(Error::InvalidValueLength));
+        assert_eq!(validate_lower_hex_even("0123ABCD", 0, 99), Err(Error::Invalid));
     }
 
     #[test]
@@ -512,13 +512,13 @@ mod tests {
     }
     #[test]
     fn test_even_hex_content_precedes_length() {
-        assert_eq!(validate_hex_upper_even("a", 0, 10), Err(Error::Invalid));
-        assert_eq!(validate_hex_lower_even("A", 0, 10), Err(Error::Invalid));
+        assert_eq!(validate_upper_hex_even("a", 0, 10), Err(Error::Invalid));
+        assert_eq!(validate_lower_hex_even("A", 0, 10), Err(Error::Invalid));
         type Validator = fn(&[u8], usize, usize) -> Result<usize, Error>;
         let validators: [Validator; 3] = [
             |s, min, max| validate_hex_even(s, min, max),
-            |s, min, max| validate_hex_upper_even(s, min, max),
-            |s, min, max| validate_hex_lower_even(s, min, max),
+            |s, min, max| validate_upper_hex_even(s, min, max),
+            |s, min, max| validate_lower_hex_even(s, min, max),
         ];
         for validate in validators {
             for bad in [b"G".as_slice(), b"0G1", b"GG", b"\xFF"] {
@@ -608,12 +608,12 @@ mod proptests {
         // Hex case sensitivity: ensures lowercase rejected when uppercase expected and vice versa
         #[test]
         fn hex_upper_rejects_lowercase(s in "[0-9A-F]*[a-f]+[0-9A-F]*") {
-            prop_assert!(validate_hex_upper(&s, 0, usize::MAX).is_err());
+            prop_assert!(validate_upper_hex(&s, 0, usize::MAX).is_err());
         }
 
         #[test]
         fn hex_lower_rejects_uppercase(s in "[0-9a-f]*[A-F]+[0-9a-f]*") {
-            prop_assert!(validate_hex_lower(&s, 0, usize::MAX).is_err());
+            prop_assert!(validate_lower_hex(&s, 0, usize::MAX).is_err());
         }
 
         // Hex even: odd length always fails regardless of chars
