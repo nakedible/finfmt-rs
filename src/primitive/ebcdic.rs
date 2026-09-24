@@ -120,8 +120,7 @@ pub const EBCDIC_1142_TO_UNICODE: [u16; 256] = [
 /// beyond the input length is left unchanged.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn translate_bytes(output: &mut [u8], input: impl AsRef<[u8]>, table: &[u8; 256]) -> Result<(), Error> {
-    let input = input.as_ref();
+pub fn translate_bytes(output: &mut [u8], input: &[u8], table: &[u8; 256]) -> Result<(), Error> {
     let output = output.get_mut(..input.len()).ok_or_else(|| {
         cold_path();
         Error::BufferOverflow
@@ -365,15 +364,15 @@ mod tests {
     #[test]
     fn test_translation_boundaries() {
         let mut out = [0xA5; 4];
-        assert_eq!(translate_bytes(&mut out, "", &ASCII_TO_EBCDIC_037), Ok(()));
+        assert_eq!(translate_bytes(&mut out, b"", &ASCII_TO_EBCDIC_037), Ok(()));
         assert_eq!(out, [0xA5; 4]);
-        assert_eq!(translate_bytes(&mut [], "A", &ASCII_TO_EBCDIC_037), Err(Error::BufferOverflow));
+        assert_eq!(translate_bytes(&mut [], b"A", &ASCII_TO_EBCDIC_037), Err(Error::BufferOverflow));
         assert_eq!(
-            translate_bytes(&mut out[..1], "AB", &ASCII_TO_EBCDIC_037),
+            translate_bytes(&mut out[..1], b"AB", &ASCII_TO_EBCDIC_037),
             Err(Error::BufferOverflow)
         );
         assert_eq!(out, [0xA5; 4]);
-        assert_eq!(translate_bytes(&mut out, "AB", &ASCII_TO_EBCDIC_037), Ok(()));
+        assert_eq!(translate_bytes(&mut out, b"AB", &ASCII_TO_EBCDIC_037), Ok(()));
         assert_eq!(out, [0xC1, 0xC2, 0xA5, 0xA5]);
     }
 

@@ -177,11 +177,11 @@ pub fn validate_track2_chars(input: impl AsRef<[u8]>, minlen: usize, maxlen: usi
     validate_bytes(input, minlen, maxlen, |b| matches!(b, b'0'..=b'9' | b'='))
 }
 
-/// Validate packed decimal nibbles, returning the byte count. Input is already
-/// encoded bytes; a string argument is inspected as UTF-8 bytes without conversion.
+/// Validate packed decimal bytes, where both nibbles of every byte are 0-9,
+/// returning the byte count.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_bcd_bytes(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_bcd_bytes(input: &[u8], minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, |b| (b >> 4) <= 9 && (b & 0x0F) <= 9)
 }
 
@@ -228,7 +228,7 @@ pub fn validate_ebcdic_1142_text(input: impl AsRef<[u8]>, minlen: usize, maxlen:
 /// unsupported characters must be rejected instead of replaced with SUB.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_ebcdic_037_ascii(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_ebcdic_037_ascii(input: &[u8], minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, |&byte| {
         // Only canonical CP037 SUB may map to ASCII SUB without substitution.
         EBCDIC_037_TO_ASCII[byte as usize] != 0x1A || byte == 0x3F
@@ -240,7 +240,7 @@ pub fn validate_ebcdic_037_ascii(input: impl AsRef<[u8]>, minlen: usize, maxlen:
 /// non-breaking space and soft hyphen; it does not imply ASCII representability.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_ebcdic_printable(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_ebcdic_printable(input: &[u8], minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, |b| (0x40..=0xFE).contains(b))
 }
 
@@ -485,18 +485,17 @@ mod tests {
             } else {
                 Err(Error::Invalid)
             };
-            assert_eq!(validate_ebcdic_037_ascii([byte], 1, 1), expected, "wire byte {byte:02X}");
+            assert_eq!(validate_ebcdic_037_ascii(&[byte], 1, 1), expected, "wire byte {byte:02X}");
         }
-        assert_eq!(validate_ebcdic_037_ascii([0xC1, 0xF1, 0x40], 3, 3), Ok(3));
-        assert_eq!(validate_ebcdic_037_ascii("\0\x3F", 2, 2), Ok(2));
+        assert_eq!(validate_ebcdic_037_ascii(&[0xC1, 0xF1, 0x40], 3, 3), Ok(3));
         assert_eq!(validate_ebcdic_037_ascii(b"\0\x3F", 2, 2), Ok(2));
         assert_eq!(validate_ebcdic_037_ascii(b"", 0, 0), Ok(0));
         assert_eq!(validate_ebcdic_037_ascii(b"", 1, 1), Err(Error::InvalidValueLength));
-        assert_eq!(validate_ebcdic_037_ascii([0xC1], 2, 2), Err(Error::InvalidValueLength));
-        assert_eq!(validate_ebcdic_037_ascii([0xC1], 0, 0), Err(Error::InvalidValueLength));
+        assert_eq!(validate_ebcdic_037_ascii(&[0xC1], 2, 2), Err(Error::InvalidValueLength));
+        assert_eq!(validate_ebcdic_037_ascii(&[0xC1], 0, 0), Err(Error::InvalidValueLength));
         for input in [[0x4A, 0xC1], [0xC1, 0x4A]] {
             for (min, max) in [(0, 0), (2, 2), (3, 3)] {
-                assert_eq!(validate_ebcdic_037_ascii(input, min, max), Err(Error::Invalid));
+                assert_eq!(validate_ebcdic_037_ascii(&input, min, max), Err(Error::Invalid));
             }
         }
     }
@@ -564,9 +563,7 @@ mod tests {
         assert_eq!(validate_byte_length("é".as_bytes(), 2, 2), Ok(2));
         assert_eq!(validate_iso8859_1_str("é", 1, 1), Ok(1));
         assert_eq!(validate_iso8859_1_str("Ā", 10, 10), Err(Error::Invalid));
-        assert_eq!(validate_bcd_bytes("\x12", 1, 1), Ok(1));
         assert_eq!(validate_bcd_bytes(b"\x12", 1, 1), Ok(1));
-        assert_eq!(validate_ebcdic_printable("A", 1, 1), Ok(1));
         assert_eq!(validate_ebcdic_printable(b"\x41\xCA", 2, 2), Ok(2));
         assert_eq!(validate_ebcdic_1142_text("A€", 2, 2), Ok(2));
         assert_eq!(validate_ebcdic_1142_text("A€".as_bytes(), 2, 2), Ok(2));

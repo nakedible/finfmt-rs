@@ -139,6 +139,23 @@ a prevalidated primitive, prefer `debug_assert!`. Optimized primitive code shoul
 be allowed to assume those preconditions when doing so removes branches or other
 overhead from the hot path.
 
+### Input types
+
+Validation comes before processing, so a validator is where a caller's value
+enters the primitive layer. A validator's input type follows from what its input
+can be:
+
+- always text (a semantic value): `&str`, without UTF-8 checks;
+- always encoded bytes (wire bytes, packed BCD, EBCDIC, bytes produced partway
+  through a transform): `&[u8]`, so that passing a string is a compile error;
+- either, with the same implementation: `impl AsRef<[u8]>`, so callers can pass
+  `&str`, `String`, `CompactString` or bytes without converting;
+- either, where text can skip work because it is already valid UTF-8: two
+  functions, one taking `&str` and one taking `&[u8]`.
+
+Processing primitives take `&[u8]` input, `&mut &[u8]` input cursors and
+`&mut &mut [u8]` output cursors; their input usually comes from an earlier step.
+
 ## Validation
 
 Validation happens at trust boundaries and at stages that consume untrusted wire
