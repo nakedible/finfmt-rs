@@ -2,8 +2,8 @@ use core::marker::PhantomData;
 
 use super::Step;
 use crate::primitive::decimal::{
-    MAX_INTEGER_TEXT_LEN, decode_decimal_ascii_fixed, decode_decimal_ebcdic_blank_zero_fixed, decode_decimal_ebcdic_fixed,
-    encode_decimal_ascii_fixed, encode_decimal_ebcdic_blank_zero_fixed, encode_decimal_ebcdic_fixed, format_u64,
+    MAX_INTEGER_TEXT_LEN, decode_ascii_decimal_fixed, decode_ebcdic_decimal_blank_zero_fixed, decode_ebcdic_decimal_fixed,
+    encode_ascii_decimal_fixed, encode_ebcdic_decimal_blank_zero_fixed, encode_ebcdic_decimal_fixed, format_u64,
 };
 use crate::utils::cold_path;
 use crate::{Error, ScalarFmt};
@@ -152,12 +152,12 @@ impl<const N: usize, S: Step> LengthSpec<S> for AsciiLength<N> {
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut [u8], semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
-        encode_decimal_ascii_fixed(output, semantic_len, N)
+        encode_ascii_decimal_fixed(output, semantic_len, N)
     }
 
     #[inline(always)]
     fn decode_plan<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
-        let semantic_len = decode_decimal_ascii_fixed(input, N)?;
+        let semantic_len = decode_ascii_decimal_fixed(input, N)?;
         let wire_len = declared_wire_len::<S>(semantic_len)?;
         Ok(DecodePlan {
             wire_len,
@@ -176,12 +176,12 @@ impl<const N: usize, S: Step> LengthSpec<S> for AsciiWireLength<N> {
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut [u8], _semantic_len: usize, wire_len: usize) -> Result<(), Error> {
-        encode_decimal_ascii_fixed(output, wire_len, N)
+        encode_ascii_decimal_fixed(output, wire_len, N)
     }
 
     #[inline(always)]
     fn decode_plan<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
-        let wire_len = decode_decimal_ascii_fixed(input, N)?;
+        let wire_len = decode_ascii_decimal_fixed(input, N)?;
         Ok(DecodePlan {
             wire_len,
             semantic_len: None,
@@ -199,12 +199,12 @@ impl<const N: usize, S: Step> LengthSpec<S> for EbcdicLength<N> {
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut [u8], semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
-        encode_decimal_ebcdic_fixed(output, semantic_len, N)
+        encode_ebcdic_decimal_fixed(output, semantic_len, N)
     }
 
     #[inline(always)]
     fn decode_plan<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
-        let semantic_len = decode_decimal_ebcdic_fixed(input, N)?;
+        let semantic_len = decode_ebcdic_decimal_fixed(input, N)?;
         let wire_len = declared_wire_len::<S>(semantic_len)?;
         Ok(DecodePlan {
             wire_len,
@@ -227,12 +227,12 @@ impl<const N: usize, S: Step> LengthSpec<S> for BlankableEbcdicLength<N> {
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut [u8], semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
-        encode_decimal_ebcdic_blank_zero_fixed(output, semantic_len, N)
+        encode_ebcdic_decimal_blank_zero_fixed(output, semantic_len, N)
     }
 
     #[inline(always)]
     fn decode_plan<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
-        let semantic_len = decode_decimal_ebcdic_blank_zero_fixed(input, N)?;
+        let semantic_len = decode_ebcdic_decimal_blank_zero_fixed(input, N)?;
         let wire_len = declared_wire_len::<S>(semantic_len)?;
         Ok(DecodePlan {
             wire_len,
@@ -251,12 +251,12 @@ impl<const N: usize, S: Step> LengthSpec<S> for EbcdicWireLength<N> {
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut [u8], _semantic_len: usize, wire_len: usize) -> Result<(), Error> {
-        encode_decimal_ebcdic_fixed(output, wire_len, N)
+        encode_ebcdic_decimal_fixed(output, wire_len, N)
     }
 
     #[inline(always)]
     fn decode_plan<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
-        let wire_len = decode_decimal_ebcdic_fixed(input, N)?;
+        let wire_len = decode_ebcdic_decimal_fixed(input, N)?;
         Ok(DecodePlan {
             wire_len,
             semantic_len: None,
@@ -293,7 +293,7 @@ impl<S: Step> LengthSpec<S> for Rest {
 mod tests {
     use super::{
         AsciiLength, AsciiWireLength, BlankableEbcdicLength, EbcdicLength, EbcdicWireLength, Fixed, Length, LengthSpec, WireFixed,
-        encode_decimal_ascii_fixed,
+        encode_ascii_decimal_fixed,
     };
     use crate::field::{Ascii, Binary, Field, FixedBinaryBe, Identity, Numeric, PadLeft, PadRightEven, Step, UnpackNibbles};
     use crate::{Error, ScalarFmt};
@@ -437,7 +437,7 @@ mod tests {
             Err(Error::Invalid)
         );
         let mut ascii = [0; 20];
-        encode_decimal_ascii_fixed(&mut &mut ascii[..], usize::MAX, 20).unwrap();
+        encode_ascii_decimal_fixed(&mut &mut ascii[..], usize::MAX, 20).unwrap();
         let ebcdic = ascii.map(|b| b - b'0' + 0xF0);
         assert_eq!(decode::<PadRightEven, AsciiLength<20>>(&ascii), Err(Error::Invalid));
         assert_eq!(decode::<PadRightEven, EbcdicLength<20>>(&ebcdic), Err(Error::Invalid));
@@ -456,7 +456,7 @@ mod proptests {
         fn prefix_prediction_matches_encoding(value in any::<usize>(), width in 1usize..33) {
             let mut output = [0; 32];
             let mut out = &mut output[..];
-            let encoded = encode_decimal_ascii_fixed(&mut out, value, width).map(|()| 32 - out.len());
+            let encoded = encode_ascii_decimal_fixed(&mut out, value, width).map(|()| 32 - out.len());
             prop_assert_eq!(decimal_prefix_len(value, width), encoded);
         }
     }

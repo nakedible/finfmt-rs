@@ -122,7 +122,7 @@ fn analyze_scaled_decimal(input: &[u8], scale: usize, max_digits: usize, signed:
 /// The count includes any normalized minus sign and digits implied by `scale`.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn encoded_decimal_implied_len(input: &[u8], scale: usize, max_digits: usize, signed: bool) -> Result<usize, Error> {
+pub fn encoded_implied_decimal_len(input: &[u8], scale: usize, max_digits: usize, signed: bool) -> Result<usize, Error> {
     analyze_scaled_decimal(input, scale, max_digits, signed).map(|(_, out_len, _)| out_len)
 }
 
@@ -260,7 +260,7 @@ pub fn prepend_minus<'a>(output: &mut &'a mut [u8], digits: &[u8]) -> Result<&'a
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn encode_decimal_implied<'a>(
+pub fn encode_implied_decimal<'a>(
     output: &mut &'a mut [u8],
     input: &[u8],
     scale: usize,
@@ -283,16 +283,16 @@ pub fn encode_decimal_implied<'a>(
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn decode_decimal_implied<'a>(output: &mut &'a mut [u8], input: &[u8], scale: usize) -> Result<&'a mut [u8], Error> {
+pub fn decode_implied_decimal<'a>(output: &mut &'a mut [u8], input: &[u8], scale: usize) -> Result<&'a mut [u8], Error> {
     let (negative, digits) = split_signed_input(input)?;
     validate_numeric(digits, 1, usize::MAX).map_err(length_as_invalid)?;
-    decode_decimal_implied_digits(output, digits, negative, scale)
+    decode_implied_decimal_digits(output, digits, negative, scale)
 }
 
 /// Place the implied decimal point in nonempty, prevalidated ASCII digits.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub(crate) fn decode_decimal_implied_digits<'a>(
+pub(crate) fn decode_implied_decimal_digits<'a>(
     output: &mut &'a mut [u8],
     mut digits: &[u8],
     negative: bool,
@@ -405,7 +405,7 @@ pub fn packed_decimal_max_digits(bytes_len: usize) -> usize {
 /// Encode prevalidated ASCII digits, checking they fit the zoned output width.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub(crate) fn encode_ebcdic_zoned_digits(output: &mut &mut [u8], digits: &[u8], negative: bool, len: usize) -> Result<(), Error> {
+pub(crate) fn encode_zoned_decimal_digits(output: &mut &mut [u8], digits: &[u8], negative: bool, len: usize) -> Result<(), Error> {
     let output = reserve_bytes(output, len)?;
     debug_assert!(validate_numeric(digits, 1, usize::MAX).is_ok());
     if digits.len() > output.len() {
@@ -427,7 +427,7 @@ pub(crate) fn encode_ebcdic_zoned_digits(output: &mut &mut [u8], digits: &[u8], 
 /// Encode prevalidated ASCII digits, checking they fit the packed output width.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub(crate) fn encode_decimal_packed_digits(
+pub(crate) fn encode_packed_decimal_digits(
     output: &mut &mut [u8],
     digits: &[u8],
     negative: bool,
@@ -507,13 +507,13 @@ pub fn parse_i64(bytes: &[u8]) -> Result<i64, Error> {
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn encode_decimal_ascii_fixed(output: &mut &mut [u8], value: usize, len: usize) -> Result<(), Error> {
+pub fn encode_ascii_decimal_fixed(output: &mut &mut [u8], value: usize, len: usize) -> Result<(), Error> {
     encode_decimal_fixed(output, value, len, b'0')
 }
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn encode_decimal_ebcdic_fixed(output: &mut &mut [u8], value: usize, len: usize) -> Result<(), Error> {
+pub fn encode_ebcdic_decimal_fixed(output: &mut &mut [u8], value: usize, len: usize) -> Result<(), Error> {
     encode_decimal_fixed(output, value, len, 0xF0)
 }
 
@@ -535,24 +535,24 @@ fn encode_decimal_fixed(output: &mut &mut [u8], mut value: usize, len: usize, ze
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn encode_decimal_ebcdic_blank_zero_fixed(output: &mut &mut [u8], value: usize, len: usize) -> Result<(), Error> {
+pub fn encode_ebcdic_decimal_blank_zero_fixed(output: &mut &mut [u8], value: usize, len: usize) -> Result<(), Error> {
     if value == 0 {
         let buf = reserve_bytes(output, len)?;
         buf.fill(0x40);
         return Ok(());
     }
-    encode_decimal_ebcdic_fixed(output, value, len)
+    encode_ebcdic_decimal_fixed(output, value, len)
 }
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn decode_decimal_ascii_fixed(input: &mut &[u8], len: usize) -> Result<usize, Error> {
+pub fn decode_ascii_decimal_fixed(input: &mut &[u8], len: usize) -> Result<usize, Error> {
     decode_decimal_fixed(input, len, b'0')
 }
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn decode_decimal_ebcdic_fixed(input: &mut &[u8], len: usize) -> Result<usize, Error> {
+pub fn decode_ebcdic_decimal_fixed(input: &mut &[u8], len: usize) -> Result<usize, Error> {
     decode_decimal_fixed(input, len, 0xF0)
 }
 
@@ -567,28 +567,28 @@ fn decode_decimal_fixed(input: &mut &[u8], len: usize, zero: u8) -> Result<usize
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn decode_decimal_ebcdic_blank_zero_fixed(input: &mut &[u8], len: usize) -> Result<usize, Error> {
+pub fn decode_ebcdic_decimal_blank_zero_fixed(input: &mut &[u8], len: usize) -> Result<usize, Error> {
     let bytes = take_bytes(input, len)?;
     if is_filled(bytes, 0x40) {
         return Ok(0);
     }
     let mut nested = bytes;
-    decode_decimal_ebcdic_fixed(&mut nested, len)
+    decode_ebcdic_decimal_fixed(&mut nested, len)
 }
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn encode_ebcdic_zoned_decimal(output: &mut &mut [u8], input: &[u8], len: usize) -> Result<(), Error> {
+pub fn encode_zoned_decimal_signed_fixed(output: &mut &mut [u8], input: &[u8], len: usize) -> Result<(), Error> {
     debug_assert!(len != 0, "zoned decimal width must be nonzero");
     let (negative, digits) = parse_signed_decimal(input, len)?;
-    encode_ebcdic_zoned_digits(output, digits, negative, len)
+    encode_zoned_decimal_digits(output, digits, negative, len)
 }
 
 /// Reserve `len + 1` scratch bytes and return the canonical signed digits within
 /// that area. The returned slice may start after the beginning of the reservation.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn decode_ebcdic_zoned_decimal<'a>(input: &mut &[u8], output: &mut &'a mut [u8], len: usize) -> Result<&'a mut [u8], Error> {
+pub fn decode_zoned_decimal_signed_fixed<'a>(input: &mut &[u8], output: &mut &'a mut [u8], len: usize) -> Result<&'a mut [u8], Error> {
     let input = take_bytes(input, len)?;
     let Some((&last, body)) = input.split_last() else {
         cold_path();
@@ -632,7 +632,7 @@ fn canonical_signed_digits(mut buf: &mut [u8], negative: bool) -> &mut [u8] {
 }
 
 #[inline(always)]
-fn decode_decimal_packed_common<'a>(input: &[u8], output: &mut &'a mut [u8], signed: bool) -> Result<&'a mut [u8], Error> {
+fn decode_packed_decimal_common<'a>(input: &[u8], output: &mut &'a mut [u8], signed: bool) -> Result<&'a mut [u8], Error> {
     let Some(&last) = input.last() else {
         cold_path();
         return Err(Error::Invalid);
@@ -656,45 +656,45 @@ fn decode_decimal_packed_common<'a>(input: &[u8], output: &mut &'a mut [u8], sig
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn encode_decimal_packed_fixed(output: &mut &mut [u8], input: &[u8], len: usize) -> Result<(), Error> {
+pub fn encode_packed_decimal_fixed(output: &mut &mut [u8], input: &[u8], len: usize) -> Result<(), Error> {
     let digits = parse_unsigned_decimal(input, packed_decimal_max_digits(len))?;
-    encode_decimal_packed_digits(output, digits, false, false, len)
+    encode_packed_decimal_digits(output, digits, false, false, len)
 }
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn encode_decimal_packed_signed_fixed(output: &mut &mut [u8], input: &[u8], len: usize) -> Result<(), Error> {
+pub fn encode_packed_decimal_signed_fixed(output: &mut &mut [u8], input: &[u8], len: usize) -> Result<(), Error> {
     let (negative, digits) = parse_signed_decimal(input, packed_decimal_max_digits(len))?;
-    encode_decimal_packed_digits(output, digits, negative, true, len)
+    encode_packed_decimal_digits(output, digits, negative, true, len)
 }
 
 /// Reserve `2 * len` scratch bytes and return canonical unsigned digits within
 /// that area. The returned slice may start after the beginning of the reservation.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn decode_decimal_packed_fixed<'a>(input: &mut &[u8], output: &mut &'a mut [u8], len: usize) -> Result<&'a mut [u8], Error> {
+pub fn decode_packed_decimal_fixed<'a>(input: &mut &[u8], output: &mut &'a mut [u8], len: usize) -> Result<&'a mut [u8], Error> {
     let input = take_bytes(input, len)?;
-    decode_decimal_packed_common(input, output, false)
+    decode_packed_decimal_common(input, output, false)
 }
 
 /// Reserve `2 * len` scratch bytes and return canonical signed digits within
 /// that area. The returned slice may start after the beginning of the reservation.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn decode_decimal_packed_signed_fixed<'a>(input: &mut &[u8], output: &mut &'a mut [u8], len: usize) -> Result<&'a mut [u8], Error> {
+pub fn decode_packed_decimal_signed_fixed<'a>(input: &mut &[u8], output: &mut &'a mut [u8], len: usize) -> Result<&'a mut [u8], Error> {
     let input = take_bytes(input, len)?;
-    decode_decimal_packed_common(input, output, true)
+    decode_packed_decimal_common(input, output, true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_INTEGER_TEXT_LEN, decode_decimal_ascii_fixed, decode_decimal_ebcdic_blank_zero_fixed, decode_decimal_ebcdic_fixed,
-        decode_decimal_implied, decode_decimal_packed_fixed, decode_decimal_packed_signed_fixed, decode_ebcdic_zoned_decimal,
-        decode_negative_prefix, decode_sign, encode_decimal_ascii_fixed, encode_decimal_ebcdic_blank_zero_fixed,
-        encode_decimal_ebcdic_fixed, encode_decimal_implied, encode_decimal_packed_fixed, encode_decimal_packed_signed_fixed,
-        encode_ebcdic_zoned_decimal, encode_negative_prefix, encode_sign, encoded_decimal_implied_len, format_i64, format_u64,
-        parse_signed_decimal, parse_unsigned_decimal, prepend_minus, split_signed_input,
+        MAX_INTEGER_TEXT_LEN, decode_ascii_decimal_fixed, decode_ebcdic_decimal_blank_zero_fixed, decode_ebcdic_decimal_fixed,
+        decode_implied_decimal, decode_negative_prefix, decode_packed_decimal_fixed, decode_packed_decimal_signed_fixed, decode_sign,
+        decode_zoned_decimal_signed_fixed, encode_ascii_decimal_fixed, encode_ebcdic_decimal_blank_zero_fixed, encode_ebcdic_decimal_fixed,
+        encode_implied_decimal, encode_negative_prefix, encode_packed_decimal_fixed, encode_packed_decimal_signed_fixed, encode_sign,
+        encode_zoned_decimal_signed_fixed, encoded_implied_decimal_len, format_i64, format_u64, parse_signed_decimal,
+        parse_unsigned_decimal, prepend_minus, split_signed_input,
     };
     use crate::Error;
 
@@ -707,57 +707,57 @@ mod tests {
 
     fn decode_ascii<const N: usize>(input: &[u8]) -> Result<usize, Error> {
         let mut input = input;
-        decode_decimal_ascii_fixed(&mut input, N)
+        decode_ascii_decimal_fixed(&mut input, N)
     }
 
     fn decode_ebcdic<const N: usize>(input: &[u8]) -> Result<usize, Error> {
         let mut input = input;
-        decode_decimal_ebcdic_fixed(&mut input, N)
+        decode_ebcdic_decimal_fixed(&mut input, N)
     }
 
     fn decode_blankable_ebcdic<const N: usize>(input: &[u8]) -> Result<usize, Error> {
         let mut input = input;
-        decode_decimal_ebcdic_blank_zero_fixed(&mut input, N)
+        decode_ebcdic_decimal_blank_zero_fixed(&mut input, N)
     }
 
     fn encode_signed_ebcdic_ascii<const N: usize>(input: &[u8]) -> Result<[u8; N], Error> {
-        encode::<N>(|out| encode_ebcdic_zoned_decimal(out, input, N))
+        encode::<N>(|out| encode_zoned_decimal_signed_fixed(out, input, N))
     }
 
     fn decode_signed_ebcdic_ascii<const N: usize>(input: &[u8]) -> Result<Vec<u8>, Error> {
         let mut input = input;
         let mut scratch = [0u8; MAX_INTEGER_TEXT_LEN];
         let mut scratch_ptr = scratch.as_mut_slice();
-        Ok(decode_ebcdic_zoned_decimal(&mut input, &mut scratch_ptr, N)?.to_vec())
+        Ok(decode_zoned_decimal_signed_fixed(&mut input, &mut scratch_ptr, N)?.to_vec())
     }
 
     fn encode_packed_ascii<const N: usize>(input: &[u8]) -> Result<[u8; N], Error> {
-        encode::<N>(|out| encode_decimal_packed_fixed(out, input, N))
+        encode::<N>(|out| encode_packed_decimal_fixed(out, input, N))
     }
 
     fn decode_packed_ascii<const N: usize>(input: &[u8]) -> Result<Vec<u8>, Error> {
         let mut input = input;
         let mut scratch = [0u8; MAX_INTEGER_TEXT_LEN];
         let mut scratch_ptr = scratch.as_mut_slice();
-        Ok(decode_decimal_packed_fixed(&mut input, &mut scratch_ptr, N)?.to_vec())
+        Ok(decode_packed_decimal_fixed(&mut input, &mut scratch_ptr, N)?.to_vec())
     }
 
     fn encode_signed_packed_ascii<const N: usize>(input: &[u8]) -> Result<[u8; N], Error> {
-        encode::<N>(|out| encode_decimal_packed_signed_fixed(out, input, N))
+        encode::<N>(|out| encode_packed_decimal_signed_fixed(out, input, N))
     }
 
     fn decode_signed_packed_ascii<const N: usize>(input: &[u8]) -> Result<Vec<u8>, Error> {
         let mut input = input;
         let mut scratch = [0u8; MAX_INTEGER_TEXT_LEN];
         let mut scratch_ptr = scratch.as_mut_slice();
-        Ok(decode_decimal_packed_signed_fixed(&mut input, &mut scratch_ptr, N)?.to_vec())
+        Ok(decode_packed_decimal_signed_fixed(&mut input, &mut scratch_ptr, N)?.to_vec())
     }
 
     fn encode_implied_ascii(input: &[u8], scale: usize, max_digits: usize, signed: bool) -> Result<Vec<u8>, Error> {
-        let len = encoded_decimal_implied_len(input, scale, max_digits, signed)?;
+        let len = encoded_implied_decimal_len(input, scale, max_digits, signed)?;
         let mut output = [0u8; MAX_INTEGER_TEXT_LEN + 1];
         let mut out_ptr = output.as_mut_slice();
-        let encoded = encode_decimal_implied(&mut out_ptr, input, scale, max_digits, signed)?;
+        let encoded = encode_implied_decimal(&mut out_ptr, input, scale, max_digits, signed)?;
         assert_eq!(encoded.len(), len);
         Ok(encoded.to_vec())
     }
@@ -765,7 +765,7 @@ mod tests {
     fn decode_implied_ascii(input: &[u8], scale: usize) -> Result<Vec<u8>, Error> {
         let mut output = [0u8; MAX_INTEGER_TEXT_LEN + 2];
         let mut out_ptr = output.as_mut_slice();
-        Ok(decode_decimal_implied(&mut out_ptr, input, scale)?.to_vec())
+        Ok(decode_implied_decimal(&mut out_ptr, input, scale)?.to_vec())
     }
 
     #[test]
@@ -777,7 +777,7 @@ mod tests {
         assert_eq!(split_signed_input(b""), Ok((false, &b""[..])));
         for input in [&b""[..], b"-"] {
             assert_eq!(parse_signed_decimal(input, 2), Err(Error::InvalidValueLength));
-            assert_eq!(encoded_decimal_implied_len(input, 2, 4, true), Err(Error::InvalidValueLength));
+            assert_eq!(encoded_implied_decimal_len(input, 2, 4, true), Err(Error::InvalidValueLength));
         }
 
         assert_eq!(parse_signed_decimal(b"12", 2), Ok((false, &b"12"[..])));
@@ -799,12 +799,12 @@ mod tests {
         assert_eq!(parse_unsigned_decimal(b"-1", 2), Err(Error::Invalid));
         assert_eq!(parse_unsigned_decimal(b"12x", 1), Err(Error::Invalid));
 
-        assert_eq!(encoded_decimal_implied_len(b"123.45", 2, 5, false), Ok(5));
-        assert_eq!(encoded_decimal_implied_len(b"-0.05", 2, 5, true), Ok(2));
-        assert_eq!(encoded_decimal_implied_len(b"1234.56", 2, 5, false), Err(Error::InvalidValueLength));
-        assert_eq!(encoded_decimal_implied_len(b".5", 2, 5, false), Err(Error::Invalid));
-        assert_eq!(encoded_decimal_implied_len(b"1.", 2, 5, false), Err(Error::Invalid));
-        assert_eq!(encoded_decimal_implied_len(b"+1", 2, 5, true), Err(Error::Invalid));
+        assert_eq!(encoded_implied_decimal_len(b"123.45", 2, 5, false), Ok(5));
+        assert_eq!(encoded_implied_decimal_len(b"-0.05", 2, 5, true), Ok(2));
+        assert_eq!(encoded_implied_decimal_len(b"1234.56", 2, 5, false), Err(Error::InvalidValueLength));
+        assert_eq!(encoded_implied_decimal_len(b".5", 2, 5, false), Err(Error::Invalid));
+        assert_eq!(encoded_implied_decimal_len(b"1.", 2, 5, false), Err(Error::Invalid));
+        assert_eq!(encoded_implied_decimal_len(b"+1", 2, 5, true), Err(Error::Invalid));
     }
 
     #[test]
@@ -886,9 +886,9 @@ mod tests {
             }
         }
         for width in [usize::MAX, usize::MAX - 1] {
-            assert_eq!(encode_decimal_ascii_fixed(&mut &mut [][..], 0, width), Err(Error::BufferOverflow));
+            assert_eq!(encode_ascii_decimal_fixed(&mut &mut [][..], 0, width), Err(Error::BufferOverflow));
             assert_eq!(
-                encode_decimal_ebcdic_fixed(&mut &mut [][..], usize::MAX, width),
+                encode_ebcdic_decimal_fixed(&mut &mut [][..], usize::MAX, width),
                 Err(Error::BufferOverflow)
             );
         }
@@ -981,31 +981,31 @@ mod tests {
     #[test]
     fn test_fixed_width_decimal_codecs() {
         for &(value, ascii, ebcdic) in &[(0usize, *b"0", [0xF0]), (9, *b"9", [0xF9])] {
-            assert_eq!(encode::<1>(|out| encode_decimal_ascii_fixed(out, value, 1)), Ok(ascii));
-            assert_eq!(encode::<1>(|out| encode_decimal_ebcdic_fixed(out, value, 1)), Ok(ebcdic));
+            assert_eq!(encode::<1>(|out| encode_ascii_decimal_fixed(out, value, 1)), Ok(ascii));
+            assert_eq!(encode::<1>(|out| encode_ebcdic_decimal_fixed(out, value, 1)), Ok(ebcdic));
             assert_eq!(decode_ascii::<1>(&ascii), Ok(value));
             assert_eq!(decode_ebcdic::<1>(&ebcdic), Ok(value));
         }
 
-        assert_eq!(encode::<4>(|out| encode_decimal_ascii_fixed(out, 42, 4)), Ok(*b"0042"));
+        assert_eq!(encode::<4>(|out| encode_ascii_decimal_fixed(out, 42, 4)), Ok(*b"0042"));
         assert_eq!(
-            encode::<4>(|out| encode_decimal_ebcdic_fixed(out, 42, 4)),
+            encode::<4>(|out| encode_ebcdic_decimal_fixed(out, 42, 4)),
             Ok([0xF0, 0xF0, 0xF4, 0xF2])
         );
-        assert_eq!(encode::<2>(|out| encode_decimal_ascii_fixed(out, 99, 2)), Ok(*b"99"));
-        assert_eq!(encode::<2>(|out| encode_decimal_ebcdic_fixed(out, 99, 2)), Ok([0xF9, 0xF9]));
+        assert_eq!(encode::<2>(|out| encode_ascii_decimal_fixed(out, 99, 2)), Ok(*b"99"));
+        assert_eq!(encode::<2>(|out| encode_ebcdic_decimal_fixed(out, 99, 2)), Ok([0xF9, 0xF9]));
         assert_eq!(decode_ascii::<4>(b"0042"), Ok(42));
         assert_eq!(decode_ebcdic::<4>(&[0xF0, 0xF0, 0xF4, 0xF2]), Ok(42));
         assert_eq!(decode_ascii::<2>(b"99"), Ok(99));
         assert_eq!(decode_ebcdic::<2>(&[0xF9, 0xF9]), Ok(99));
 
-        assert_eq!(encode::<1>(|out| encode_decimal_ascii_fixed(out, 1, 2)), Err(Error::BufferOverflow));
+        assert_eq!(encode::<1>(|out| encode_ascii_decimal_fixed(out, 1, 2)), Err(Error::BufferOverflow));
         assert_eq!(
-            encode::<1>(|out| encode_decimal_ebcdic_fixed(out, 1, 2)),
+            encode::<1>(|out| encode_ebcdic_decimal_fixed(out, 1, 2)),
             Err(Error::BufferOverflow)
         );
-        assert_eq!(encode::<2>(|out| encode_decimal_ascii_fixed(out, 100, 2)), Err(Error::Invalid));
-        assert_eq!(encode::<2>(|out| encode_decimal_ebcdic_fixed(out, 100, 2)), Err(Error::Invalid));
+        assert_eq!(encode::<2>(|out| encode_ascii_decimal_fixed(out, 100, 2)), Err(Error::Invalid));
+        assert_eq!(encode::<2>(|out| encode_ebcdic_decimal_fixed(out, 100, 2)), Err(Error::Invalid));
         assert_eq!(decode_ascii::<2>(b"A0"), Err(Error::Invalid));
         assert_eq!(decode_ebcdic::<2>(&[0xF0, b'0']), Err(Error::Invalid));
         assert_eq!(decode_ascii::<2>(b"1"), Err(Error::UnexpectedEof));
@@ -1015,18 +1015,18 @@ mod tests {
     #[test]
     fn test_blankable_fixed_width_ebcdic_decimal_codecs() {
         assert_eq!(
-            encode::<2>(|out| encode_decimal_ebcdic_blank_zero_fixed(out, 0, 2)),
+            encode::<2>(|out| encode_ebcdic_decimal_blank_zero_fixed(out, 0, 2)),
             Ok([0x40, 0x40])
         );
         assert_eq!(
-            encode::<2>(|out| encode_decimal_ebcdic_blank_zero_fixed(out, 42, 2)),
+            encode::<2>(|out| encode_ebcdic_decimal_blank_zero_fixed(out, 42, 2)),
             Ok([0xF4, 0xF2])
         );
         assert_eq!(decode_blankable_ebcdic::<2>(&[0x40, 0x40]), Ok(0));
         assert_eq!(decode_blankable_ebcdic::<2>(&[0xF4, 0xF2]), Ok(42));
         assert_eq!(decode_blankable_ebcdic::<2>(&[0x40, 0xF2]), Err(Error::Invalid));
         assert_eq!(
-            encode::<1>(|out| encode_decimal_ebcdic_blank_zero_fixed(out, 0, 2)),
+            encode::<1>(|out| encode_ebcdic_decimal_blank_zero_fixed(out, 0, 2)),
             Err(Error::BufferOverflow)
         );
         assert_eq!(decode_blankable_ebcdic::<2>(&[0x40]), Err(Error::UnexpectedEof));
@@ -1085,7 +1085,7 @@ mod tests {
         let mut short = [0u8; 2];
         let mut short_ptr = short.as_mut_slice();
         assert_eq!(
-            decode_ebcdic_zoned_decimal(&mut short_input, &mut short_ptr, 2),
+            decode_zoned_decimal_signed_fixed(&mut short_input, &mut short_ptr, 2),
             Err(Error::BufferOverflow)
         );
         assert_eq!(decode_signed_ebcdic_ascii::<2>(b"\xC1\xC2"), Err(Error::Invalid));
@@ -1108,7 +1108,7 @@ mod tests {
         let mut short = [0u8; 2];
         let mut short_ptr = short.as_mut_slice();
         assert_eq!(
-            decode_decimal_packed_fixed(&mut short_input, &mut short_ptr, 2),
+            decode_packed_decimal_fixed(&mut short_input, &mut short_ptr, 2),
             Err(Error::BufferOverflow)
         );
         assert_eq!(decode_packed_ascii::<2>(b"\x01\x2D"), Err(Error::Invalid));
@@ -1132,7 +1132,7 @@ mod tests {
         let mut short = [0u8; 3];
         let mut short_ptr = short.as_mut_slice();
         assert_eq!(
-            decode_decimal_packed_signed_fixed(&mut short_input, &mut short_ptr, 2),
+            decode_packed_decimal_signed_fixed(&mut short_input, &mut short_ptr, 2),
             Err(Error::BufferOverflow)
         );
         assert_eq!(decode_signed_packed_ascii::<2>(b"\x1A\x2C"), Err(Error::Invalid));
@@ -1147,53 +1147,53 @@ mod tests {
             (b"-0.00100", b"-100", b"-0.001", 5),
             (b"-0012", b"-12", b"-12", 0),
         ] {
-            assert_eq!(encoded_decimal_implied_len(input, scale, 20, true), Ok(wire.len()));
+            assert_eq!(encoded_implied_decimal_len(input, scale, 20, true), Ok(wire.len()));
             let mut encoded = [0xAA; 24];
             let mut out = &mut encoded[..wire.len() + 1];
-            assert_eq!(encode_decimal_implied(&mut out, input, scale, 20, true).map(|s| &*s), Ok(wire));
+            assert_eq!(encode_implied_decimal(&mut out, input, scale, 20, true).map(|s| &*s), Ok(wire));
             assert_eq!(out, [0xAA]);
             let mut out = &mut encoded[..wire.len() - 1];
-            assert_eq!(encode_decimal_implied(&mut out, input, scale, 20, true), Err(Error::BufferOverflow));
+            assert_eq!(encode_implied_decimal(&mut out, input, scale, 20, true), Err(Error::BufferOverflow));
             let mut decoded = [0xAA; 24];
             let mut out = &mut decoded[..canonical.len() + 1];
-            assert_eq!(decode_decimal_implied(&mut out, wire, scale).map(|s| &*s), Ok(canonical));
+            assert_eq!(decode_implied_decimal(&mut out, wire, scale).map(|s| &*s), Ok(canonical));
             assert_eq!(out, [0xAA]);
             let mut out = &mut decoded[..canonical.len() - 1];
-            assert_eq!(decode_decimal_implied(&mut out, wire, scale), Err(Error::BufferOverflow));
+            assert_eq!(decode_implied_decimal(&mut out, wire, scale), Err(Error::BufferOverflow));
         }
         let mut output = [0; 4];
         for input in [&b"1"[..], b"-1"] {
             assert_eq!(
-                encoded_decimal_implied_len(input, usize::MAX, usize::MAX, true),
+                encoded_implied_decimal_len(input, usize::MAX, usize::MAX, true),
                 Err(Error::Internal)
             );
             assert_eq!(
-                encode_decimal_implied(&mut output.as_mut_slice(), input, usize::MAX, usize::MAX, true),
+                encode_implied_decimal(&mut output.as_mut_slice(), input, usize::MAX, usize::MAX, true),
                 Err(Error::Internal)
             );
             assert_eq!(
-                decode_decimal_implied(&mut output.as_mut_slice(), input, usize::MAX),
+                decode_implied_decimal(&mut output.as_mut_slice(), input, usize::MAX),
                 Err(Error::Internal)
             );
         }
         assert_eq!(
-            encoded_decimal_implied_len(b"-1", usize::MAX - 1, usize::MAX, true),
+            encoded_implied_decimal_len(b"-1", usize::MAX - 1, usize::MAX, true),
             Err(Error::Internal)
         );
         assert_eq!(
-            encode_decimal_implied(&mut output.as_mut_slice(), b"-1", usize::MAX - 1, usize::MAX, true),
+            encode_implied_decimal(&mut output.as_mut_slice(), b"-1", usize::MAX - 1, usize::MAX, true),
             Err(Error::Internal)
         );
         assert_eq!(
-            decode_decimal_implied(&mut output.as_mut_slice(), b"1", usize::MAX - 1),
+            decode_implied_decimal(&mut output.as_mut_slice(), b"1", usize::MAX - 1),
             Err(Error::Internal)
         );
         assert_eq!(
-            decode_decimal_implied(&mut output.as_mut_slice(), b"1", usize::MAX - 2),
+            decode_implied_decimal(&mut output.as_mut_slice(), b"1", usize::MAX - 2),
             Err(Error::BufferOverflow)
         );
         assert_eq!(
-            decode_decimal_implied(&mut output.as_mut_slice(), b"-0", usize::MAX).map(|s| &*s),
+            decode_implied_decimal(&mut output.as_mut_slice(), b"-0", usize::MAX).map(|s| &*s),
             Ok(&b"0"[..])
         );
     }
@@ -1223,7 +1223,7 @@ mod tests {
 mod proptests {
     use proptest::{prop_assert, prop_assert_eq, proptest};
 
-    use super::{MAX_INTEGER_TEXT_LEN, decode_decimal_implied, encode_decimal_implied, format_i64, format_u64};
+    use super::{MAX_INTEGER_TEXT_LEN, decode_implied_decimal, encode_implied_decimal, format_i64, format_u64};
 
     fn canonical_scaled(value: u64, negative: bool, scale: usize) -> Vec<u8> {
         if value == 0 {
@@ -1284,16 +1284,16 @@ mod proptests {
             let expected = value.to_string();
             let mut packed = [0xAA; 40];
             let mut zoned = [0xAA; 40];
-            super::encode_decimal_packed_signed_fixed(&mut packed.as_mut_slice(), expected.as_bytes(), width).unwrap();
-            super::encode_ebcdic_zoned_decimal(&mut zoned.as_mut_slice(), expected.as_bytes(), width).unwrap();
+            super::encode_packed_decimal_signed_fixed(&mut packed.as_mut_slice(), expected.as_bytes(), width).unwrap();
+            super::encode_zoned_decimal_signed_fixed(&mut zoned.as_mut_slice(), expected.as_bytes(), width).unwrap();
             for (is_packed, storage) in [(true, packed), (false, zoned)] {
                 let mut input = storage.as_slice();
                 let mut scratch = [0xAA; 80];
                 let mut out = scratch.as_mut_slice();
                 let decoded = if is_packed {
-                    super::decode_decimal_packed_signed_fixed(&mut input, &mut out, width)
+                    super::decode_packed_decimal_signed_fixed(&mut input, &mut out, width)
                 } else {
-                    super::decode_ebcdic_zoned_decimal(&mut input, &mut out, width)
+                    super::decode_zoned_decimal_signed_fixed(&mut input, &mut out, width)
                 }.unwrap();
                 prop_assert_eq!(&*decoded, expected.as_bytes());
                 prop_assert_eq!(input, &storage[width..]);
@@ -1322,10 +1322,10 @@ mod proptests {
             let decoded = canonical_scaled(value, negative, scale);
             let mut encoded = [0u8; MAX_INTEGER_TEXT_LEN + 1];
             let mut encoded_ptr = encoded.as_mut_slice();
-            let wire = encode_decimal_implied(&mut encoded_ptr, &decoded, scale, MAX_INTEGER_TEXT_LEN, true).map(|buf| buf.to_vec());
+            let wire = encode_implied_decimal(&mut encoded_ptr, &decoded, scale, MAX_INTEGER_TEXT_LEN, true).map(|buf| buf.to_vec());
             let mut output = [0u8; MAX_INTEGER_TEXT_LEN + 2];
             let mut output_ptr = output.as_mut_slice();
-            prop_assert_eq!(wire.as_ref().map(|buf| decode_decimal_implied(&mut output_ptr, buf, scale).map(|out| out.to_vec())), Ok(Ok(decoded)));
+            prop_assert_eq!(wire.as_ref().map(|buf| decode_implied_decimal(&mut output_ptr, buf, scale).map(|out| out.to_vec())), Ok(Ok(decoded)));
         }
     }
 }

@@ -43,6 +43,24 @@ in `primitive`.
 `#[inline(always)]`, so `asm` wrappers provide `#[inline(never)]` call sites for
 assembly inspection and benchmark checkpoints.
 
+## Naming
+
+Names use natural English word order, following the standard library
+(`fmt::UpperHex`, `from_be_bytes`, `split_at_mut_checked`):
+
+- Types put the noun that says what the item is last: `UpperHex`,
+  `AsciiWireLength`, `BlankableEbcdicLength`, `SignPrefix`.
+- Functions are verb plus object in natural order: `encode_packed_decimal_fixed`,
+  `unpack_padded_nibbles`, `validate_track2_chars`.
+- A qualifier that selects a behaviour variant of an existing item goes at the
+  end: `pack_nibbles_checked`, `translate_bytes_inplace`, `PadLeftEven`,
+  `HexEven`, `encode_packed_decimal_signed_fixed`.
+
+Modules group related functions, and rustdoc search and editor completion
+match fuzzily, so names do not repeat a family prefix to sort together. Rename
+an item only when it breaks this rule, not for taste; the rule was chosen over
+family-first ordering deliberately and should not be reversed name by name.
+
 ## Core Traits
 
 `ScalarFmt` is the scalar field contract. It supports byte values, string values,
