@@ -293,6 +293,9 @@ fn bench_signed_and_implied(suite: &mut Suite) {
         group.bench("parse_signed_decimal_19", |b| {
             b.iter(|| black_box(parse_signed_decimal_19(black_box(b"-1234567"))))
         });
+        group.bench("parse_unsigned_decimal_19", |b| {
+            b.iter(|| black_box(parse_unsigned_decimal_19(black_box(b"0001234567"))))
+        });
         group.bench("encoded_decimal_implied_len_scale2_signed", |b| {
             b.iter(|| black_box(encoded_decimal_implied_len_scale2_signed(black_box(b"-123.45"))))
         });

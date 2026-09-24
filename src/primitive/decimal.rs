@@ -27,16 +27,32 @@ pub fn split_signed_input(input: &[u8]) -> Result<(bool, &[u8]), Error> {
     }
 }
 
-/// Split an optional leading `-` from decimal digits and validate them. Negative
-/// zero is reported as positive.
+/// Split an optional leading `-` from decimal digits, validate them and return
+/// the significant digits: leading zeros do not count toward `max_digits`.
+/// Negative zero is reported as positive.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn parse_signed_decimal(input: &[u8], max_digits: usize) -> Result<(bool, &[u8]), Error> {
     let (negative, digits) = split_signed_input(input)?;
-    validate_numeric(digits, 1, max_digits)?;
+    let digits = parse_unsigned_decimal(digits, max_digits)?;
     // Zero is positive in canonical encodings, so "-0" encodes like "0".
-    let negative = negative && !is_filled(digits, b'0');
-    Ok((negative, digits))
+    Ok((negative && digits != b"0", digits))
+}
+
+/// Validate nonempty decimal digits and return the significant digits: leading
+/// zeros are dropped, keeping one digit for zero, and do not count toward
+/// `max_digits`. A sign is `Invalid`.
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub fn parse_unsigned_decimal(digits: &[u8], max_digits: usize) -> Result<&[u8], Error> {
+    validate_numeric(digits, 1, usize::MAX)?;
+    let zeros = digits.iter().take_while(|&&digit| digit == b'0').count();
+    let significant = digits.get(zeros.min(digits.len().saturating_sub(1))..).unwrap_or(digits);
+    if significant.len() > max_digits {
+        cold_path();
+        return Err(Error::InvalidValueLength);
+    }
+    Ok(significant)
 }
 
 /// Return the normalized sign, output length, and significant source suffix,
@@ -635,8 +651,8 @@ fn decode_decimal_packed_common<'a>(input: &[u8], output: &mut &'a mut [u8], sig
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn encode_decimal_packed_fixed(output: &mut &mut [u8], input: &[u8], len: usize) -> Result<(), Error> {
-    validate_numeric(input, 1, packed_decimal_max_digits(len))?;
-    encode_decimal_packed_digits(output, input, false, false, len)
+    let digits = parse_unsigned_decimal(input, packed_decimal_max_digits(len))?;
+    encode_decimal_packed_digits(output, digits, false, false, len)
 }
 
 #[inline(always)]
@@ -672,7 +688,7 @@ mod tests {
         decode_negative_prefix, decode_sign, encode_decimal_ascii_fixed, encode_decimal_ebcdic_blank_zero_fixed,
         encode_decimal_ebcdic_fixed, encode_decimal_implied, encode_decimal_packed_fixed, encode_decimal_packed_signed_fixed,
         encode_ebcdic_zoned_decimal, encode_negative_prefix, encode_sign, encoded_decimal_implied_len, format_i64, format_u64,
-        parse_signed_decimal, prepend_minus, split_signed_input,
+        parse_signed_decimal, parse_unsigned_decimal, prepend_minus, split_signed_input,
     };
     use crate::Error;
 
@@ -762,7 +778,20 @@ mod tests {
         assert_eq!(parse_signed_decimal(b"-12", 2), Ok((true, &b"12"[..])));
         assert_eq!(parse_signed_decimal(b"-123", 2), Err(Error::InvalidValueLength));
         assert_eq!(parse_signed_decimal(b"+12", 2), Err(Error::Invalid));
-        assert_eq!(parse_signed_decimal(b"-00", 2), Ok((false, &b"00"[..])));
+        assert_eq!(parse_signed_decimal(b"-00", 2), Ok((false, &b"0"[..])));
+        assert_eq!(parse_signed_decimal(b"-0012", 2), Ok((true, &b"12"[..])));
+        for (input, expected) in [
+            (&b"0"[..], Ok(&b"0"[..])),
+            (b"000", Ok(b"0")),
+            (b"0012", Ok(b"12")),
+            (b"012", Ok(b"12")),
+        ] {
+            assert_eq!(parse_unsigned_decimal(input, 2), expected);
+        }
+        assert_eq!(parse_unsigned_decimal(b"0123", 2), Err(Error::InvalidValueLength));
+        assert_eq!(parse_unsigned_decimal(b"", 2), Err(Error::InvalidValueLength));
+        assert_eq!(parse_unsigned_decimal(b"-1", 2), Err(Error::Invalid));
+        assert_eq!(parse_unsigned_decimal(b"12x", 1), Err(Error::Invalid));
 
         assert_eq!(encoded_decimal_implied_len(b"123.45", 2, 5, false), Ok(5));
         assert_eq!(encoded_decimal_implied_len(b"-0.05", 2, 5, true), Ok(2));
@@ -1039,6 +1068,7 @@ mod tests {
         assert_eq!(encode_signed_ebcdic_ascii::<3>(b"12"), Ok([0xF0, 0xF1, 0xC2]));
         assert_eq!(encode_signed_ebcdic_ascii::<1>(b"0"), Ok([0xC0]));
         assert_eq!(encode_signed_ebcdic_ascii::<2>(b"-0"), Ok([0xF0, 0xC0]));
+        assert_eq!(encode_signed_ebcdic_ascii::<2>(b"-0012"), Ok([0xF1, 0xD2]));
         assert_eq!(decode_signed_ebcdic_ascii::<2>(b"\xF0\xD7"), Ok(b"-7".to_vec()));
         assert_eq!(decode_signed_ebcdic_ascii::<3>(b"\xF0\xF1\xC2"), Ok(b"12".to_vec()));
         assert_eq!(decode_signed_ebcdic_ascii::<3>(b"\xF0\xF0\xC0"), Ok(b"0".to_vec()));
@@ -1061,6 +1091,7 @@ mod tests {
         assert_eq!(encode_packed_ascii::<2>(b"12"), Ok([0x01, 0x2F]));
         assert_eq!(encode_packed_ascii::<2>(b"123"), Ok([0x12, 0x3F]));
         assert_eq!(encode_packed_ascii::<1>(b"0"), Ok([0x0F]));
+        assert_eq!(encode_packed_ascii::<2>(b"0001"), Ok([0x00, 0x1F]));
         assert_eq!(decode_packed_ascii::<2>(b"\x01\x2C"), Ok(b"12".to_vec()));
         assert_eq!(decode_packed_ascii::<2>(b"\x01\x2F"), Ok(b"12".to_vec()));
         assert_eq!(decode_packed_ascii::<2>(b"\x00\x0C"), Ok(b"0".to_vec()));

@@ -6,7 +6,8 @@ use crate::primitive::decimal::{
     decode_decimal_implied_digits, decode_decimal_packed_fixed, decode_decimal_packed_signed_fixed, decode_ebcdic_zoned_decimal,
     decode_negative_prefix, decode_sign, encode_decimal_implied, encode_decimal_packed_digits, encode_decimal_packed_fixed,
     encode_decimal_packed_signed_fixed, encode_ebcdic_zoned_decimal, encode_ebcdic_zoned_digits, encode_negative_prefix, encode_sign,
-    encoded_decimal_implied_len, packed_decimal_max_digits, parse_signed_decimal, prepend_minus, split_signed_input,
+    encoded_decimal_implied_len, packed_decimal_max_digits, parse_signed_decimal, parse_unsigned_decimal, prepend_minus,
+    split_signed_input,
 };
 use crate::primitive::int::{
     decode_binary_i64_be_fixed, decode_binary_u64_be_fixed, decode_nibble_int_fixed, decode_signed_magnitude_i64,
@@ -14,7 +15,7 @@ use crate::primitive::int::{
     validate_nibble_int_fixed,
 };
 use crate::primitive::nibble::NibbleAlphabet;
-use crate::primitive::validation::{validate_byte_length, validate_numeric};
+use crate::primitive::validation::validate_byte_length;
 use crate::utils::cold_path;
 use crate::{Error, ScalarFmt};
 
@@ -439,7 +440,7 @@ impl<const N: usize> ScalarFmt for FixedSignedBinaryBe<N> {
 impl<const N: usize> ScalarFmt for FixedComp3<N> {
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
-        validate_numeric(input, 1, packed_decimal_max_digits(N))?;
+        parse_unsigned_decimal(input, packed_decimal_max_digits(N))?;
         Ok(N)
     }
 

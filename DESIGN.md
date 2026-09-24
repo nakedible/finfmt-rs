@@ -180,6 +180,18 @@ must be strict pairs it with a check. A strict codec, such as CP1142, converts
 between UTF-8 text and the full code page and rejects unrepresentable text or
 invalid UTF-8. Both keep ASCII on a fast path, since most traffic is ASCII.
 
+### Text and number values
+
+A format treats its value either as text or as a number.
+
+- Text formats (a check plus steps, including BCD nibble packing) return every
+  character on decode, so identifiers such as `000123` keep their leading
+  zeros. Their width is counted in characters.
+- Number formats (packed decimal, zoned decimal, implied decimal, and every
+  typed-integer path) decode to the canonical number: no leading zeros, and
+  zero is positive. When encoding they accept any spelling of a number that
+  fits, so only significant digits count toward their width.
+
 ## Errors
 
 `Error` is the scalar and primitive error type:
