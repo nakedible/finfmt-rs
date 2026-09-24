@@ -86,31 +86,6 @@ pub(crate) fn truncate_str_bytes(input: &str, max_len: usize, keep_right: bool) 
     })
 }
 
-/// Encode prevalidated ASCII text with byte padding, without truncation.
-/// Debug builds assert the ASCII precondition; release does not validate it.
-/// The padding byte may be non-ASCII.
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn encode_ascii<'a>(output: &mut &'a mut [u8], input: &str, pad_to: usize, pad_left: bool, fill: u8) -> Result<&'a mut [u8], Error> {
-    debug_assert!(input.is_ascii(), "input must be ASCII");
-    encode_padded(output, input.as_bytes(), pad_to, pad_left, fill)
-}
-
-/// Strip byte padding from a framed field and return its ASCII semantic text.
-/// Debug builds assert the minimum-length and retained-ASCII preconditions.
-/// Removed padding may use any byte value. Release performs only the UTF-8
-/// conversion required for &str, returning `Invalid` for malformed UTF-8.
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn decode_ascii(input: &[u8], min_len: usize, pad_left: bool, fill: u8) -> Result<&str, Error> {
-    let field = decode_padded(input, min_len, pad_left, fill);
-    debug_assert!(field.is_ascii(), "retained text must be ASCII");
-    str::from_utf8(field).map_err(|_| {
-        cold_path();
-        Error::Invalid
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,23 +201,6 @@ mod tests {
     }
 
     #[test]
-    fn test_ascii_wrappers() {
-        // encode_ascii
-        let mut out = [0u8; 64];
-        let mut p = &mut out[..];
-        assert_eq!(encode_ascii(&mut p, "Hello", 8, true, b' ').unwrap(), b"   Hello");
-        // decode_ascii
-        let inp: &[u8] = b"   Hello";
-        assert_eq!(decode_ascii(inp, 0, true, b' ').unwrap(), "Hello");
-    }
-
-    #[test]
-    #[cfg(not(debug_assertions))]
-    fn test_decode_ascii_invalid_utf8() {
-        let inp: &[u8] = b"\xFF\xFE";
-        assert_eq!(decode_ascii(inp, 0, true, b' '), Err(Error::Invalid));
-    }
-    #[test]
     fn test_padding_and_truncation_boundaries() {
         for right in [false, true] {
             let mut storage = [0xA5; 8];
@@ -274,26 +232,6 @@ mod tests {
     fn assumption(f: impl FnOnce()) {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
         assert_eq!(result.is_err(), cfg!(debug_assertions));
-    }
-
-    #[test]
-    fn test_ascii_assumptions_and_byte_padding() {
-        for right in [false, true] {
-            let mut storage = [0xA5; 8];
-            assumption(|| {
-                let _ = encode_ascii(&mut storage.as_mut_slice(), "é", 0, right, 0);
-            });
-            for input in ["é".as_bytes(), b"\xFF", b"A\xFF", "€".as_bytes()] {
-                assumption(|| {
-                    let _ = decode_ascii(input, 0, right, b' ');
-                });
-            }
-            let encoded = encode_ascii(&mut storage.as_mut_slice(), "A\0\x7F", 5, right, 0xFF).unwrap();
-            assert_eq!(decode_ascii(encoded, 3, right, 0xFF), Ok("A\0\x7F"));
-            assumption(|| {
-                let _ = decode_ascii(encoded, 5, right, 0xFF);
-            });
-        }
     }
 }
 

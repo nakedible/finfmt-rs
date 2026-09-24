@@ -2,8 +2,6 @@
 //! `minlen <= maxlen`; debug builds assert this caller invariant.
 //! With valid bounds, content errors take precedence over length errors.
 
-use std::ops::RangeBounds;
-
 #[cfg(all(not(debug_assertions), feature = "no-panic"))]
 use no_panic::no_panic;
 
@@ -242,16 +240,6 @@ pub fn validate_ebcdic_037_ascii(input: &[u8], minlen: usize, maxlen: usize) -> 
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn validate_ebcdic_printable(input: &[u8], minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, |b| (0x40..=0xFE).contains(b))
-}
-
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_range<T: Ord>(input: T, range: impl RangeBounds<T>) -> Result<(), Error> {
-    if !range.contains(&input) {
-        cold_path();
-        return Err(Error::Invalid);
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -513,25 +501,6 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_range() {
-        // Exclusive range
-        assert_eq!(validate_range(5, 1..10), Ok(()));
-        assert_eq!(validate_range(1, 1..10), Ok(())); // start inclusive
-        assert_eq!(validate_range(9, 1..10), Ok(())); // end exclusive
-        assert_eq!(validate_range(10, 1..10), Err(Error::Invalid));
-        assert_eq!(validate_range(0, 1..10), Err(Error::Invalid));
-        // Inclusive range
-        assert_eq!(validate_range(10, 1..=10), Ok(()));
-        assert_eq!(validate_range(11, 1..=10), Err(Error::Invalid));
-        // Open ranges
-        assert_eq!(validate_range(5, ..10), Ok(()));
-        assert_eq!(validate_range(5, 5..), Ok(()));
-        assert_eq!(validate_range(4, 5..), Err(Error::Invalid));
-        // Char ranges
-        assert_eq!(validate_range('c', 'a'..'{'), Ok(()));
-        assert_eq!(validate_range('{', 'a'..'{'), Err(Error::Invalid));
-    }
-    #[test]
     fn test_even_hex_content_precedes_length() {
         assert_eq!(validate_upper_hex_even("a", 0, 10), Err(Error::Invalid));
         assert_eq!(validate_lower_hex_even("A", 0, 10), Err(Error::Invalid));
@@ -701,13 +670,6 @@ mod proptests {
             prop_assert_eq!(result.is_ok(), valid);
         }
 
-        // Range validation with arbitrary bounds
-        #[test]
-        fn range_validation(val in any::<i32>(), lo in any::<i32>(), hi in any::<i32>()) {
-            prop_assume!(lo <= hi);
-            let expected = val >= lo && val < hi;
-            prop_assert_eq!(validate_range(val, lo..hi).is_ok(), expected);
-        }
         #[test]
         fn even_hex_errors_match_content_and_length(input in prop::collection::vec(any::<u8>(), 0..64), lo in 0usize..64, hi in 0usize..64) {
             let (min, max) = (lo.min(hi), lo.max(hi));

@@ -1,5 +1,5 @@
 use crate::Error;
-use crate::primitive::text::{decode_ascii, decode_padded, encode_ascii, encode_padded, truncate_bytes};
+use crate::primitive::text::{decode_padded, encode_padded, truncate_bytes};
 
 #[inline(never)]
 pub fn encode_padded_right_8_space<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
@@ -24,26 +24,6 @@ pub fn decode_padded_right_8_space(input: &[u8; 8]) -> Result<&[u8], Error> {
 #[inline(never)]
 pub fn decode_padded_left_8_space(input: &[u8; 8]) -> Result<&[u8], Error> {
     Ok(decode_padded(input, 0, true, b' '))
-}
-
-#[inline(never)]
-pub fn encode_ascii_pad_right_8_space<'a>(output: &mut &'a mut [u8], input: &str) -> Result<&'a mut [u8], Error> {
-    encode_ascii(output, input, 8, false, b' ')
-}
-
-#[inline(never)]
-pub fn encode_ascii_pad_left_8_space<'a>(output: &mut &'a mut [u8], input: &str) -> Result<&'a mut [u8], Error> {
-    encode_ascii(output, input, 8, true, b' ')
-}
-
-#[inline(never)]
-pub fn decode_ascii_strip_right_8_space(input: &[u8; 8]) -> Result<&str, Error> {
-    decode_ascii(input, 0, false, b' ')
-}
-
-#[inline(never)]
-pub fn decode_ascii_strip_left_8_space(input: &[u8; 8]) -> Result<&str, Error> {
-    decode_ascii(input, 0, true, b' ')
 }
 
 #[inline(never)]

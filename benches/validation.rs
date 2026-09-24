@@ -102,9 +102,6 @@ fn bench_specialty(suite: &mut Suite) {
         group.bench("validate_ebcdic_1142_text_mixed", |b| {
             b.iter(|| black_box(validate_ebcdic_1142_text_1_99(black_box("ABCÆØÅ€".as_bytes()))))
         });
-        group.bench("validate_range_i64_0_9999", |b| {
-            b.iter(|| black_box(validate_range_i64_0_9999(black_box(1234))))
-        });
         group.bench("validate_ebcdic_037_ascii_1_99", |b| {
             b.iter(|| black_box(validate_ebcdic_037_ascii_1_99(black_box(EBCDIC_PRINT))))
         });

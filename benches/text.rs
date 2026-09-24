@@ -8,7 +8,6 @@ fn quick(group: &mut BenchGroup) {
 }
 
 const SHORT_BYTES: &[u8] = b"Hi";
-const SHORT_STR: &str = "Hi";
 const PADDED_RIGHT: &[u8; 8] = b"Hi      ";
 const PADDED_LEFT: &[u8; 8] = b"      Hi";
 
@@ -76,8 +75,8 @@ fn bench_decode_bytes(suite: &mut Suite) {
     });
 }
 
-fn bench_encode_ascii(suite: &mut Suite) {
-    suite.group("encode_ascii", |group| {
+fn bench_truncate_str(suite: &mut Suite) {
+    suite.group("truncate_str", |group| {
         quick(group);
         group.bench("encode_truncated_ascii_4", |b| {
             b.iter(|| {
@@ -86,41 +85,7 @@ fn bench_encode_ascii(suite: &mut Suite) {
                 black_box(buf)
             })
         });
-        group.bench("encode_ascii_pad_right_8_space", |b| {
-            b.iter(|| {
-                let mut buf = [0u8; 16];
-                let mut out = &mut buf[..];
-                let _ = encode_ascii_pad_right_8_space(&mut out, black_box(SHORT_STR));
-                black_box(buf)
-            })
-        });
-        group.bench("encode_ascii_pad_left_8_space", |b| {
-            b.iter(|| {
-                let mut buf = [0u8; 16];
-                let mut out = &mut buf[..];
-                let _ = encode_ascii_pad_left_8_space(&mut out, black_box(SHORT_STR));
-                black_box(buf)
-            })
-        });
     });
 }
 
-fn bench_decode_ascii(suite: &mut Suite) {
-    suite.group("decode_ascii", |group| {
-        quick(group);
-        group.bench("decode_ascii_strip_right_8_space", |b| {
-            b.iter(|| {
-                let input = black_box(PADDED_RIGHT);
-                black_box(decode_ascii_strip_right_8_space(input))
-            })
-        });
-        group.bench("decode_ascii_strip_left_8_space", |b| {
-            b.iter(|| {
-                let input = black_box(PADDED_LEFT);
-                black_box(decode_ascii_strip_left_8_space(input))
-            })
-        });
-    });
-}
-
-zenbench::main!(bench_encode_bytes, bench_decode_bytes, bench_encode_ascii, bench_decode_ascii);
+zenbench::main!(bench_encode_bytes, bench_decode_bytes, bench_truncate_str);
