@@ -422,12 +422,6 @@ mod tests {
             Field::<Binary<0, 100>, AsciiLength<1>>::encoded_len(b"0123456789"),
             Err(Error::InvalidValueLength)
         );
-        assert_eq!(encode_length::<AsciiLength<0>>(0, 0), Err(Error::Invalid));
-        assert_eq!(encode_length::<AsciiWireLength<0>>(0, 0), Err(Error::Invalid));
-        assert_eq!(encode_length::<EbcdicLength<0>>(0, 0), Err(Error::Invalid));
-        assert_eq!(encode_length::<EbcdicWireLength<0>>(0, 0), Err(Error::Invalid));
-        assert_eq!(encode_length::<BlankableEbcdicLength<0>>(0, 0), Ok(vec![]));
-        assert_eq!(encode_length::<BlankableEbcdicLength<0>>(1, 0), Err(Error::Invalid));
         assert_eq!(encode_length::<AsciiLength<20>>(usize::MAX, 0).map(|v| v.len()), Ok(20));
         assert_eq!(encode_length::<AsciiLength<32>>(usize::MAX, 0).map(|v| v.len()), Ok(32));
     }
@@ -459,7 +453,7 @@ mod proptests {
 
     proptest! {
         #[test]
-        fn prefix_prediction_matches_encoding(value in any::<usize>(), width in 0usize..33) {
+        fn prefix_prediction_matches_encoding(value in any::<usize>(), width in 1usize..33) {
             let mut output = [0; 32];
             let mut out = &mut output[..];
             let encoded = encode_decimal_ascii_fixed(&mut out, value, width).map(|()| 32 - out.len());

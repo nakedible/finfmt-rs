@@ -380,11 +380,9 @@ pub fn decode_packed_sign(input: u8) -> Result<bool, Error> {
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn packed_decimal_max_digits(bytes_len: usize) -> Result<usize, Error> {
-    bytes_len.checked_mul(2).and_then(|v| v.checked_sub(1)).ok_or_else(|| {
-        cold_path();
-        Error::Invalid
-    })
+pub fn packed_decimal_max_digits(bytes_len: usize) -> usize {
+    debug_assert!(bytes_len != 0, "packed decimal width must be nonzero");
+    bytes_len.saturating_mul(2).saturating_sub(1)
 }
 
 /// Encode prevalidated ASCII digits, checking they fit the zoned output width.
@@ -504,8 +502,9 @@ pub fn encode_decimal_ebcdic_fixed(output: &mut &mut [u8], value: usize, len: us
 
 #[inline(always)]
 fn encode_decimal_fixed(output: &mut &mut [u8], mut value: usize, len: usize, zero: u8) -> Result<(), Error> {
+    debug_assert!(len != 0, "decimal width must be nonzero");
     let limit = u32::try_from(len).ok().and_then(|len| 10usize.checked_pow(len));
-    if len == 0 || limit.is_some_and(|limit| value >= limit) {
+    if limit.is_some_and(|limit| value >= limit) {
         cold_path();
         return Err(Error::Invalid);
     }
@@ -563,6 +562,7 @@ pub fn decode_decimal_ebcdic_blank_zero_fixed(input: &mut &[u8], len: usize) -> 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn encode_ebcdic_zoned_decimal(output: &mut &mut [u8], input: &[u8], len: usize) -> Result<(), Error> {
+    debug_assert!(len != 0, "zoned decimal width must be nonzero");
     let (negative, digits) = parse_signed_decimal(input, len)?;
     encode_ebcdic_zoned_digits(output, digits, negative, len)
 }
@@ -635,14 +635,14 @@ fn decode_decimal_packed_common<'a>(input: &[u8], output: &mut &'a mut [u8], sig
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn encode_decimal_packed_fixed(output: &mut &mut [u8], input: &[u8], len: usize) -> Result<(), Error> {
-    validate_numeric(input, 1, packed_decimal_max_digits(len)?)?;
+    validate_numeric(input, 1, packed_decimal_max_digits(len))?;
     encode_decimal_packed_digits(output, input, false, false, len)
 }
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn encode_decimal_packed_signed_fixed(output: &mut &mut [u8], input: &[u8], len: usize) -> Result<(), Error> {
-    let (negative, digits) = parse_signed_decimal(input, packed_decimal_max_digits(len)?)?;
+    let (negative, digits) = parse_signed_decimal(input, packed_decimal_max_digits(len))?;
     encode_decimal_packed_digits(output, digits, negative, true, len)
 }
 
@@ -844,8 +844,8 @@ mod tests {
             }
         }
         for value in values {
-            for width in 0usize..=32 {
-                for capacity in [0, width.saturating_sub(1), width, 34] {
+            for width in 1usize..=32 {
+                for capacity in [0, width - 1, width, 34] {
                     check_fixed_decimal(value, width, capacity);
                 }
             }
@@ -1232,7 +1232,7 @@ mod proptests {
 
     proptest! {
         #[test]
-        fn fixed_decimal_matches_std(value: usize, width in 0usize..=32, capacity in 0usize..=34) {
+        fn fixed_decimal_matches_std(value: usize, width in 1usize..=32, capacity in 0usize..=34) {
             super::tests::check_fixed_decimal(value, width, capacity);
         }
 

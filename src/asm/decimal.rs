@@ -95,7 +95,7 @@ pub fn decode_packed_sign_nibble(input: u8) -> Result<bool, Error> {
 }
 
 #[inline(never)]
-pub fn packed_decimal_max_digits_8(bytes_len: usize) -> Result<usize, Error> {
+pub fn packed_decimal_max_digits_8(bytes_len: usize) -> usize {
     packed_decimal_max_digits(bytes_len)
 }
 

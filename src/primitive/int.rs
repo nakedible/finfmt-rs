@@ -106,20 +106,12 @@ pub fn decode_binary_u64_be_fixed(input: &mut &[u8], len: usize) -> Result<u64, 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn validate_binary_i64_be_fixed(value: i64, len: usize) -> Result<(), Error> {
-    if len == 0 || len > core::mem::size_of::<i64>() {
+    debug_assert!((1..=size_of::<i64>()).contains(&len), "signed binary width must be 1 to 8 bytes");
+    // A value fits in `len` bytes when every bit above its sign bit copies the sign.
+    let sign_bit = len.saturating_mul(8).saturating_sub(1);
+    if sign_bit < 63 && !matches!(value >> sign_bit, 0 | -1) {
         cold_path();
         return Err(Error::Invalid);
-    }
-
-    let bits = len * 8;
-    if bits < 64 {
-        let min = -(1i128 << (bits - 1));
-        let max = (1i128 << (bits - 1)) - 1;
-        let value = i128::from(value);
-        if value < min || value > max {
-            cold_path();
-            return Err(Error::Invalid);
-        }
     }
     Ok(())
 }
@@ -129,18 +121,15 @@ pub fn validate_binary_i64_be_fixed(value: i64, len: usize) -> Result<(), Error>
 pub fn encode_binary_i64_be_fixed(output: &mut &mut [u8], value: i64, len: usize) -> Result<(), Error> {
     validate_binary_i64_be_fixed(value, len)?;
     let bytes = value.to_be_bytes();
-    copy_bytes(output, &bytes[bytes.len() - len..])?;
+    let used = bytes.get(bytes.len().saturating_sub(len)..).unwrap_or_default();
+    copy_bytes(output, used)?;
     Ok(())
 }
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_binary_i64_be_fixed(input: &mut &[u8], len: usize) -> Result<i64, Error> {
-    if len == 0 || len > core::mem::size_of::<i64>() {
-        cold_path();
-        return Err(Error::Invalid);
-    }
-
+    debug_assert!((1..=size_of::<i64>()).contains(&len), "signed binary width must be 1 to 8 bytes");
     let fill = if input.first().is_some_and(|byte| byte & 0x80 != 0) {
         0xFF
     } else {
@@ -359,9 +348,14 @@ mod tests {
             Err(Error::Invalid)
         );
         assert_eq!(decode_hex::<UpperHexDigits, 0>(b""), Ok(0));
+        // Impossible widths are composition mistakes: debug builds assert, release
+        // builds must not panic.
         for len in [0, 9, usize::MAX] {
-            assert_eq!(encode::<9>(|out| encode_binary_i64_be_fixed(out, 0, len)), Err(Error::Invalid));
-            assert_eq!(decode_binary_i64_be_fixed(&mut &b""[..], len), Err(Error::Invalid));
+            let outcome = std::panic::catch_unwind(|| {
+                let _ = encode::<9>(|out| encode_binary_i64_be_fixed(out, -1, len));
+                let _ = decode_binary_i64_be_fixed(&mut &[0xFF; 9][..], len);
+            });
+            assert_eq!(outcome.is_err(), cfg!(debug_assertions));
         }
         assert_eq!(decode_signed_magnitude_i64(true, 0), Ok(0));
         assert_eq!(decode_signed_magnitude_i64(false, u64::MAX), Err(Error::Invalid));
