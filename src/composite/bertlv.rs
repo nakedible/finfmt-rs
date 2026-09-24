@@ -4,9 +4,7 @@ use core::str::FromStr;
 use no_panic::no_panic;
 
 use super::*;
-use crate::primitive::bertlv::{
-    MAX_BER_TAG_BYTES, ber_length_width, ber_tag_matches_hex, encode_ber_length, encode_ber_tag, parse_ber_tag_hex,
-};
+use crate::primitive::bertlv::{MAX_BER_TAG_BYTES, ber_tag_matches_hex, encode_ber_tlv_head, parse_ber_tag_hex};
 use crate::primitive::bytes::reserve_bytes;
 use crate::primitive::nibble::{UpperHexDigits, pack_nibbles_checked, unpack_nibbles};
 use crate::utils::cold_path;
@@ -137,16 +135,8 @@ pub(super) fn encode_unknown_tlv_from_key(output: &mut &mut [u8], key: &str, val
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub(super) fn encode_unknown_tlv_from_tag(output: &mut &mut [u8], tag: &[u8], value: &str) -> Result<(), Error> {
-    let used = value.len() / 2;
-    let head_len = ber_length_width(used)? + tag.len();
-    let total = head_len + used;
-    let out = reserve_bytes(output, total)?;
-    let (head_buf, body_buf) = out.split_at_mut(head_len);
-    let mut head = head_buf;
-    encode_ber_tag(&mut head, tag)?;
-    encode_ber_length(&mut head, used)?;
-    let mut body = body_buf;
-    pack_nibbles_checked::<UpperHexDigits>(&mut body, value.as_bytes())?;
+    encode_ber_tlv_head(output, tag, value.len() / 2)?;
+    pack_nibbles_checked::<UpperHexDigits>(output, value.as_bytes())?;
     Ok(())
 }
 
@@ -168,7 +158,7 @@ pub fn decode_ber_tlv_collection_entry<'a, const ALLOW_ZERO_PADDING: bool>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::primitive::bertlv::{BerTlvEntry, MAX_BER_VALUE_LEN, decode_ber_tlv_entry};
+    use crate::primitive::bertlv::{BerTlvEntry, MAX_BER_VALUE_LEN, ber_length_width, decode_ber_tlv_entry};
 
     #[test]
     fn test_parse_unknown_tag_key_uppercase_only() {

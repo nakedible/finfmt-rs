@@ -51,6 +51,13 @@ fn bench_bertlv(suite: &mut Suite) {
         group.bench("ber_tag_matches_hex_9f02", |b| {
             b.iter(|| black_box(ber_tag_matches_hex_9f02(black_box(TAG_2BYTE))))
         });
+        group.bench("encode_ber_tlv_head_9f02", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 8];
+                let _ = encode_ber_tlv_head_9f02(&mut buf.as_mut_slice(), black_box(6));
+                black_box(buf)
+            })
+        });
         group.bench("encode_ber_tlv_in_place_9f02", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 16];

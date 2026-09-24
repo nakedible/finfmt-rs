@@ -196,6 +196,24 @@ pub fn ber_tag_matches_hex(tag_bytes: &[u8], tag_hex: &str) -> Result<bool, Erro
     Ok(tag_bytes == &parsed[..len])
 }
 
+/// Write the tag and definite length of an entry whose value length is known,
+/// advancing the cursor so the value can be encoded directly after them.
+/// Tag bytes are copied without validation. Insufficient capacity returns
+/// `BufferOverflow`; unsupported value lengths return `Invalid`.
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub fn encode_ber_tlv_head<'a>(output: &mut &'a mut [u8], tag: &[u8], value_len: usize) -> Result<&'a mut [u8], Error> {
+    let head_len = tag.len().checked_add(ber_length_width(value_len)?).ok_or_else(|| {
+        cold_path();
+        Error::BufferOverflow
+    })?;
+    let head = reserve_bytes(output, head_len)?;
+    let mut cursor = &mut *head;
+    encode_ber_tag(&mut cursor, tag)?;
+    encode_ber_length(&mut cursor, value_len)?;
+    Ok(head)
+}
+
 /// Frame a body already encoded at the start of `output` as a BER-TLV entry.
 ///
 /// The first `value_len` bytes contain the body. This moves them right to make
@@ -217,9 +235,7 @@ pub fn encode_ber_tlv_in_place<'a>(output: &mut &'a mut [u8], tag: &[u8], value_
     })?;
     let entry = reserve_bytes(output, used)?;
     entry.copy_within(..value_len, head_len);
-    let mut head = &mut entry[..head_len];
-    encode_ber_tag(&mut head, tag)?;
-    encode_ber_length(&mut head, value_len)?;
+    encode_ber_tlv_head(&mut &mut entry[..head_len], tag, value_len)?;
     Ok(entry)
 }
 
@@ -334,6 +350,32 @@ mod tests {
             assert_eq!(output.len(), capacity - required);
             assert!(output.iter().all(|&byte| byte == 0xAA));
         }
+    }
+
+    #[test]
+    fn test_encode_ber_tlv_head() {
+        for (tag, len, head) in [
+            (&b"\x5A"[..], 0, &b"\x5A\x00"[..]),
+            (b"\x9F\x02", 127, b"\x9F\x02\x7F"),
+            (b"\x9F\x02", 128, b"\x9F\x02\x81\x80"),
+            (b"\xDF\x81\x81\x01", 256, b"\xDF\x81\x81\x01\x82\x01\x00"),
+        ] {
+            for capacity in [head.len() - 1, head.len(), head.len() + 3] {
+                let mut storage = [0xAA; 16];
+                let mut output = &mut storage[..capacity];
+                let result = encode_ber_tlv_head(&mut output, tag, len).map(|written| written.to_vec());
+                if capacity < head.len() {
+                    assert_eq!(result, Err(Error::BufferOverflow));
+                } else {
+                    assert_eq!(result, Ok(head.to_vec()));
+                    assert_eq!(output.len(), capacity - head.len());
+                }
+            }
+        }
+        assert_eq!(
+            encode_ber_tlv_head(&mut &mut [0; 8][..], b"\x5A", MAX_BER_VALUE_LEN + 1),
+            Err(Error::Invalid)
+        );
     }
 
     #[test]
