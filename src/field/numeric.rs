@@ -637,7 +637,7 @@ mod tests {
         assert_eq!(encode_i64::<FixedSignedZonedEbcdic<2>>(-12), Ok(vec![0xF1, 0xD2]));
         assert_eq!(decode_i64::<FixedSignedZonedEbcdic<2>>(b"\xF1\xC2"), Ok(12));
         assert_eq!(decode_i64::<FixedSignedZonedEbcdic<2>>(b"\xF1\xF2"), Ok(12));
-        assert_eq!(encode_i64::<FixedSignedZonedEbcdic<1>>(10), Err(Error::InvalidValueLength));
+        assert_eq!(encode_i64::<FixedSignedZonedEbcdic<1>>(10), Err(Error::Invalid));
         assert_eq!(decode_u64::<FixedSignedZonedEbcdic<2>>(b"\xF1\xD2"), Err(Error::Invalid));
     }
 
@@ -678,7 +678,7 @@ mod tests {
         assert_eq!(encode_i64::<FixedSignedComp3<2>>(-12), Ok(vec![0x01, 0x2D]));
         assert_eq!(decode_i64::<FixedSignedComp3<2>>(b"\x01\x2C"), Ok(12));
         assert_eq!(decode_i64::<FixedSignedComp3<2>>(b"\x01\x2B"), Ok(-12));
-        assert_eq!(encode_i64::<FixedSignedComp3<1>>(10), Err(Error::InvalidValueLength));
+        assert_eq!(encode_i64::<FixedSignedComp3<1>>(10), Err(Error::Invalid));
         assert_eq!(decode_u64::<FixedSignedComp3<2>>(b"\x01\x2D"), Err(Error::Invalid));
     }
 

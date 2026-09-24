@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 
 use super::{Check, LengthSpec, Step};
 use crate::primitive::bytes::{reserve_filled, take_bytes, take_padded};
-use crate::utils::cold_path;
+use crate::utils::{cold_path, length_as_invalid, prefix_overflow};
 use crate::{Error, ScalarFmt};
 
 /// Compose a semantic check, length framing, and byte transform.
@@ -15,16 +15,19 @@ impl<C: Check, L: LengthSpec<S>, S: Step> ScalarFmt for Field<C, L, S> {
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
         let semantic_len = C::validate(input)?;
         let wire_len = S::encoded_len(semantic_len)?;
-        L::encoded_len(semantic_len, wire_len)?.checked_add(wire_len).ok_or_else(|| {
-            cold_path();
-            Error::BufferOverflow
-        })
+        L::encoded_len(semantic_len, wire_len)
+            .map_err(prefix_overflow)?
+            .checked_add(wire_len)
+            .ok_or_else(|| {
+                cold_path();
+                Error::BufferOverflow
+            })
     }
 
     fn encode(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
         let semantic_len = C::validate(input)?;
         let wire_len = S::encoded_len(semantic_len)?;
-        L::encode(output, scratch, semantic_len, wire_len)?;
+        L::encode(output, scratch, semantic_len, wire_len).map_err(prefix_overflow)?;
 
         let encoded = S::encode(output, scratch, input)?;
         debug_assert_eq!(encoded.len(), wire_len, "step encoded a different number of bytes than predicted");
@@ -35,7 +38,7 @@ impl<C: Check, L: LengthSpec<S>, S: Step> ScalarFmt for Field<C, L, S> {
         let plan = L::decode_plan(input, scratch)?;
         let wire = take_bytes(input, plan.wire_len)?;
         let semantic = S::decode(wire, scratch, plan.semantic_len)?;
-        let semantic_len = C::validate(semantic)?;
+        let semantic_len = C::validate(semantic).map_err(length_as_invalid)?;
         if let Some(expected_len) = plan.semantic_len
             && semantic_len != expected_len
         {
@@ -53,12 +56,15 @@ impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> S
         let wire_len = S::encoded_len(semantic_len)?;
         if wire_len > PAD_TO {
             cold_path();
-            return Err(Error::Invalid);
+            return Err(Error::InvalidValueLength);
         }
-        L::encoded_len(semantic_len, wire_len)?.checked_add(PAD_TO).ok_or_else(|| {
-            cold_path();
-            Error::BufferOverflow
-        })
+        L::encoded_len(semantic_len, wire_len)
+            .map_err(prefix_overflow)?
+            .checked_add(PAD_TO)
+            .ok_or_else(|| {
+                cold_path();
+                Error::BufferOverflow
+            })
     }
 
     fn encode(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
@@ -66,9 +72,9 @@ impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> S
         let wire_len = S::encoded_len(semantic_len)?;
         if wire_len > PAD_TO {
             cold_path();
-            return Err(Error::Invalid);
+            return Err(Error::InvalidValueLength);
         }
-        L::encode(output, scratch, semantic_len, wire_len)?;
+        L::encode(output, scratch, semantic_len, wire_len).map_err(prefix_overflow)?;
         let area = reserve_filled(output, PAD_TO, FILL)?;
         let (field, _tail) = area.split_at_mut(wire_len);
         let mut field_out = field;
@@ -88,7 +94,7 @@ impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> S
         }
         let wire = take_padded(input, PAD_TO, plan.wire_len, FILL)?;
         let semantic = S::decode(wire, scratch, plan.semantic_len)?;
-        let semantic_len = C::validate(semantic)?;
+        let semantic_len = C::validate(semantic).map_err(length_as_invalid)?;
         if let Some(expected_len) = plan.semantic_len
             && semantic_len != expected_len
         {
@@ -168,6 +174,28 @@ mod tests {
         let mut input_ptr = input;
         let mut scratch_ptr = scratch.as_mut_slice();
         Ok(F::decode_str(&mut input_ptr, &mut scratch_ptr)?.to_owned())
+    }
+
+    #[test]
+    fn value_length_errors_only_come_from_encoding() {
+        fn encode<F: ScalarFmt>(input: &[u8]) -> Result<(), Error> {
+            F::encode(&mut &mut [0; 32][..], &mut [0; 32][..], input)
+        }
+        fn decode<F: ScalarFmt>(wire: &[u8]) -> Result<Vec<u8>, Error> {
+            F::decode(&mut &wire[..], &mut &mut [0; 32][..]).map(<[u8]>::to_vec)
+        }
+        type Short = Field<Ascii<1, 3>, AsciiLength<1>>;
+        assert_eq!(encode::<Short>(b"ABCD"), Err(Error::InvalidValueLength));
+        assert_eq!(decode::<Short>(b"4ABCD"), Err(Error::Invalid));
+        type Padded = PaddedField<Ascii<0, 8>, AsciiLength<1>, Identity, 2, b' '>;
+        assert_eq!(encode::<Padded>(b"ABC"), Err(Error::InvalidValueLength));
+        type BinaryPrefix = Field<Ascii<0, 300>, Length<FixedBinaryBe<1>>>;
+        type PackedPrefix = Field<Ascii<0, 300>, Length<crate::FixedComp3<1>>>;
+        assert_eq!(encode::<BinaryPrefix>(&[b'A'; 256]), Err(Error::InvalidValueLength));
+        assert_eq!(encode::<PackedPrefix>(&[b'A'; 10]), Err(Error::InvalidValueLength));
+        assert_eq!(encode::<crate::FixedSignedComp3<2>>(b""), Err(Error::InvalidValueLength));
+        assert_eq!(encode::<crate::FixedSignedComp3<2>>(b"-"), Err(Error::InvalidValueLength));
+        assert_eq!(encode::<SignPrefix<N16>>(b""), Err(Error::InvalidValueLength));
     }
 
     #[test]

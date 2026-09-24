@@ -420,7 +420,7 @@ mod tests {
         }
         assert_eq!(
             Field::<Binary<0, 100>, AsciiLength<1>>::encoded_len(b"0123456789"),
-            Err(Error::Invalid)
+            Err(Error::InvalidValueLength)
         );
         assert_eq!(encode_length::<AsciiLength<0>>(0, 0), Err(Error::Invalid));
         assert_eq!(encode_length::<AsciiWireLength<0>>(0, 0), Err(Error::Invalid));

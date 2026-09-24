@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 
 use super::Check;
 use crate::Error;
-use crate::utils::{cold_path, split_scratch};
+use crate::utils::{cold_path, length_as_invalid, split_scratch};
 
 /// A transform between validated semantic data and its byte representation.
 /// Encoding assumes the caller established the transform's input repertoire;
@@ -111,14 +111,7 @@ impl<S: Step, C: Check> Step for DecodeCheck<S, C> {
 
     #[inline(always)]
     fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
-        C::validate(input).map_err(|error| {
-            cold_path();
-            if error == Error::InvalidValueLength {
-                Error::Invalid
-            } else {
-                error
-            }
-        })?;
+        C::validate(input).map_err(length_as_invalid)?;
         S::decode(input, scratch, semantic_len)
     }
 

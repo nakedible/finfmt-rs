@@ -1,6 +1,6 @@
 use crate::Error;
 use crate::primitive::decimal::{MAX_INTEGER_TEXT_LEN, format_i64, format_u64, parse_i64, parse_u64};
-use crate::utils::cold_path;
+use crate::utils::{cold_path, length_as_invalid};
 
 /// Core encode/decode trait for financial message field types.
 ///
@@ -27,6 +27,10 @@ use crate::utils::cold_path;
 /// the callee advances it past every byte it keeps.
 ///
 /// # Numeric Encoding
+///
+/// A typed number that does not fit the field is `Invalid`: it is out of range,
+/// and there are no characters to remove. `InvalidValueLength` is reserved for
+/// values whose length the caller can change.
 ///
 /// The default implementations for numeric types convert through decimal strings
 /// using the crate's fixed-buffer formatter. This matches the common
@@ -97,7 +101,7 @@ pub trait ScalarFmt {
     #[inline(always)]
     fn encoded_len_u64(input: u64) -> Result<usize, Error> {
         let mut digits = [0u8; MAX_INTEGER_TEXT_LEN];
-        Self::encoded_len(format_u64(&mut digits, input))
+        Self::encoded_len(format_u64(&mut digits, input)).map_err(length_as_invalid)
     }
 
     /// Calculate the encoded length in bytes for a `usize`.
@@ -116,7 +120,7 @@ pub trait ScalarFmt {
     #[inline(always)]
     fn encoded_len_i64(input: i64) -> Result<usize, Error> {
         let mut digits = [0u8; MAX_INTEGER_TEXT_LEN];
-        Self::encoded_len(format_i64(&mut digits, input))
+        Self::encoded_len(format_i64(&mut digits, input)).map_err(length_as_invalid)
     }
 
     /// Encode an unsigned 64-bit integer to wire format.
@@ -128,7 +132,7 @@ pub trait ScalarFmt {
     #[inline(always)]
     fn encode_u64(output: &mut &mut [u8], scratch: &mut [u8], input: u64) -> Result<(), Error> {
         let mut digits = [0u8; MAX_INTEGER_TEXT_LEN];
-        Self::encode(output, scratch, format_u64(&mut digits, input))
+        Self::encode(output, scratch, format_u64(&mut digits, input)).map_err(length_as_invalid)
     }
 
     /// Encode a `usize` to wire format.
@@ -169,7 +173,7 @@ pub trait ScalarFmt {
     #[inline(always)]
     fn encode_i64(output: &mut &mut [u8], scratch: &mut [u8], input: i64) -> Result<(), Error> {
         let mut digits = [0u8; MAX_INTEGER_TEXT_LEN];
-        Self::encode(output, scratch, format_i64(&mut digits, input))
+        Self::encode(output, scratch, format_i64(&mut digits, input)).map_err(length_as_invalid)
     }
 
     /// Decode wire format to a signed 64-bit integer.

@@ -3,7 +3,8 @@
 /// The variants are intentionally policy-oriented:
 /// - `UnexpectedEof`: input ended before the requested wire data was available
 /// - `BufferOverflow`: output or scratch space was too small for the result
-/// - `InvalidValueLength`: the semantic value length was outside the accepted bounds
+/// - `InvalidValueLength`: when encoding, the supplied value is too long or too
+///   short for the field
 /// - `Invalid`: the provided data was malformed or otherwise not accepted
 /// - `Internal`: an internal invariant failed, or a format definition/composition
 ///   is unsupported or inconsistent
@@ -13,7 +14,11 @@ pub enum Error {
     UnexpectedEof,
     /// Output or scratch space was too small for the encoded or decoded result.
     BufferOverflow,
-    /// The semantic input or output length was outside the accepted bounds.
+    /// When encoding, the supplied value is too long or too short for the field:
+    /// adding or removing characters or bytes would make it valid. This points at
+    /// the configuration or value to fix, or at a format that should truncate.
+    /// Decoding never returns it; a decoded value of the wrong length means the
+    /// incoming message was encoded wrong, which is `Invalid`.
     InvalidValueLength,
     /// The provided data was malformed or otherwise invalid for the format.
     Invalid,
@@ -26,7 +31,7 @@ impl core::fmt::Display for Error {
         match self {
             Self::UnexpectedEof => f.write_str("unexpected end of input"),
             Self::BufferOverflow => f.write_str("buffer too small for result"),
-            Self::InvalidValueLength => f.write_str("semantic value length out of bounds"),
+            Self::InvalidValueLength => f.write_str("value length not accepted by the field"),
             Self::Invalid => f.write_str("invalid data"),
             Self::Internal => f.write_str("internal error or invalid format composition"),
         }
@@ -164,7 +169,7 @@ mod tests {
     fn test_error_display_messages() {
         assert_eq!(Error::UnexpectedEof.to_string(), "unexpected end of input");
         assert_eq!(Error::BufferOverflow.to_string(), "buffer too small for result");
-        assert_eq!(Error::InvalidValueLength.to_string(), "semantic value length out of bounds");
+        assert_eq!(Error::InvalidValueLength.to_string(), "value length not accepted by the field");
         assert_eq!(Error::Invalid.to_string(), "invalid data");
         assert_eq!(Error::Internal.to_string(), "internal error or invalid format composition");
     }
@@ -195,7 +200,7 @@ mod tests {
                 .with_field("inner")
                 .with_field("outer")
                 .to_string(),
-            "outer.inner: semantic value length out of bounds"
+            "outer.inner: value length not accepted by the field"
         );
     }
 

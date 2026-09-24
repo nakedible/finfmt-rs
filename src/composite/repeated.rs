@@ -380,7 +380,7 @@ mod tests {
             Counted2::encode(&mut [0; 8].as_mut_slice(), &mut [], &values)
                 .unwrap_err()
                 .to_string(),
-            "[1]: semantic value length out of bounds"
+            "[1]: value length not accepted by the field"
         );
         type Two = DirectScalar<Field<Ascii<2, 2>, Fixed<2>>>;
         type Area = FixedAreaList<String, AsciiLength<1>, OptionalAbsent<String, Two, ByteFill, 2>, 3>;

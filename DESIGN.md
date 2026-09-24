@@ -186,7 +186,13 @@ invalid UTF-8. Both keep ASCII on a fast path, since most traffic is ASCII.
 
 - `UnexpectedEof`: input ended before enough wire bytes were available.
 - `BufferOverflow`: output or scratch space was too small.
-- `InvalidValueLength`: semantic value length did not satisfy the format.
+- `InvalidValueLength`: when encoding, the supplied value is too long or too
+  short for the field, so adding or removing characters or bytes would fix it.
+  It points at the configuration or value to correct, or at a format that
+  should truncate. Decoding never returns it: a decoded value of the wrong
+  length means the incoming message was encoded wrong, which is `Invalid`. A
+  typed number that does not fit is `Invalid` too, since it has no characters
+  to remove.
 - `Invalid`: input data was malformed or rejected by the format.
 - `Internal`: format composition or library invariant was inconsistent.
 

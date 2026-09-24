@@ -13,7 +13,8 @@ use crate::primitive::validation::{
 /// inclusive length range. They count bytes, except `Ebcdic1142Text`, which
 /// counts characters. The field's first `Step` and length spec must count in the
 /// same unit. Content errors return `Invalid` and take precedence over length
-/// errors, which return `InvalidValueLength`.
+/// errors, which return `InvalidValueLength`. When decoding, fields report
+/// both as `Invalid`.
 ///
 /// Checks marked "wire bytes" validate encoded bytes rather than a value; use
 /// them inside `DecodeCheck` after the step that produces those bytes.

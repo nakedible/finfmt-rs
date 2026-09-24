@@ -7,31 +7,24 @@ use crate::primitive::ebcdic::{EBCDIC_037_TO_ASCII, translate_bytes};
 use crate::primitive::int::decode_signed_magnitude_i64;
 use crate::primitive::nibble::{BcdzDigits, pack_nibbles, unpack_padded_nibbles};
 use crate::primitive::validation::validate_numeric;
-use crate::utils::cold_path;
+use crate::utils::{cold_path, length_as_invalid};
 
 /// Maximum text length of u64 or i64, including the i64 minus sign.
 pub const MAX_INTEGER_TEXT_LEN: usize = 20;
 
+/// Split an optional leading `-` from the digits. A leading `+` is `Invalid`.
+/// The digits may be empty; callers validate them.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn split_signed_input(input: &[u8]) -> Result<(bool, &[u8]), Error> {
-    let Some((&first, rest)) = input.split_first() else {
-        cold_path();
-        return Err(Error::Invalid);
-    };
-    let (negative, digits) = match first {
-        b'-' => (true, rest),
-        b'+' => {
+    match input {
+        [b'-', digits @ ..] => Ok((true, digits)),
+        [b'+', ..] => {
             cold_path();
-            return Err(Error::Invalid);
+            Err(Error::Invalid)
         }
-        _ => (false, input),
-    };
-    if digits.is_empty() {
-        cold_path();
-        return Err(Error::Invalid);
+        _ => Ok((false, input)),
     }
-    Ok((negative, digits))
 }
 
 /// Split an optional leading `-` from decimal digits and validate them. Negative
@@ -55,6 +48,10 @@ fn analyze_scaled_decimal(input: &[u8], scale: usize, max_digits: usize, signed:
     if negative && !signed {
         cold_path();
         return Err(Error::Invalid);
+    }
+    if input.is_empty() {
+        cold_path();
+        return Err(Error::InvalidValueLength);
     }
     let mut int_digits = 0usize;
     let mut frac_digits = 0usize;
@@ -273,7 +270,7 @@ pub fn encode_decimal_implied<'a>(
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_decimal_implied<'a>(output: &mut &'a mut [u8], input: &[u8], scale: usize) -> Result<&'a mut [u8], Error> {
     let (negative, digits) = split_signed_input(input)?;
-    validate_numeric(digits, 1, usize::MAX)?;
+    validate_numeric(digits, 1, usize::MAX).map_err(length_as_invalid)?;
     decode_decimal_implied_digits(output, digits, negative, scale)
 }
 
@@ -754,7 +751,12 @@ mod tests {
         assert_eq!(split_signed_input(b"12"), Ok((false, &b"12"[..])));
         assert_eq!(split_signed_input(b"-12"), Ok((true, &b"12"[..])));
         assert_eq!(split_signed_input(b"+12"), Err(Error::Invalid));
-        assert_eq!(split_signed_input(b"-"), Err(Error::Invalid));
+        assert_eq!(split_signed_input(b"-"), Ok((true, &b""[..])));
+        assert_eq!(split_signed_input(b""), Ok((false, &b""[..])));
+        for input in [&b""[..], b"-"] {
+            assert_eq!(parse_signed_decimal(input, 2), Err(Error::InvalidValueLength));
+            assert_eq!(encoded_decimal_implied_len(input, 2, 4, true), Err(Error::InvalidValueLength));
+        }
 
         assert_eq!(parse_signed_decimal(b"12", 2), Ok((false, &b"12"[..])));
         assert_eq!(parse_signed_decimal(b"-12", 2), Ok((true, &b"12"[..])));
