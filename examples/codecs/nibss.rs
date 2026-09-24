@@ -1,30 +1,13 @@
 use compact_str::CompactString;
-use finfmt::primitive::validation::validate_upper_hex_even;
-use finfmt::{Alphanum, Ascii, AsciiLength, Check, Error, Field, Fixed, Numeric, PadLeft, SignPrefix};
+use finfmt::primitive::validation::validate_bytes;
+use finfmt::{Alphanum, Ascii, AsciiLength, Check, Error, Field, Fixed, Numeric, PadLeft, SignPrefix, UpperHexEven};
 use serde::{Deserialize, Serialize};
 
-#[cold]
-const fn cold_path() {}
-
-pub struct UpperHexEven<const MIN: usize, const MAX: usize>;
-impl<const MIN: usize, const MAX: usize> Check for UpperHexEven<MIN, MAX> {
-    fn validate(input: &[u8]) -> Result<usize, Error> {
-        validate_upper_hex_even(input, MIN, MAX)
-    }
-}
-
+/// NIBSS Track 2 data uses `D` as well as `=` as the separator.
 pub struct Track2Nibss<const MIN: usize, const MAX: usize>;
 impl<const MIN: usize, const MAX: usize> Check for Track2Nibss<MIN, MAX> {
     fn validate(input: &[u8]) -> Result<usize, Error> {
-        if input.len() < MIN || input.len() > MAX {
-            cold_path();
-            return Err(Error::InvalidValueLength);
-        }
-        if !input.iter().all(|b| matches!(b, b'0'..=b'9' | b'=' | b'D')) {
-            cold_path();
-            return Err(Error::Invalid);
-        }
-        Ok(input.len())
+        validate_bytes(input, MIN, MAX, |b| matches!(b, b'0'..=b'9' | b'=' | b'D'))
     }
 }
 

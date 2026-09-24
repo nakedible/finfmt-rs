@@ -1,7 +1,7 @@
 use crate::Error;
 use crate::primitive::validation::{
     validate_alpha, validate_alphanum, validate_ascii, validate_ascii_printable, validate_bcd_bytes, validate_bcdz, validate_byte_length,
-    validate_ebcdic_037_ascii, validate_ebcdic_1142_text, validate_ebcdic_printable, validate_hex, validate_hex_even,
+    validate_bytes, validate_ebcdic_037_ascii, validate_ebcdic_1142_text, validate_ebcdic_printable, validate_hex, validate_hex_even,
     validate_iso8859_1_str, validate_lower_hex, validate_lower_hex_even, validate_numeric, validate_range, validate_track2_chars,
     validate_upper_alpha, validate_upper_alphanum, validate_upper_ascii_printable, validate_upper_hex, validate_upper_hex_even,
 };
@@ -119,4 +119,9 @@ pub fn validate_ebcdic_printable_1_99(input: &[u8]) -> Result<usize, Error> {
 #[inline(never)]
 pub fn validate_range_i64_0_9999(value: i64) -> Result<(), Error> {
     validate_range(value, 0..=9999)
+}
+
+#[inline(never)]
+pub fn validate_bytes_track2_d_1_37(input: &[u8]) -> Result<usize, Error> {
+    validate_bytes(input, 1, 37, |b| matches!(b, b'0'..=b'9' | b'=' | b'D'))
 }

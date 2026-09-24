@@ -81,6 +81,9 @@ fn bench_specialty(suite: &mut Suite) {
     suite.group("specialty", |group| {
         quick(group);
         group.bench("validate_bcdz_1_99", |b| b.iter(|| black_box(validate_bcdz_1_99(black_box(BCDZ)))));
+        group.bench("validate_bytes_track2_d_1_37", |b| {
+            b.iter(|| black_box(validate_bytes_track2_d_1_37(black_box(TRACK2))))
+        });
         group.bench("validate_track2_chars_1_37", |b| {
             b.iter(|| black_box(validate_track2_chars_1_37(black_box(TRACK2))))
         });

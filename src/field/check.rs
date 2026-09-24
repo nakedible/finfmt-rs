@@ -17,6 +17,9 @@ use crate::primitive::validation::{
 ///
 /// Checks marked "wire bytes" validate encoded bytes rather than a value; use
 /// them inside `DecodeCheck` after the step that produces those bytes.
+///
+/// A custom check can be one line with
+/// [`validate_bytes`](crate::primitive::validation::validate_bytes).
 pub trait Check {
     fn validate(input: &[u8]) -> Result<usize, Error>;
 }

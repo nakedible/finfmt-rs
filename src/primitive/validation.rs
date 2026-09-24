@@ -11,12 +11,34 @@ use crate::Error;
 use crate::primitive::ebcdic::{EBCDIC_037_TO_ASCII, encode_ebcdic_1142_char};
 use crate::utils::cold_path;
 
+/// Validate that every byte satisfies `predicate` and that the byte count is
+/// within `minlen..=maxlen`, returning the byte count. Content errors return
+/// `Invalid` and take precedence over length errors (`InvalidValueLength`).
+///
+/// This is the building block of the byte-class validators, and the simplest
+/// way to write a custom [`Check`](crate::Check):
+///
+/// ```
+/// use finfmt::primitive::validation::validate_bytes;
+/// use finfmt::{Check, Error};
+///
+/// /// Track 2 characters, accepting `D` as well as `=` as the separator.
+/// pub struct Track2D<const MIN: usize, const MAX: usize>;
+/// impl<const MIN: usize, const MAX: usize> Check for Track2D<MIN, MAX> {
+///     fn validate(input: &[u8]) -> Result<usize, Error> {
+///         validate_bytes(input, MIN, MAX, |b| matches!(b, b'0'..=b'9' | b'=' | b'D'))
+///     }
+/// }
+///
+/// assert_eq!(Track2D::<1, 37>::validate(b"4000D2512"), Ok(9));
+/// assert_eq!(Track2D::<1, 37>::validate(b"4000X"), Err(Error::Invalid));
+/// ```
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-fn validate_bytes(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize, pred: impl Fn(&u8) -> bool) -> Result<usize, Error> {
+pub fn validate_bytes(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize, predicate: impl Fn(&u8) -> bool) -> Result<usize, Error> {
     debug_assert!(minlen <= maxlen, "minlen must be <= maxlen");
     let input = input.as_ref();
-    if !input.iter().all(pred) {
+    if !input.iter().all(predicate) {
         cold_path();
         return Err(Error::Invalid);
     }
