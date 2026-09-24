@@ -379,7 +379,9 @@ pub fn decode_overpunch_digit(input: u8) -> Result<(bool, u8), Error> {
 }
 
 /// Decode a packed-decimal sign or EBCDIC overpunch zone: A/C/E/F are
-/// positive and B/D are negative.
+/// positive and B/D are negative. This is the set IBM COBOL accepts under
+/// `NUMPROC(NOPFD)`; encoders always write the preferred C, D or F:
+/// <https://www.ibm.com/docs/en/cobol-zos/6.3.0?topic=options-numproc>
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_packed_sign(input: u8) -> Result<bool, Error> {

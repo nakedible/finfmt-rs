@@ -76,7 +76,7 @@ pub fn decode_nibble_int_fixed<F: NibbleAlphabet>(input: &mut &[u8], len: usize)
     const WORD_DIGITS: usize = WORD_BYTES * 2;
 
     let bytes = take_bytes(input, len)?;
-    validate_nibble_int_fixed::<F>(bytes, len)?;
+    validate_nibbles::<F>(bytes)?;
     let tail_len = len.min(WORD_DIGITS);
     let (prefix, tail) = bytes.split_at(len - tail_len);
     if prefix.iter().any(|&byte| F::NIBBLES[byte as usize] != 0) {
