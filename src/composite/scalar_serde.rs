@@ -661,7 +661,7 @@ mod tests {
     use core::fmt;
 
     use super::*;
-    use crate::{Ascii, Binary, Ebcdic037, Field, Fixed, Identity, PadRight, Rest, TruncateBytes};
+    use crate::{Ascii, Binary, Ebcdic037, Field, Fixed, Identity, PadRight, Rest, Truncate};
 
     type A4 = Field<Ascii<4, 4>, Fixed<4>>;
     type Text = Field<Binary<0, 64>, Rest>;
@@ -706,8 +706,8 @@ mod tests {
         type Temp4 = Field<Ascii<4, 4>, Fixed<4>, crate::chain!(Identity, PadRight<4>)>;
         assert_eq!(encode_display::<Temp4>(&value, 4, 8), Ok(b"ABCD".to_vec()));
         assert_eq!(encode_display::<Temp4>(&value, 4, 7), Err(Error::BufferOverflow));
-        type Cut = TruncateBytes<Field<Binary<1, 1>, Fixed<1>>, 1>;
-        assert_eq!(encode_display::<Cut>(&"é", 1, 2), Err(Error::Invalid));
+        type Cut = Truncate<Field<Binary<1, 1>, Fixed<1>>, 1>;
+        assert_eq!(encode_display::<Cut>(&"é", 1, 2), Err(Error::InvalidValueLength));
     }
 
     #[test]

@@ -78,6 +78,15 @@ fn bench_decode_bytes(suite: &mut Suite) {
 fn bench_truncate_str(suite: &mut Suite) {
     suite.group("truncate_str", |group| {
         quick(group);
+        group.bench("truncate_str_left_8_ascii", |b| {
+            b.iter(|| black_box(truncate_str_left_8(black_box("123456789ABC"))))
+        });
+        group.bench("truncate_str_right_8_ascii", |b| {
+            b.iter(|| black_box(truncate_str_right_8(black_box("123456789ABC"))))
+        });
+        group.bench("truncate_str_left_8_latin", |b| {
+            b.iter(|| black_box(truncate_str_left_8(black_box("ÆØÅæøåÆØÅæøå"))))
+        });
         group.bench("encode_truncated_ascii_4", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 4];

@@ -1,28 +1,29 @@
 use core::marker::PhantomData;
 
-use crate::primitive::text::{truncate_bytes, truncate_str_bytes};
+use crate::primitive::text::{truncate_bytes, truncate_str};
 use crate::{Error, ScalarFmt};
 
-/// Explicitly retain at most `MAX_LEN` semantic bytes before inner validation,
-/// length prediction and encoding. Keeps the left edge, or the right edge when
+/// Explicitly cut a value to at most `MAX_LEN` before inner validation, length
+/// prediction and encoding. Keeps the left end, or the right end when
 /// `KEEP_RIGHT` is true; padding and framing remain the inner format's job.
 ///
-/// String inputs use the same byte limit and return `Invalid` if the cut splits
-/// a UTF-8 character. Byte inputs may contain any bytes accepted by `F` after
-/// truncation. Discarded bytes are not validated.
+/// `MAX_LEN` is in the field's length unit. String values are cut by characters
+/// and never split a character; wire text is single-byte, so a character is one
+/// wire byte. Byte values are cut by bytes. Discarded input is not validated.
 ///
 /// Typed numeric methods delegate directly to `F`, without truncation. All
 /// decoding methods also delegate, including their borrowing and scratch behavior.
 ///
-/// This format writes `ABCD` for `ABCDE`, and rejects inputs shorter than four bytes:
+/// This format writes `ABCD` for `ABCDE`, and rejects inputs shorter than four
+/// characters:
 ///
 /// ```
-/// use finfmt::{Ascii, Field, Fixed, TruncateBytes};
-/// type Name = TruncateBytes<Field<Ascii<4, 4>, Fixed<4>>, 4>;
+/// use finfmt::{Ascii, Field, Fixed, Truncate};
+/// type Name = Truncate<Field<Ascii<4, 4>, Fixed<4>>, 4>;
 /// ```
-pub struct TruncateBytes<F, const MAX_LEN: usize, const KEEP_RIGHT: bool = false>(PhantomData<F>);
+pub struct Truncate<F, const MAX_LEN: usize, const KEEP_RIGHT: bool = false>(PhantomData<F>);
 
-impl<F: ScalarFmt, const MAX_LEN: usize, const KEEP_RIGHT: bool> ScalarFmt for TruncateBytes<F, MAX_LEN, KEEP_RIGHT> {
+impl<F: ScalarFmt, const MAX_LEN: usize, const KEEP_RIGHT: bool> ScalarFmt for Truncate<F, MAX_LEN, KEEP_RIGHT> {
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
         F::encoded_len(truncate_bytes(input, MAX_LEN, KEEP_RIGHT))
@@ -40,12 +41,12 @@ impl<F: ScalarFmt, const MAX_LEN: usize, const KEEP_RIGHT: bool> ScalarFmt for T
 
     #[inline(always)]
     fn encoded_len_str(input: &str) -> Result<usize, Error> {
-        F::encoded_len_str(truncate_str_bytes(input, MAX_LEN, KEEP_RIGHT)?)
+        F::encoded_len_str(truncate_str(input, MAX_LEN, KEEP_RIGHT))
     }
 
     #[inline(always)]
     fn encode_str(output: &mut &mut [u8], scratch: &mut [u8], input: &str) -> Result<(), Error> {
-        F::encode_str(output, scratch, truncate_str_bytes(input, MAX_LEN, KEEP_RIGHT)?)
+        F::encode_str(output, scratch, truncate_str(input, MAX_LEN, KEEP_RIGHT))
     }
 
     #[inline(always)]
@@ -118,13 +119,13 @@ mod tests {
 
     #[test]
     fn truncation_precedes_validation_and_framing() {
-        assert_eq!(encode::<TruncateBytes<Text, 4>>(b"ABCDE\xFF"), Ok(b"4ABCD".to_vec()));
-        assert_eq!(encode::<TruncateBytes<Text, 4, true>>(b"\xFFABCDE"), Ok(b"4BCDE".to_vec()));
-        assert_eq!(encode::<TruncateBytes<Text, 4>>(b"\xFFABCDE"), Err(Error::Invalid));
-        assert_eq!(encode::<TruncateBytes<Text, 4>>(b"AB"), Ok(b"2AB".to_vec()));
-        assert_eq!(encode::<TruncateBytes<Text, 0>>(b"\xFF"), Ok(b"0".to_vec()));
-        assert_eq!(encode::<TruncateBytes<Text, { usize::MAX }>>(b"ABC"), Ok(b"3ABC".to_vec()));
-        type Exact = TruncateBytes<Field<Ascii<4, 4>, Fixed<4>>, 4>;
+        assert_eq!(encode::<Truncate<Text, 4>>(b"ABCDE\xFF"), Ok(b"4ABCD".to_vec()));
+        assert_eq!(encode::<Truncate<Text, 4, true>>(b"\xFFABCDE"), Ok(b"4BCDE".to_vec()));
+        assert_eq!(encode::<Truncate<Text, 4>>(b"\xFFABCDE"), Err(Error::Invalid));
+        assert_eq!(encode::<Truncate<Text, 4>>(b"AB"), Ok(b"2AB".to_vec()));
+        assert_eq!(encode::<Truncate<Text, 0>>(b"\xFF"), Ok(b"0".to_vec()));
+        assert_eq!(encode::<Truncate<Text, { usize::MAX }>>(b"ABC"), Ok(b"3ABC".to_vec()));
+        type Exact = Truncate<Field<Ascii<4, 4>, Fixed<4>>, 4>;
         assert_eq!(Exact::encoded_len(b"AB"), Err(Error::InvalidValueLength));
         assert_eq!(encode::<Exact>(b"AB"), Err(Error::InvalidValueLength));
         assert_eq!(encode::<Exact>(b"ABCDE"), Ok(b"ABCD".to_vec()));
@@ -140,13 +141,13 @@ mod tests {
         let mut input = wire.as_slice();
         let mut scratch = [0xAA; 12];
         let mut space = scratch.as_mut_slice();
-        let value = TruncateBytes::<Text, 4>::decode(&mut input, &mut space).unwrap();
+        let value = Truncate::<Text, 4>::decode(&mut input, &mut space).unwrap();
         assert_eq!(value, b"ABCDE");
         assert_eq!(value.as_ptr(), wire[1..].as_ptr());
         assert_eq!(input, b"!");
         assert_eq!(space.len(), 12);
 
-        type Converted = TruncateBytes<Field<Ascii<0, 8>, AsciiLength<1>, Ebcdic037>, 4>;
+        type Converted = Truncate<Field<Ascii<0, 8>, AsciiLength<1>, Ebcdic037>, 4>;
         let scratch_start = space.as_ptr();
         let mut input = &b"5\xC1\xC2\xC3\xC4\xC5!"[..];
         let value = Converted::decode(&mut input, &mut space).unwrap();
@@ -179,21 +180,18 @@ mod tests {
     }
 
     #[test]
-    fn strings_preserve_specialization_and_reject_split_characters() {
-        type Left = TruncateBytes<StringOnly, 2>;
-        type Right = TruncateBytes<StringOnly, 2, true>;
-        assert_eq!(Left::encoded_len_str("éX"), Ok(2));
-        assert_eq!(Right::encoded_len_str("Xé"), Ok(2));
-        assert_eq!(Left::encoded_len_str("Xé"), Err(Error::Invalid));
-        assert_eq!(Right::encoded_len_str("éX"), Err(Error::Invalid));
-        let mut output = [0xAA; 4];
+    fn strings_preserve_specialization_and_count_characters() {
+        type Left = Truncate<StringOnly, 2>;
+        type Right = Truncate<StringOnly, 2, true>;
+        assert_eq!(Left::encoded_len_str("éXY"), Ok(3));
+        assert_eq!(Right::encoded_len_str("XYé"), Ok(3));
+        assert_eq!(Left::encoded_len_str("Xé€"), Ok(3));
+        let mut output = [0xAA; 8];
         let mut out = output.as_mut_slice();
-        assert_eq!(Left::encode_str(&mut out, &mut [][..], "Xé"), Err(Error::Invalid));
-        assert_eq!(out, &[0xAA; 4]);
-        Left::encode_str(&mut out, &mut [][..], "éX").unwrap();
-        Right::encode_str(&mut out, &mut [][..], "Xé").unwrap();
+        Left::encode_str(&mut out, &mut [][..], "éXY").unwrap();
+        Right::encode_str(&mut out, &mut [][..], "XYé€").unwrap();
         assert!(out.is_empty());
-        assert_eq!(output, *"éé".as_bytes());
+        assert_eq!(output, *"éXé€".as_bytes());
         let mut input = "ABCDE".as_bytes();
         assert_eq!(Left::decode_str(&mut input, &mut &mut [][..]), Ok("ABCDE"));
         assert!(input.is_empty());
@@ -201,8 +199,8 @@ mod tests {
 
     #[test]
     fn typed_numbers_delegate_without_truncation_or_scratch() {
-        type Unsigned = TruncateBytes<FixedBinaryBe<1>, 0>;
-        type Signed = TruncateBytes<FixedSignedBinaryBe<1>, 0>;
+        type Unsigned = Truncate<FixedBinaryBe<1>, 0>;
+        type Signed = Truncate<FixedSignedBinaryBe<1>, 0>;
         assert_eq!(Unsigned::encoded_len_u64(255), Ok(1));
         assert_eq!(Unsigned::encoded_len_usize(255), Ok(1));
         assert_eq!(Signed::encoded_len_i64(-128), Ok(1));
@@ -226,8 +224,8 @@ mod tests {
             type Inner = Field<Binary<0, 8>, AsciiLength<1>>;
             let count = input.len().min(8);
             for (actual, expected) in [
-                (encode::<TruncateBytes<Inner, 8>>(&input), &input[..count]),
-                (encode::<TruncateBytes<Inner, 8, true>>(&input), &input[input.len() - count..]),
+                (encode::<Truncate<Inner, 8>>(&input), &input[..count]),
+                (encode::<Truncate<Inner, 8, true>>(&input), &input[input.len() - count..]),
             ] {
                 let wire = actual.unwrap();
                 proptest::prop_assert_eq!(wire[0], b'0' + count as u8);

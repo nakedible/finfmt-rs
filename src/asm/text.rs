@@ -1,5 +1,5 @@
 use crate::Error;
-use crate::primitive::text::{decode_padded, encode_padded, truncate_bytes};
+use crate::primitive::text::{decode_padded, encode_padded, truncate_bytes, truncate_str};
 
 #[inline(never)]
 pub fn encode_padded_right_8_space<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
@@ -37,9 +37,19 @@ pub fn truncate_bytes_right_8(input: &[u8]) -> &[u8] {
 }
 
 #[inline(never)]
+pub fn truncate_str_left_8(input: &str) -> &str {
+    truncate_str(input, 8, false)
+}
+
+#[inline(never)]
+pub fn truncate_str_right_8(input: &str) -> &str {
+    truncate_str(input, 8, true)
+}
+
+#[inline(never)]
 pub fn encode_truncated_ascii_4(output: &mut &mut [u8], input: &str) -> Result<(), Error> {
-    use crate::{Ascii, Field, Fixed, ScalarFmt, TruncateBytes};
-    TruncateBytes::<Field<Ascii<4, 4>, Fixed<4>>, 4>::encode_str(output, &mut [][..], input)
+    use crate::{Ascii, Field, Fixed, ScalarFmt, Truncate};
+    Truncate::<Field<Ascii<4, 4>, Fixed<4>>, 4>::encode_str(output, &mut [][..], input)
 }
 
 #[inline(never)]

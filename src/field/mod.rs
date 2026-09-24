@@ -37,4 +37,4 @@ pub use numeric::{
 };
 pub use step::{Chain, DecodeCheck, Step};
 pub use text::{Identity, PadLeft, PadLeftEven, PadRight, PadRightEven};
-pub use truncate::TruncateBytes;
+pub use truncate::Truncate;

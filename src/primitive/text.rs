@@ -3,7 +3,6 @@ use no_panic::no_panic;
 
 use crate::Error;
 use crate::primitive::bytes::reserve_bytes;
-use crate::utils::cold_path;
 
 /// Write `input` followed by `fill` bytes up to `pad_to` bytes, or the fill
 /// first when `pad_left` is true. Advances output and returns the written area.
@@ -70,20 +69,26 @@ pub fn truncate_bytes(input: &[u8], max_len: usize, keep_right: bool) -> &[u8] {
     if keep_right { &input[input.len() - len..] } else { &input[..len] }
 }
 
-/// Apply the same byte limit to text, rejecting a cut inside a UTF-8 character.
+/// Retain at most `max_chars` characters from the left, or from the right when
+/// `keep_right` is true. Never splits a character. Returns a borrowed slice
+/// without copying. Wire text is single-byte, so one character is one wire byte.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub(crate) fn truncate_str_bytes(input: &str, max_len: usize, keep_right: bool) -> Result<&str, Error> {
-    let len = truncate_bytes(input.as_bytes(), max_len, keep_right).len();
-    let retained = if keep_right {
-        input.get(input.len() - len..)
+pub fn truncate_str(input: &str, max_chars: usize, keep_right: bool) -> &str {
+    // A string never has more characters than bytes.
+    if input.len() <= max_chars {
+        return input;
+    }
+    let cut = if keep_right {
+        match max_chars.checked_sub(1) {
+            Some(skip) => input.char_indices().nth_back(skip).map_or(0, |(index, _)| index),
+            None => input.len(),
+        }
     } else {
-        input.get(..len)
+        input.char_indices().nth(max_chars).map_or(input.len(), |(index, _)| index)
     };
-    retained.ok_or_else(|| {
-        cold_path();
-        Error::Invalid
-    })
+    let retained = if keep_right { input.get(cut..) } else { input.get(..cut) };
+    retained.unwrap_or(input)
 }
 
 #[cfg(test)]
@@ -92,18 +97,16 @@ mod tests {
     use crate::primitive::bytes::take_bytes;
 
     #[test]
-    fn text_truncation_uses_byte_boundaries() {
+    fn text_truncation_counts_characters() {
         for input in ["", "ABC", "é", "Aé€🦀Z"] {
-            for max_len in (0..=input.len() + 1).chain([usize::MAX]) {
-                for keep_right in [false, true] {
-                    let bytes = truncate_bytes(input.as_bytes(), max_len, keep_right);
-                    let expected = str::from_utf8(bytes).map_err(|_| Error::Invalid);
-                    let actual = truncate_str_bytes(input, max_len, keep_right);
-                    assert_eq!(actual, expected);
-                    if let Ok(actual) = actual {
-                        assert_eq!(actual.as_ptr(), bytes.as_ptr());
-                    }
-                }
+            let chars: Vec<char> = input.chars().collect();
+            for max_chars in (0..=chars.len() + 1).chain([usize::MAX]) {
+                let count = chars.len().min(max_chars);
+                let left: String = chars[..count].iter().collect();
+                let right: String = chars[chars.len() - count..].iter().collect();
+                assert_eq!(truncate_str(input, max_chars, false), left);
+                assert_eq!(truncate_str(input, max_chars, true), right);
+                assert_eq!(truncate_str(input, max_chars, false).as_ptr(), input.as_ptr());
             }
         }
     }
@@ -242,6 +245,14 @@ mod proptests {
     use super::*;
 
     proptest! {
+        #[test]
+        fn text_truncation_matches_char_slices(input in "\\PC{0,24}", max_chars in 0usize..32, keep_right in any::<bool>()) {
+            let chars: Vec<char> = input.chars().collect();
+            let count = chars.len().min(max_chars);
+            let kept = if keep_right { &chars[chars.len() - count..] } else { &chars[..count] };
+            prop_assert_eq!(truncate_str(&input, max_chars, keep_right), kept.iter().collect::<String>());
+        }
+
         #[test]
         fn encode_output_length(
             input in proptest::collection::vec(any::<u8>(), 0..50),
