@@ -150,6 +150,9 @@ pub(super) fn encode_unknown_tlv_from_tag(output: &mut &mut [u8], tag: &[u8], va
     Ok(())
 }
 
+/// Frame the next entry, first skipping `00` padding when allowed. EMV 4.4 Book 3
+/// Annex B: "Before, between, or after TLV-coded data objects, '00' bytes
+/// without any meaning may occur".
 #[doc(hidden)]
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]

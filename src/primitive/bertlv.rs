@@ -1,3 +1,19 @@
+//! BER-TLV tags and definite lengths as used by EMV (EMV 4.4 Book 3, Annex B),
+//! which applies the BER rules of ITU-T X.690 with two relaxations that
+//! decoding accepts:
+//!
+//! - Long-form lengths need not be minimal (`81 05`, `82 00 05`). X.690
+//!   8.1.3.5 leaves this to the sender; only DER requires the minimum.
+//!   Encoding always writes the minimal form.
+//! - Two-byte tags may carry tag numbers below 31 (`9F02`). X.690 8.1.2.2
+//!   requires the one-byte form for those, but EMV defines such tags. The tag
+//!   number must still be nonzero (EMV Table 40, X.690 8.1.2.4.2), so `1F 00`
+//!   and `1F 80` are rejected.
+//!
+//! Supported ranges are limits of this library, not aliases: tags up to
+//! [`MAX_BER_TAG_BYTES`] (EMV uses one or two bytes) and values up to
+//! [`MAX_BER_VALUE_LEN`] bytes (EMV uses one to three length bytes).
+
 #[cfg(all(not(debug_assertions), feature = "no-panic"))]
 use no_panic::no_panic;
 
