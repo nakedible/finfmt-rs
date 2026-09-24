@@ -34,11 +34,15 @@ pub fn split_signed_input(input: &[u8]) -> Result<(bool, &[u8]), Error> {
     Ok((negative, digits))
 }
 
+/// Split an optional leading `-` from decimal digits and validate them. Negative
+/// zero is reported as positive.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn parse_signed_decimal(input: &[u8], max_digits: usize) -> Result<(bool, &[u8]), Error> {
     let (negative, digits) = split_signed_input(input)?;
     validate_numeric(digits, 1, max_digits)?;
+    // Zero is positive in canonical encodings, so "-0" encodes like "0".
+    let negative = negative && !is_filled(digits, b'0');
     Ok((negative, digits))
 }
 
@@ -756,6 +760,7 @@ mod tests {
         assert_eq!(parse_signed_decimal(b"-12", 2), Ok((true, &b"12"[..])));
         assert_eq!(parse_signed_decimal(b"-123", 2), Err(Error::InvalidValueLength));
         assert_eq!(parse_signed_decimal(b"+12", 2), Err(Error::Invalid));
+        assert_eq!(parse_signed_decimal(b"-00", 2), Ok((false, &b"00"[..])));
 
         assert_eq!(encoded_decimal_implied_len(b"123.45", 2, 5, false), Ok(5));
         assert_eq!(encoded_decimal_implied_len(b"-0.05", 2, 5, true), Ok(2));
@@ -1031,6 +1036,7 @@ mod tests {
         assert_eq!(encode_signed_ebcdic_ascii::<2>(b"-7"), Ok([0xF0, 0xD7]));
         assert_eq!(encode_signed_ebcdic_ascii::<3>(b"12"), Ok([0xF0, 0xF1, 0xC2]));
         assert_eq!(encode_signed_ebcdic_ascii::<1>(b"0"), Ok([0xC0]));
+        assert_eq!(encode_signed_ebcdic_ascii::<2>(b"-0"), Ok([0xF0, 0xC0]));
         assert_eq!(decode_signed_ebcdic_ascii::<2>(b"\xF0\xD7"), Ok(b"-7".to_vec()));
         assert_eq!(decode_signed_ebcdic_ascii::<3>(b"\xF0\xF1\xC2"), Ok(b"12".to_vec()));
         assert_eq!(decode_signed_ebcdic_ascii::<3>(b"\xF0\xF0\xC0"), Ok(b"0".to_vec()));
@@ -1076,6 +1082,7 @@ mod tests {
         assert_eq!(encode_signed_packed_ascii::<2>(b"-7"), Ok([0x00, 0x7D]));
         assert_eq!(encode_signed_packed_ascii::<2>(b"12"), Ok([0x01, 0x2C]));
         assert_eq!(encode_signed_packed_ascii::<1>(b"0"), Ok([0x0C]));
+        assert_eq!(encode_signed_packed_ascii::<2>(b"-00"), Ok([0x00, 0x0C]));
         assert_eq!(decode_signed_packed_ascii::<2>(b"\x00\x7D"), Ok(b"-7".to_vec()));
         assert_eq!(decode_signed_packed_ascii::<2>(b"\x00\x0D"), Ok(b"0".to_vec()));
         assert_eq!(decode_signed_packed_ascii::<2>(b"\x01\x2B"), Ok(b"-12".to_vec()));
