@@ -45,18 +45,28 @@ fn bench_bitmap(suite: &mut Suite) {
         group.bench("decode_bitmap_binary_fixed2", |b| {
             b.iter(|| black_box(decode_bitmap_binary_fixed2(&mut black_box([0; 16].as_slice()), &mut [])))
         });
-        group.bench("encode_bitmap_binary_half_word", |b| {
+        group.bench("encode_bitmap_binary_bits32", |b| {
             let bitmap = Bitmap::new();
             b.iter(|| {
                 let mut output = [0; 4];
-                let _ = encode_bitmap_binary_half_word(&mut output.as_mut_slice(), &mut [], black_box(&bitmap));
+                let _ = encode_bitmap_binary_bits32(&mut output.as_mut_slice(), &mut [], black_box(&bitmap));
                 black_box(output)
             })
         });
-        group.bench("decode_bitmap_binary_half_word", |b| {
-            b.iter(|| black_box(decode_bitmap_binary_half_word(&mut black_box([0; 4].as_slice()), &mut [])))
+        group.bench("decode_bitmap_binary_bits32", |b| {
+            b.iter(|| black_box(decode_bitmap_binary_bits32(&mut black_box([0; 4].as_slice()), &mut [])))
         });
         let bitmap = sample_bitmap();
+        group.bench("bitmap_get", move |b| {
+            b.iter(|| black_box(bitmap_get(black_box(&bitmap), black_box(73))))
+        });
+        group.bench("bitmap_set", move |b| {
+            let mut bitmap = bitmap;
+            b.iter(|| {
+                bitmap_set(&mut bitmap, black_box(73), black_box(true));
+                black_box(bitmap)
+            })
+        });
         group.bench("bitmap_get_field2", move |b| {
             b.iter(|| black_box(bitmap_get_field2(black_box(&bitmap))))
         });
@@ -98,6 +108,40 @@ fn bench_bitmap(suite: &mut Suite) {
                 let mut input = black_box(&input[..]);
                 let mut scratch = [0u8; 16];
                 black_box(decode_bitmap_binary_iso2(&mut input, &mut scratch))
+            })
+        });
+
+        let mut bitmap3 = sample_bitmap();
+        bitmap3.set(130, true);
+        group.bench("encode_bitmap_binary_iso3", move |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 24];
+                let _ = encode_bitmap_binary_iso3(&mut buf.as_mut_slice(), &mut [], black_box(&bitmap3));
+                black_box(buf)
+            })
+        });
+        group.bench("decode_bitmap_binary_iso3", move |b| {
+            let mut input = [0u8; 24];
+            let mut out = input.as_mut_slice();
+            encode_bitmap_binary_iso3(&mut out, &mut [], &bitmap3).unwrap();
+            b.iter(|| black_box(decode_bitmap_binary_iso3(&mut black_box(&input[..]), &mut [])))
+        });
+
+        let bitmap = sample_bitmap();
+        group.bench("encode_bitmap_ebcdic_hex_iso2", move |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 32];
+                let _ = encode_bitmap_ebcdic_hex_iso2(&mut buf.as_mut_slice(), &mut [], black_box(&bitmap));
+                black_box(buf)
+            })
+        });
+        group.bench("decode_bitmap_ebcdic_hex_iso2", move |b| {
+            let mut input = [0u8; 32];
+            let mut out = input.as_mut_slice();
+            encode_bitmap_ebcdic_hex_iso2(&mut out, &mut [], &bitmap).unwrap();
+            b.iter(|| {
+                let mut scratch = [0u8; 8];
+                black_box(decode_bitmap_ebcdic_hex_iso2(&mut black_box(&input[..]), &mut scratch))
             })
         });
 

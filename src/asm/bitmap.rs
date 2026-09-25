@@ -4,6 +4,7 @@ use crate::{Error, Identity, UnpackNibbles};
 const ISO_2_LAYOUT: BitmapLayout = BitmapLayout::iso(1, 2);
 type BitmapBinaryWord = Identity;
 type BitmapAsciiHexWord = UnpackNibbles<crate::primitive::nibble::UpperHexDigits>;
+type BitmapEbcdicHexWord = UnpackNibbles<crate::primitive::nibble::EbcdicHexDigits>;
 
 #[inline(never)]
 pub fn encode_bitmap_binary_iso2(output: &mut &mut [u8], scratch: &mut [u8], bitmap: &Bitmap) -> Result<(), Error> {
@@ -46,13 +47,43 @@ pub fn decode_bitmap_binary_fixed2(input: &mut &[u8], scratch: &mut [u8]) -> Res
 }
 
 #[inline(never)]
-pub fn encode_bitmap_binary_half_word(output: &mut &mut [u8], scratch: &mut [u8], bitmap: &Bitmap) -> Result<(), Error> {
+pub fn encode_bitmap_binary_bits32(output: &mut &mut [u8], scratch: &mut [u8], bitmap: &Bitmap) -> Result<(), Error> {
     encode_bitmap::<BitmapBinaryWord>(output, scratch, bitmap, BitmapLayout::bits(32))
 }
 
 #[inline(never)]
-pub fn decode_bitmap_binary_half_word(input: &mut &[u8], scratch: &mut [u8]) -> Result<Bitmap, Error> {
+pub fn decode_bitmap_binary_bits32(input: &mut &[u8], scratch: &mut [u8]) -> Result<Bitmap, Error> {
     decode_bitmap::<BitmapBinaryWord>(input, scratch, BitmapLayout::bits(32))
+}
+
+#[inline(never)]
+pub fn encode_bitmap_binary_iso3(output: &mut &mut [u8], scratch: &mut [u8], bitmap: &Bitmap) -> Result<(), Error> {
+    encode_bitmap::<BitmapBinaryWord>(output, scratch, bitmap, BitmapLayout::iso(1, 3))
+}
+
+#[inline(never)]
+pub fn decode_bitmap_binary_iso3(input: &mut &[u8], scratch: &mut [u8]) -> Result<Bitmap, Error> {
+    decode_bitmap::<BitmapBinaryWord>(input, scratch, BitmapLayout::iso(1, 3))
+}
+
+#[inline(never)]
+pub fn encode_bitmap_ebcdic_hex_iso2(output: &mut &mut [u8], scratch: &mut [u8], bitmap: &Bitmap) -> Result<(), Error> {
+    encode_bitmap::<BitmapEbcdicHexWord>(output, scratch, bitmap, ISO_2_LAYOUT)
+}
+
+#[inline(never)]
+pub fn decode_bitmap_ebcdic_hex_iso2(input: &mut &[u8], scratch: &mut [u8]) -> Result<Bitmap, Error> {
+    decode_bitmap::<BitmapEbcdicHexWord>(input, scratch, ISO_2_LAYOUT)
+}
+
+#[inline(never)]
+pub fn bitmap_get(bitmap: &Bitmap, id: u16) -> bool {
+    bitmap.get(id)
+}
+
+#[inline(never)]
+pub fn bitmap_set(bitmap: &mut Bitmap, id: u16, value: bool) {
+    bitmap.set(id, value);
 }
 
 #[inline(never)]

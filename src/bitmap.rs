@@ -290,6 +290,20 @@ mod tests {
     }
 
     #[test]
+    fn test_bitmap_ebcdic_hex_roundtrip() {
+        type EbcdicHexWord = crate::UnpackNibbles<crate::primitive::nibble::EbcdicHexDigits>;
+        let mut bitmap = Bitmap::new();
+        bitmap.set(3, true);
+        bitmap.set(66, true);
+        let (wire, used) = roundtrip::<EbcdicHexWord>(&bitmap, BitmapLayout::iso(1, 2), 16);
+        // A0... and 40...: fields 1 (the flag) and 3, then field 66.
+        let mut expected = [0xF0; 32];
+        expected[0] = 0xC1;
+        expected[16] = 0xF4;
+        assert_eq!(&wire[..used], &expected);
+    }
+
+    #[test]
     fn test_bitmap_ascii_hex_rejects_invalid_digits() {
         let layout = BitmapLayout::fixed(1);
         let mut input = b"000000000000000G".as_slice();
@@ -659,7 +673,52 @@ mod proptests {
 
     use super::*;
 
+    fn layouts() -> impl Strategy<Value = BitmapLayout> {
+        prop_oneof![
+            (1u8..=8).prop_map(|bytes| BitmapLayout::bits(bytes * 8)),
+            (1u8..=3).prop_map(BitmapLayout::fixed),
+            (1u8..=3, 0u8..3).prop_map(|(max, min)| BitmapLayout::iso(1 + min % max, max)),
+            Just(BitmapLayout::new(1, 3, [Some(1), Some(2)])),
+            Just(BitmapLayout::new(1, 3, [Some(1), None])),
+        ]
+    }
+
+    /// A bitmap that fits the layout: fields within its words and width, no flags.
+    fn fitting(layout: BitmapLayout, words: [u64; 3]) -> Bitmap {
+        let mut bitmap = Bitmap::new();
+        let width_mask = u64::MAX.checked_shl(64 - u32::from(layout.word_bits)).unwrap_or(0);
+        for (index, &word) in words.iter().enumerate().take(usize::from(layout.max_words)) {
+            bitmap.set_word(index, word & width_mask);
+        }
+        for flag in layout.word_flags.into_iter().take(usize::from(layout.max_words) - 1).flatten() {
+            bitmap.set(u16::from(flag), false);
+        }
+        bitmap
+    }
+
     proptest! {
+        #[test]
+        fn bitmap_words_roundtrip_in_every_representation(layout in layouts(), words in any::<[u64; 3]>()) {
+            let bitmap = fitting(layout, words);
+            super::tests::roundtrip::<crate::Identity>(&bitmap, layout, 0);
+            super::tests::roundtrip::<crate::UnpackNibbles<crate::primitive::nibble::UpperHexDigits>>(&bitmap, layout, 16);
+            super::tests::roundtrip::<crate::UnpackNibbles<crate::primitive::nibble::EbcdicHexDigits>>(&bitmap, layout, 16);
+        }
+
+        #[test]
+        fn bitmap_decoding_arbitrary_input_is_stable(layout in layouts(), wire in prop::collection::vec(any::<u8>(), 0..32)) {
+            // Never panics; whatever decodes re-encodes to something that decodes the same.
+            let mut input = wire.as_slice();
+            if let Ok(bitmap) = decode_bitmap::<crate::Identity>(&mut input, &mut [], layout) {
+                let mut output = [0; 24];
+                let mut out = output.as_mut_slice();
+                encode_bitmap::<crate::Identity>(&mut out, &mut [], &bitmap, layout).unwrap();
+                let used = 24 - out.len();
+                prop_assert!(used <= wire.len() - input.len());
+                prop_assert_eq!(decode_bitmap::<crate::Identity>(&mut &output[..used], &mut [], layout), Ok(bitmap));
+            }
+        }
+
         #[test]
         fn bitmap_layout_roundtrip(
             max_words in 1u8..=3,
