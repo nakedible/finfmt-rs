@@ -124,7 +124,7 @@ impl CompositeError {
     /// Stored path segments; when truncated, omitted segments precede the last entry.
     #[inline(always)]
     pub fn path(&self) -> &[PathSegment] {
-        &self.path[..self.path_len as usize]
+        self.path.get(..usize::from(self.path_len)).unwrap_or(&self.path)
     }
 }
 
