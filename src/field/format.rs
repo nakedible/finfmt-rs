@@ -6,8 +6,11 @@ use crate::utils::{cold_path, length_as_invalid, prefix_overflow};
 use crate::{Error, ScalarFmt};
 
 /// Compose a semantic check, length framing, and byte transform.
-/// `C` and `S` must agree on the logical length unit and input repertoire.
+/// `C` and `S` must agree on the value unit and input repertoire.
 pub struct Field<C, L, S = super::Identity>(PhantomData<(C, L, S)>);
+/// A [`Field`] in a fixed area of `PAD_TO` bytes. `L` frames only the used
+/// part and the rest is `FILL` bytes, which decoding checks. For formats whose
+/// length states the unpadded data inside a fixed-size field.
 pub struct PaddedField<C, L, S, const PAD_TO: usize, const FILL: u8>(PhantomData<(C, L, S)>);
 
 impl<C: Check, L: LengthSpec<S>, S: Step> Field<C, L, S> {

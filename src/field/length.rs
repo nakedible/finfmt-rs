@@ -34,10 +34,16 @@ pub struct DecodePlan {
     pub count: Option<usize>,
 }
 
+/// How a field states its extent. `count` is the field's width in value
+/// units, the units the step chain starts from, including width padding;
+/// `wire_len` is the step chain's output in bytes. Each spec frames with one
+/// of them.
 pub trait LengthSpec<S: Step> {
     /// Encoded prefix size, excluding the payload, after checking length limits.
     fn encoded_len(count: usize, wire_len: usize) -> Result<usize, Error>;
+    /// Write the prefix, if any.
     fn encode(output: &mut &mut [u8], scratch: &mut [u8], count: usize, wire_len: usize) -> Result<(), Error>;
+    /// Read the prefix, if any, and say how many payload bytes follow.
     fn decode_plan<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error>;
 }
 
@@ -68,6 +74,8 @@ impl<const N: usize, S: Step> LengthSpec<S> for Fixed<N> {
     }
 }
 
+/// A prefix in format `F` counting the value units that follow, including
+/// width padding. Steps convert the count to bytes.
 pub struct Length<F>(PhantomData<F>);
 
 impl<F: ScalarFmt, S: Step> LengthSpec<S> for Length<F> {
@@ -92,6 +100,7 @@ impl<F: ScalarFmt, S: Step> LengthSpec<S> for Length<F> {
     }
 }
 
+/// A prefix in format `F` counting the bytes that follow.
 pub struct WireLength<F>(PhantomData<F>);
 
 impl<F: ScalarFmt, S: Step> LengthSpec<S> for WireLength<F> {
@@ -112,6 +121,8 @@ impl<F: ScalarFmt, S: Step> LengthSpec<S> for WireLength<F> {
     }
 }
 
+/// `N` ASCII decimal digits counting the value units that follow, as in
+/// [`Length`].
 pub struct AsciiLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for AsciiLength<N> {
@@ -136,6 +147,7 @@ impl<const N: usize, S: Step> LengthSpec<S> for AsciiLength<N> {
     }
 }
 
+/// `N` ASCII decimal digits counting the bytes that follow.
 pub struct AsciiWireLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for AsciiWireLength<N> {
@@ -156,6 +168,8 @@ impl<const N: usize, S: Step> LengthSpec<S> for AsciiWireLength<N> {
     }
 }
 
+/// `N` EBCDIC decimal digits counting the value units that follow, as in
+/// [`Length`].
 pub struct EbcdicLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for EbcdicLength<N> {
@@ -180,6 +194,8 @@ impl<const N: usize, S: Step> LengthSpec<S> for EbcdicLength<N> {
     }
 }
 
+/// [`EbcdicLength`] that encodes zero as `N` EBCDIC blanks and decodes
+/// either blanks or zero digits as zero.
 pub struct BlankableEbcdicLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for BlankableEbcdicLength<N> {
@@ -204,6 +220,7 @@ impl<const N: usize, S: Step> LengthSpec<S> for BlankableEbcdicLength<N> {
     }
 }
 
+/// `N` EBCDIC decimal digits counting the bytes that follow.
 pub struct EbcdicWireLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for EbcdicWireLength<N> {
