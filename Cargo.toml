@@ -78,6 +78,10 @@ name = "validation"
 harness = false
 required-features = ["asm-inspect"]
 
+[[bench]]
+name = "message"
+harness = false
+
 [profile.release]
 lto = true
 codegen-units = 1
