@@ -402,16 +402,13 @@ pub fn packed_decimal_max_digits(bytes_len: usize) -> usize {
     bytes_len.saturating_mul(2).saturating_sub(1)
 }
 
-/// Encode prevalidated ASCII digits, checking they fit the zoned output width.
+/// Encode prevalidated ASCII digits that fit the zoned output width.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub(crate) fn encode_zoned_decimal_digits(output: &mut &mut [u8], digits: &[u8], negative: bool, len: usize) -> Result<(), Error> {
     let output = reserve_bytes(output, len)?;
     debug_assert!(validate_numeric(digits, 1, usize::MAX).is_ok());
-    if digits.len() > output.len() {
-        cold_path();
-        return Err(Error::InvalidValueLength);
-    }
+    debug_assert!(digits.len() <= output.len(), "digits must fit the zoned width");
     if let ([body @ .., last], [out @ .., last_out]) = (digits, output) {
         let pad = out.len().saturating_sub(body.len());
         let (padding, target) = out.split_at_mut(pad);
@@ -424,7 +421,7 @@ pub(crate) fn encode_zoned_decimal_digits(output: &mut &mut [u8], digits: &[u8],
     Ok(())
 }
 
-/// Encode prevalidated ASCII digits, checking they fit the packed output width.
+/// Encode prevalidated ASCII digits that fit the packed output width.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub(crate) fn encode_packed_decimal_digits(
@@ -436,10 +433,10 @@ pub(crate) fn encode_packed_decimal_digits(
 ) -> Result<(), Error> {
     let output = reserve_bytes(output, len)?;
     debug_assert!(validate_numeric(digits, 1, usize::MAX).is_ok());
-    if digits.len() > output.len().saturating_mul(2).saturating_sub(1) {
-        cold_path();
-        return Err(Error::InvalidValueLength);
-    }
+    debug_assert!(
+        digits.len() <= packed_decimal_max_digits(output.len()),
+        "digits must fit the packed width"
+    );
     let used_bytes = digits.len() / 2 + 1;
     let prefix_bytes = output.len().saturating_sub(used_bytes);
     let (prefix, tail) = output.split_at_mut(prefix_bytes);
