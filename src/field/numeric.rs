@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 use core::mem::size_of;
 
-use crate::primitive::bytes::{copy_bytes, take_bytes};
+use crate::primitive::bytes::{copy_bytes, is_filled, take_bytes};
 use crate::primitive::decimal::{
     decode_implied_decimal_digits, decode_negative_prefix, decode_packed_decimal_fixed, decode_packed_decimal_signed_fixed, decode_sign,
     decode_zoned_decimal_signed_fixed, encode_implied_decimal, encode_negative_prefix, encode_packed_decimal_digits,
@@ -27,11 +27,14 @@ use crate::{Error, ScalarFmt};
 /// let _ = SignPrefix::<FixedBinaryBe<1>, b'X', b'X'>::encoded_len(b"1");
 /// ```
 ///
-/// Typed numeric methods
-/// delegate the magnitude to the inner numeric codec.
+/// On the text path the inner format holds the decimal digits of the
+/// magnitude; binary inner formats go through the typed `i64` methods. A second
+/// sign is `Invalid`, and zero always carries the positive sign. Typed numeric
+/// methods delegate the magnitude to the inner numeric codec.
 pub struct SignPrefix<F, const POS: u8 = b'C', const NEG: u8 = b'D'>(PhantomData<F>);
 /// Prefix negative magnitudes only. The inner format represents a nonnegative
-/// magnitude, and `NEG` must never start one of its encodings. Arbitrary binary
+/// magnitude as decimal digits, and `NEG` must never start one of its encodings.
+/// A second sign is `Invalid`, and zero is never prefixed. Arbitrary binary
 /// formats may violate this; use an explicit `SignPrefix` for those formats.
 pub struct MinusPrefix<F, const NEG: u8 = b'-'>(PhantomData<F>);
 pub struct FixedNibbleInt<F, const N: usize>(PhantomData<F>);
@@ -101,6 +104,28 @@ impl<const N: usize> FixedDecimalCodec for FixedSignedZonedEbcdic<N> {
     }
 }
 
+/// Split the sign from a sign wrapper's text value. A second sign is `Invalid`,
+/// and negative zero (digits all `0`) is reported as positive.
+#[inline(always)]
+fn split_wrapped_sign(input: &[u8]) -> Result<(bool, &[u8]), Error> {
+    let (negative, digits) = split_signed_input(input)?;
+    if digits.first() == Some(&b'-') {
+        cold_path();
+        return Err(Error::Invalid);
+    }
+    Ok((negative && !is_filled(digits, b'0'), digits))
+}
+
+/// Restore the minus on decoded magnitude digits, leaving zero positive.
+#[inline(always)]
+fn join_wrapped_sign<'a>(scratch: &mut &'a mut [u8], negative: bool, digits: &'a [u8]) -> Result<&'a [u8], Error> {
+    debug_assert!(digits.first() != Some(&b'-'), "sign wrappers need an unsigned inner format");
+    if !negative || is_filled(digits, b'0') {
+        return Ok(digits);
+    }
+    prepend_minus(scratch, digits).map(|buf| &*buf)
+}
+
 impl<F, const POS: u8, const NEG: u8> SignPrefix<F, POS, NEG> {
     #[inline(always)]
     fn assert_distinct_signs() {
@@ -112,17 +137,17 @@ impl<F: ScalarFmt, const POS: u8, const NEG: u8> ScalarFmt for SignPrefix<F, POS
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
         Self::assert_distinct_signs();
-        let (_, digits) = split_signed_input(input)?;
+        let (_, digits) = split_wrapped_sign(input)?;
         F::encoded_len(digits)?.checked_add(1).ok_or_else(|| {
             cold_path();
-            Error::Invalid
+            Error::BufferOverflow
         })
     }
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
         Self::assert_distinct_signs();
-        let (negative, digits) = split_signed_input(input)?;
+        let (negative, digits) = split_wrapped_sign(input)?;
         encode_sign(output, negative, POS, NEG)?;
         F::encode(output, scratch, digits)
     }
@@ -132,10 +157,7 @@ impl<F: ScalarFmt, const POS: u8, const NEG: u8> ScalarFmt for SignPrefix<F, POS
         Self::assert_distinct_signs();
         let negative = decode_sign(input, POS, NEG)?;
         let digits = F::decode(input, scratch)?;
-        if !negative {
-            return Ok(digits);
-        }
-        prepend_minus(scratch, digits).map(|buf| &*buf)
+        join_wrapped_sign(scratch, negative, digits)
     }
 
     #[inline(always)]
@@ -143,7 +165,7 @@ impl<F: ScalarFmt, const POS: u8, const NEG: u8> ScalarFmt for SignPrefix<F, POS
         Self::assert_distinct_signs();
         F::encoded_len_u64(input)?.checked_add(1).ok_or_else(|| {
             cold_path();
-            Error::Invalid
+            Error::BufferOverflow
         })
     }
 
@@ -169,7 +191,7 @@ impl<F: ScalarFmt, const POS: u8, const NEG: u8> ScalarFmt for SignPrefix<F, POS
         Self::assert_distinct_signs();
         F::encoded_len_u64(input.unsigned_abs())?.checked_add(1).ok_or_else(|| {
             cold_path();
-            Error::Invalid
+            Error::BufferOverflow
         })
     }
 
@@ -192,17 +214,17 @@ impl<F: ScalarFmt, const POS: u8, const NEG: u8> ScalarFmt for SignPrefix<F, POS
 impl<F: ScalarFmt, const NEG: u8> ScalarFmt for MinusPrefix<F, NEG> {
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
-        let (negative, digits) = split_signed_input(input)?;
+        let (negative, digits) = split_wrapped_sign(input)?;
         let sign_len = usize::from(negative);
         F::encoded_len(digits)?.checked_add(sign_len).ok_or_else(|| {
             cold_path();
-            Error::Invalid
+            Error::BufferOverflow
         })
     }
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
-        let (negative, digits) = split_signed_input(input)?;
+        let (negative, digits) = split_wrapped_sign(input)?;
         encode_negative_prefix(output, negative, NEG)?;
         F::encode(output, scratch, digits)
     }
@@ -211,10 +233,7 @@ impl<F: ScalarFmt, const NEG: u8> ScalarFmt for MinusPrefix<F, NEG> {
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
         let negative = decode_negative_prefix(input, NEG);
         let digits = F::decode(input, scratch)?;
-        if !negative {
-            return Ok(digits);
-        }
-        prepend_minus(scratch, digits).map(|buf| &*buf)
+        join_wrapped_sign(scratch, negative, digits)
     }
 
     #[inline(always)]
@@ -241,7 +260,7 @@ impl<F: ScalarFmt, const NEG: u8> ScalarFmt for MinusPrefix<F, NEG> {
         let sign_len = usize::from(input < 0);
         F::encoded_len_u64(input.unsigned_abs())?.checked_add(sign_len).ok_or_else(|| {
             cold_path();
-            Error::Invalid
+            Error::BufferOverflow
         })
     }
 
@@ -804,6 +823,26 @@ mod tests {
     }
 
     #[test]
+    fn sign_wrappers_reject_double_signs_and_keep_zero_positive() {
+        type Digits = crate::Field<crate::Numeric<1, 3>, crate::Fixed<3>, crate::PadLeft<3, b'0'>>;
+        type Cd = SignPrefix<Digits>;
+        type Minus = MinusPrefix<Digits>;
+        type SignedInner = SignPrefix<FixedSignedComp3<2>>;
+        assert_eq!(encode_padded::<Cd>(b"-0"), Ok(b"C000".to_vec()));
+        assert_eq!(encode_padded::<Cd>(b"-000"), Ok(b"C000".to_vec()));
+        assert_eq!(encode_padded::<Minus>(b"-0"), Ok(b"000".to_vec()));
+        assert_eq!(encode_padded::<Cd>(b"-12"), Ok(b"D012".to_vec()));
+        assert_eq!(Cd::encoded_len(b"--1"), Err(Error::Invalid));
+        assert_eq!(Cd::encoded_len(b"-"), Err(Error::InvalidValueLength));
+        assert_eq!(Cd::encoded_len(b"-000"), Ok(4));
+        assert_eq!(encode_padded::<SignedInner>(b"--1"), Err(Error::Invalid));
+        assert_eq!(encode_padded::<Minus>(b"--1"), Err(Error::Invalid));
+        assert_eq!(decode_padded::<Cd>(b"D000"), Ok(b"000".to_vec()));
+        assert_eq!(decode_padded::<Minus>(b"-000"), Ok(b"000".to_vec()));
+        assert_eq!(decode_padded::<Cd>(b"D012"), Ok(b"-012".to_vec()));
+    }
+
+    #[test]
     #[cfg(debug_assertions)]
     fn composition_mistakes_are_debug_assertions() {
         // Formats with impossible const parameters fail to build instead; see
@@ -858,8 +897,8 @@ mod tests {
     fn sign_decode_supports_caller_scratch() {
         scratch_decode::<SignPrefix<FixedBinaryBe<1>>>(b"C1", 0, Ok(b"1"), 0);
         scratch_decode::<MinusPrefix<FixedBinaryBe<1>>>(b"1", 0, Ok(b"1"), 0);
-        scratch_decode::<SignPrefix<FixedBinaryBe<1>>>(b"D0", 2, Ok(b"-0"), 2);
-        scratch_decode::<MinusPrefix<FixedBinaryBe<1>>>(b"-0", 2, Ok(b"-0"), 2);
+        scratch_decode::<SignPrefix<FixedBinaryBe<1>>>(b"D1", 2, Ok(b"-1"), 2);
+        scratch_decode::<MinusPrefix<FixedBinaryBe<1>>>(b"-1", 2, Ok(b"-1"), 2);
         scratch_decode::<SignPrefix<FixedBinaryBe<20>>>(b"D12345678901234567890", 21, Ok(b"-12345678901234567890"), 21);
         scratch_decode::<MinusPrefix<FixedBinaryBe<20>>>(b"-12345678901234567890", 21, Ok(b"-12345678901234567890"), 21);
         scratch_decode::<SignPrefix<FixedBinaryBe<20>>>(b"D12345678901234567890", 128, Ok(b"-12345678901234567890"), 21);
