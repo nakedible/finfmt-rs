@@ -27,7 +27,7 @@ impl<F: LengthSpec<Identity>> ListCountPolicy for F {
     #[inline(always)]
     fn decode_count<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Option<usize>, Error> {
         let plan = F::decode_plan(input, scratch)?;
-        Ok(Some(plan.semantic_len.unwrap_or(plan.wire_len)))
+        Ok(Some(plan.count.unwrap_or(plan.wire_len)))
     }
 }
 
@@ -304,7 +304,7 @@ where
     #[inline(always)]
     fn decode<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError> {
         let plan = Len::decode_plan(input, scratch)?;
-        let logical_len = plan.semantic_len.unwrap_or(plan.wire_len);
+        let logical_len = plan.count.unwrap_or(plan.wire_len);
         let area_len = fixed_area_lens(Slot::WIRE_LEN, MAX)?;
         if logical_len > area_len || !logical_len.is_multiple_of(Slot::WIRE_LEN) {
             crate::utils::cold_path();

@@ -15,7 +15,7 @@ type BitmapAsciiHexWord =
     finfmt::Field<finfmt::Binary<8, 8>, finfmt::Fixed<8>, finfmt::UnpackNibbles<finfmt::primitive::nibble::UpperHexDigits>>;
 
 pub type FixedAsciiNumeric<const N: usize> = Field<Numeric<N, N>, Fixed<N>>;
-pub type FixedAsciiAmount<const N: usize> = Field<Numeric<1, N>, Fixed<N>, PadLeft<N, b'0'>>;
+pub type FixedAsciiAmount<const N: usize> = Field<Numeric<1, N>, Fixed<N>, PadLeft<N, b'0', 1>>;
 pub type FixedAsciiAlphanum<const N: usize> = Field<Alphanum<N, N>, Fixed<N>>;
 pub type FixedAscii<const N: usize> = Field<Ascii<N, N>, Fixed<N>>;
 pub type FixedAsciiHex<const N: usize> = Field<UpperHexEven<N, N>, Fixed<N>>;
@@ -26,7 +26,7 @@ pub type LllvarAsciiNumeric<const MIN: usize, const MAX: usize> = Field<Numeric<
 pub type LllvarAscii<const MAX: usize> = Field<Ascii<0, MAX>, AsciiLength<3>>;
 pub type LlllvarAscii<const MAX: usize> = Field<Ascii<0, MAX>, AsciiLength<4>>;
 pub type LllvarAsciiHex<const MAX: usize> = Field<UpperHexEven<0, MAX>, AsciiLength<3>>;
-pub type FixedSignedAsciiAmount8 = SignPrefix<Field<Numeric<1, 8>, Fixed<8>, PadLeft<8, b'0'>>>;
+pub type FixedSignedAsciiAmount8 = SignPrefix<Field<Numeric<1, 8>, Fixed<8>, PadLeft<8, b'0', 1>>>;
 pub type LlvarTrack2 = Field<Track2Nibss<1, 37>, AsciiLength<2>>;
 
 /// NIBSS primary authorization request `0100`.

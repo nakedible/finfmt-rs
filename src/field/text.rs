@@ -19,13 +19,7 @@ impl Step for Identity {
     }
 
     #[inline(always)]
-    fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
-        if let Some(semantic_len) = semantic_len
-            && input.len() != semantic_len
-        {
-            cold_path();
-            return Err(Error::Invalid);
-        }
+    fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], _count: Option<usize>) -> Result<&'a [u8], Error> {
         Ok(input)
     }
 
@@ -35,6 +29,10 @@ impl Step for Identity {
     }
 }
 
+/// Width padding: pad the value with `CHAR` on the right to `PAD_TO` value units;
+/// longer values pass through. Decoding strips `CHAR` from the right but keeps
+/// at least `MIN_LEN` units, so `PadLeft<4, b'0', 1>` decodes `"0000"` as `"0"`.
+/// A length prefix counts the padded width.
 pub struct PadRight<const PAD_TO: usize, const CHAR: u8 = b' ', const MIN_LEN: usize = 0>;
 
 impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadRight<PAD_TO, CHAR, MIN_LEN> {
@@ -44,16 +42,27 @@ impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadRigh
     }
 
     #[inline(always)]
+    fn counted_len(input_len: usize) -> Result<usize, Error> {
+        Ok(input_len.max(PAD_TO))
+    }
+
+    #[inline(always)]
+    fn encoded_len_of_count(count: usize) -> Result<usize, Error> {
+        Ok(count)
+    }
+
+    #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         encode_padded(output, input, PAD_TO, false, CHAR)
     }
 
     #[inline(always)]
-    fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
-        Ok(decode_padded(input, semantic_len.unwrap_or(MIN_LEN).max(MIN_LEN), false, CHAR))
+    fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], _count: Option<usize>) -> Result<&'a [u8], Error> {
+        Ok(decode_padded(input, MIN_LEN, false, CHAR))
     }
 }
 
+/// Width padding on the left; otherwise as [`PadRight`].
 pub struct PadLeft<const PAD_TO: usize, const CHAR: u8 = b' ', const MIN_LEN: usize = 0>;
 
 impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadLeft<PAD_TO, CHAR, MIN_LEN> {
@@ -63,13 +72,23 @@ impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadLeft
     }
 
     #[inline(always)]
+    fn counted_len(input_len: usize) -> Result<usize, Error> {
+        Ok(input_len.max(PAD_TO))
+    }
+
+    #[inline(always)]
+    fn encoded_len_of_count(count: usize) -> Result<usize, Error> {
+        Ok(count)
+    }
+
+    #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         encode_padded(output, input, PAD_TO, true, CHAR)
     }
 
     #[inline(always)]
-    fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
-        Ok(decode_padded(input, semantic_len.unwrap_or(MIN_LEN).max(MIN_LEN), true, CHAR))
+    fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], _count: Option<usize>) -> Result<&'a [u8], Error> {
+        Ok(decode_padded(input, MIN_LEN, true, CHAR))
     }
 }
 
@@ -93,8 +112,8 @@ impl<const CHAR: u8> Step for PadRightEven<CHAR> {
     }
 
     #[inline(always)]
-    fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
-        decode_padded_even(input, semantic_len, false, CHAR)
+    fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], count: Option<usize>) -> Result<&'a [u8], Error> {
+        decode_padded_even(input, count, false, CHAR)
     }
 }
 
@@ -117,7 +136,7 @@ impl<const CHAR: u8> Step for PadLeftEven<CHAR> {
     }
 
     #[inline(always)]
-    fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
-        decode_padded_even(input, semantic_len, true, CHAR)
+    fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], count: Option<usize>) -> Result<&'a [u8], Error> {
+        decode_padded_even(input, count, true, CHAR)
     }
 }

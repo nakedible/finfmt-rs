@@ -19,8 +19,8 @@ fn decimal_prefix_len(value: usize, width: usize) -> Result<usize, Error> {
 }
 
 #[inline(always)]
-fn declared_wire_len<S: Step>(semantic_len: usize) -> Result<usize, Error> {
-    S::encoded_len(semantic_len).map_err(|error| {
+fn declared_wire_len<S: Step>(count: usize) -> Result<usize, Error> {
+    S::encoded_len_of_count(count).map_err(|error| {
         cold_path();
         if error == Error::BufferOverflow { Error::Invalid } else { error }
     })
@@ -30,42 +30,41 @@ fn declared_wire_len<S: Step>(semantic_len: usize) -> Result<usize, Error> {
 pub struct DecodePlan {
     /// Number of payload bytes to take from the input.
     pub wire_len: usize,
-    /// Exact decoded logical length, when carried by the framing.
-    pub semantic_len: Option<usize>,
+    /// The field's width in value units, when the framing carries it: from a
+    /// prefix that counts value units, or from `Fixed<N>`.
+    pub count: Option<usize>,
 }
 
 pub trait LengthSpec<S: Step> {
     /// Encoded prefix size, excluding the payload, after checking length limits.
-    fn encoded_len(semantic_len: usize, wire_len: usize) -> Result<usize, Error>;
-    fn encode(output: &mut &mut [u8], scratch: &mut [u8], semantic_len: usize, wire_len: usize) -> Result<(), Error>;
+    fn encoded_len(count: usize, wire_len: usize) -> Result<usize, Error>;
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], count: usize, wire_len: usize) -> Result<(), Error>;
     fn decode_plan<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error>;
 }
 
-/// Fix the decoded logical length to `N` and frame `S::encoded_len(N)` bytes.
-/// The check and transform must agree with that width, including any explicitly
-/// selected padding or truncation. Encoding checks this invariant in debug builds.
+/// A field `N` value units wide, however it is encoded: `Fixed<19>` holds 19
+/// digits, packed or not. Shorter values need width padding to reach `N`;
+/// decoding strips that padding down to the padding step's minimum length.
+/// Encoding checks in debug builds that the value fills the width.
 pub struct Fixed<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for Fixed<N> {
     #[inline(always)]
-    fn encoded_len(_semantic_len: usize, wire_len: usize) -> Result<usize, Error> {
-        debug_assert_eq!(S::encoded_len(N), Ok(wire_len));
+    fn encoded_len(_count: usize, wire_len: usize) -> Result<usize, Error> {
+        debug_assert_eq!(S::encoded_len_of_count(N), Ok(wire_len));
         Ok(0)
     }
 
     #[inline(always)]
-    fn encode(_output: &mut &mut [u8], _scratch: &mut [u8], semantic_len: usize, wire_len: usize) -> Result<(), Error> {
-        <Self as LengthSpec<S>>::encoded_len(semantic_len, wire_len)?;
+    fn encode(_output: &mut &mut [u8], _scratch: &mut [u8], count: usize, wire_len: usize) -> Result<(), Error> {
+        <Self as LengthSpec<S>>::encoded_len(count, wire_len)?;
         Ok(())
     }
 
     #[inline(always)]
     fn decode_plan<'a>(_input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
-        let wire_len = S::encoded_len(N)?;
-        Ok(DecodePlan {
-            wire_len,
-            semantic_len: Some(N),
-        })
+        let wire_len = S::encoded_len_of_count(N)?;
+        Ok(DecodePlan { wire_len, count: Some(N) })
     }
 }
 
@@ -75,23 +74,20 @@ pub struct WireFixed<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for WireFixed<N> {
     #[inline(always)]
-    fn encoded_len(_semantic_len: usize, wire_len: usize) -> Result<usize, Error> {
+    fn encoded_len(_count: usize, wire_len: usize) -> Result<usize, Error> {
         debug_assert_eq!(wire_len, N);
         Ok(0)
     }
 
     #[inline(always)]
-    fn encode(_output: &mut &mut [u8], _scratch: &mut [u8], semantic_len: usize, wire_len: usize) -> Result<(), Error> {
-        <Self as LengthSpec<S>>::encoded_len(semantic_len, wire_len)?;
+    fn encode(_output: &mut &mut [u8], _scratch: &mut [u8], count: usize, wire_len: usize) -> Result<(), Error> {
+        <Self as LengthSpec<S>>::encoded_len(count, wire_len)?;
         Ok(())
     }
 
     #[inline(always)]
     fn decode_plan<'a>(_input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
-        Ok(DecodePlan {
-            wire_len: N,
-            semantic_len: None,
-        })
+        Ok(DecodePlan { wire_len: N, count: None })
     }
 }
 
@@ -99,22 +95,22 @@ pub struct Length<F>(PhantomData<F>);
 
 impl<F: ScalarFmt, S: Step> LengthSpec<S> for Length<F> {
     #[inline(always)]
-    fn encoded_len(semantic_len: usize, _wire_len: usize) -> Result<usize, Error> {
-        F::encoded_len_usize(semantic_len)
+    fn encoded_len(count: usize, _wire_len: usize) -> Result<usize, Error> {
+        F::encoded_len_usize(count)
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], scratch: &mut [u8], semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
-        F::encode_usize(output, scratch, semantic_len)
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], count: usize, _wire_len: usize) -> Result<(), Error> {
+        F::encode_usize(output, scratch, count)
     }
 
     #[inline(always)]
     fn decode_plan<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
-        let semantic_len = F::decode_usize(input, scratch)?;
-        let wire_len = declared_wire_len::<S>(semantic_len)?;
+        let count = F::decode_usize(input, scratch)?;
+        let wire_len = declared_wire_len::<S>(count)?;
         Ok(DecodePlan {
             wire_len,
-            semantic_len: Some(semantic_len),
+            count: Some(count),
         })
     }
 }
@@ -123,22 +119,19 @@ pub struct WireLength<F>(PhantomData<F>);
 
 impl<F: ScalarFmt, S: Step> LengthSpec<S> for WireLength<F> {
     #[inline(always)]
-    fn encoded_len(_semantic_len: usize, wire_len: usize) -> Result<usize, Error> {
+    fn encoded_len(_count: usize, wire_len: usize) -> Result<usize, Error> {
         F::encoded_len_usize(wire_len)
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], scratch: &mut [u8], _semantic_len: usize, wire_len: usize) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], _count: usize, wire_len: usize) -> Result<(), Error> {
         F::encode_usize(output, scratch, wire_len)
     }
 
     #[inline(always)]
     fn decode_plan<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
         let wire_len = F::decode_usize(input, scratch)?;
-        Ok(DecodePlan {
-            wire_len,
-            semantic_len: None,
-        })
+        Ok(DecodePlan { wire_len, count: None })
     }
 }
 
@@ -146,22 +139,22 @@ pub struct AsciiLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for AsciiLength<N> {
     #[inline(always)]
-    fn encoded_len(semantic_len: usize, _wire_len: usize) -> Result<usize, Error> {
-        decimal_prefix_len(semantic_len, N)
+    fn encoded_len(count: usize, _wire_len: usize) -> Result<usize, Error> {
+        decimal_prefix_len(count, N)
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
-        encode_ascii_decimal_fixed(output, semantic_len, N)
+    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], count: usize, _wire_len: usize) -> Result<(), Error> {
+        encode_ascii_decimal_fixed(output, count, N)
     }
 
     #[inline(always)]
     fn decode_plan<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
-        let semantic_len = decode_ascii_decimal_fixed(input, N)?;
-        let wire_len = declared_wire_len::<S>(semantic_len)?;
+        let count = decode_ascii_decimal_fixed(input, N)?;
+        let wire_len = declared_wire_len::<S>(count)?;
         Ok(DecodePlan {
             wire_len,
-            semantic_len: Some(semantic_len),
+            count: Some(count),
         })
     }
 }
@@ -170,22 +163,19 @@ pub struct AsciiWireLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for AsciiWireLength<N> {
     #[inline(always)]
-    fn encoded_len(_semantic_len: usize, wire_len: usize) -> Result<usize, Error> {
+    fn encoded_len(_count: usize, wire_len: usize) -> Result<usize, Error> {
         decimal_prefix_len(wire_len, N)
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], _semantic_len: usize, wire_len: usize) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], _count: usize, wire_len: usize) -> Result<(), Error> {
         encode_ascii_decimal_fixed(output, wire_len, N)
     }
 
     #[inline(always)]
     fn decode_plan<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
         let wire_len = decode_ascii_decimal_fixed(input, N)?;
-        Ok(DecodePlan {
-            wire_len,
-            semantic_len: None,
-        })
+        Ok(DecodePlan { wire_len, count: None })
     }
 }
 
@@ -193,22 +183,22 @@ pub struct EbcdicLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for EbcdicLength<N> {
     #[inline(always)]
-    fn encoded_len(semantic_len: usize, _wire_len: usize) -> Result<usize, Error> {
-        decimal_prefix_len(semantic_len, N)
+    fn encoded_len(count: usize, _wire_len: usize) -> Result<usize, Error> {
+        decimal_prefix_len(count, N)
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
-        encode_ebcdic_decimal_fixed(output, semantic_len, N)
+    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], count: usize, _wire_len: usize) -> Result<(), Error> {
+        encode_ebcdic_decimal_fixed(output, count, N)
     }
 
     #[inline(always)]
     fn decode_plan<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
-        let semantic_len = decode_ebcdic_decimal_fixed(input, N)?;
-        let wire_len = declared_wire_len::<S>(semantic_len)?;
+        let count = decode_ebcdic_decimal_fixed(input, N)?;
+        let wire_len = declared_wire_len::<S>(count)?;
         Ok(DecodePlan {
             wire_len,
-            semantic_len: Some(semantic_len),
+            count: Some(count),
         })
     }
 }
@@ -217,26 +207,22 @@ pub struct BlankableEbcdicLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for BlankableEbcdicLength<N> {
     #[inline(always)]
-    fn encoded_len(semantic_len: usize, _wire_len: usize) -> Result<usize, Error> {
-        if semantic_len == 0 {
-            Ok(N)
-        } else {
-            decimal_prefix_len(semantic_len, N)
-        }
+    fn encoded_len(count: usize, _wire_len: usize) -> Result<usize, Error> {
+        if count == 0 { Ok(N) } else { decimal_prefix_len(count, N) }
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
-        encode_ebcdic_decimal_blank_zero_fixed(output, semantic_len, N)
+    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], count: usize, _wire_len: usize) -> Result<(), Error> {
+        encode_ebcdic_decimal_blank_zero_fixed(output, count, N)
     }
 
     #[inline(always)]
     fn decode_plan<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
-        let semantic_len = decode_ebcdic_decimal_blank_zero_fixed(input, N)?;
-        let wire_len = declared_wire_len::<S>(semantic_len)?;
+        let count = decode_ebcdic_decimal_blank_zero_fixed(input, N)?;
+        let wire_len = declared_wire_len::<S>(count)?;
         Ok(DecodePlan {
             wire_len,
-            semantic_len: Some(semantic_len),
+            count: Some(count),
         })
     }
 }
@@ -245,22 +231,19 @@ pub struct EbcdicWireLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for EbcdicWireLength<N> {
     #[inline(always)]
-    fn encoded_len(_semantic_len: usize, wire_len: usize) -> Result<usize, Error> {
+    fn encoded_len(_count: usize, wire_len: usize) -> Result<usize, Error> {
         decimal_prefix_len(wire_len, N)
     }
 
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], _semantic_len: usize, wire_len: usize) -> Result<(), Error> {
+    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], _count: usize, wire_len: usize) -> Result<(), Error> {
         encode_ebcdic_decimal_fixed(output, wire_len, N)
     }
 
     #[inline(always)]
     fn decode_plan<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
         let wire_len = decode_ebcdic_decimal_fixed(input, N)?;
-        Ok(DecodePlan {
-            wire_len,
-            semantic_len: None,
-        })
+        Ok(DecodePlan { wire_len, count: None })
     }
 }
 
@@ -270,22 +253,19 @@ pub struct Rest;
 
 impl<S: Step> LengthSpec<S> for Rest {
     #[inline(always)]
-    fn encoded_len(_semantic_len: usize, _wire_len: usize) -> Result<usize, Error> {
+    fn encoded_len(_count: usize, _wire_len: usize) -> Result<usize, Error> {
         Ok(0)
     }
 
     #[inline(always)]
-    fn encode(_output: &mut &mut [u8], _scratch: &mut [u8], _semantic_len: usize, _wire_len: usize) -> Result<(), Error> {
+    fn encode(_output: &mut &mut [u8], _scratch: &mut [u8], _count: usize, _wire_len: usize) -> Result<(), Error> {
         Ok(())
     }
 
     #[inline(always)]
     fn decode_plan<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
         let wire_len = input.len();
-        Ok(DecodePlan {
-            wire_len,
-            semantic_len: None,
-        })
+        Ok(DecodePlan { wire_len, count: None })
     }
 }
 
@@ -298,12 +278,12 @@ mod tests {
     use crate::field::{Ascii, Binary, Field, FixedBinaryBe, Identity, Numeric, PadLeft, PadRightEven, Step, UnpackNibbles};
     use crate::{Error, ScalarFmt};
 
-    fn encode_length<L: LengthSpec<Identity>>(semantic_len: usize, wire_len: usize) -> Result<Vec<u8>, Error> {
+    fn encode_length<L: LengthSpec<Identity>>(count: usize, wire_len: usize) -> Result<Vec<u8>, Error> {
         let mut output = [0; 32];
         let mut out = output.as_mut_slice();
-        let encoded = L::encode(&mut out, &mut [][..], semantic_len, wire_len);
+        let encoded = L::encode(&mut out, &mut [][..], count, wire_len);
         let written = 32 - out.len();
-        assert_eq!(L::encoded_len(semantic_len, wire_len), encoded.map(|()| written));
+        assert_eq!(L::encoded_len(count, wire_len), encoded.map(|()| written));
         encoded.map(|()| output[..written].to_vec())
     }
 
@@ -312,7 +292,7 @@ mod tests {
         let mut scratch = [];
         let mut scratch_ptr = scratch.as_mut_slice();
         let plan = L::decode_plan(&mut input, &mut scratch_ptr).unwrap();
-        (plan.wire_len, plan.semantic_len)
+        (plan.wire_len, plan.count)
     }
 
     #[test]
@@ -367,7 +347,7 @@ mod tests {
         let mut scratch_ptr = scratch.as_mut_slice();
         let plan = <WireFixed<7> as LengthSpec<Identity>>::decode_plan(&mut input, &mut scratch_ptr).unwrap();
         assert_eq!(plan.wire_len, 7);
-        assert_eq!(plan.semantic_len, None);
+        assert_eq!(plan.count, None);
     }
 
     #[test]

@@ -22,15 +22,33 @@ pub trait Step {
     /// bytes, except `Ebcdic1142`, which uses Unicode scalar values.
     fn encoded_len(input_len: usize) -> Result<usize, Error>;
 
+    /// The field width in value units that a length prefix counts for this
+    /// input length. Width padding counts, so `PadLeft`/`PadRight` return the
+    /// padded width; padding to complete a byte and changes of representation
+    /// do not, so every other step returns its input length.
+    #[inline(always)]
+    fn counted_len(input_len: usize) -> Result<usize, Error> {
+        Ok(input_len)
+    }
+
+    /// Encoded byte count for a field `count` value units wide, where `count`
+    /// already includes any width padding. Width padding therefore passes the
+    /// count through; every other step converts it like `encoded_len`.
+    #[inline(always)]
+    fn encoded_len_of_count(count: usize) -> Result<usize, Error> {
+        Self::encoded_len(count)
+    }
+
     fn encode<'a>(output: &mut &'a mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error>;
 
-    /// Decode an already framed representation. `semantic_len`, when known, is
-    /// the required decoded logical length, not a byte-capacity limit. Padding
-    /// steps preserve at least that much and never discard non-padding data;
-    /// the field composer checks the resulting semantic length.
+    /// Decode an already framed representation. `count`, when known, is the
+    /// field's width in value units at this step, from `Fixed<N>` or a prefix
+    /// that counts value units. Steps that complete a byte with padding use it
+    /// to know whether that padding exists; width padding ignores it and strips
+    /// down to its own minimum length.
     /// Borrow input when possible; otherwise reserve output from `scratch`,
     /// advancing it so later steps can allocate disjoint regions.
-    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error>;
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], count: Option<usize>) -> Result<&'a [u8], Error>;
 
     #[inline(always)]
     fn encode_in_place(_buf: &mut [u8]) -> Result<(), Error> {
@@ -57,6 +75,16 @@ impl<First: Step, Rest: Step> Step for Chain<First, Rest> {
     }
 
     #[inline(always)]
+    fn counted_len(input_len: usize) -> Result<usize, Error> {
+        Rest::counted_len(First::counted_len(input_len)?)
+    }
+
+    #[inline(always)]
+    fn encoded_len_of_count(count: usize) -> Result<usize, Error> {
+        Rest::encoded_len_of_count(First::encoded_len_of_count(count)?)
+    }
+
+    #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         if Rest::ENCODE_IN_PLACE {
             let buf = First::encode(output, scratch, input)?;
@@ -70,13 +98,13 @@ impl<First: Step, Rest: Step> Step for Chain<First, Rest> {
     }
 
     #[inline(always)]
-    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
-        let rest_semantic_len = match semantic_len {
-            Some(semantic_len) => Some(First::encoded_len(semantic_len)?),
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], count: Option<usize>) -> Result<&'a [u8], Error> {
+        let rest_count = match count {
+            Some(count) => Some(First::encoded_len_of_count(count)?),
             None => None,
         };
-        let mid = Rest::decode(input, scratch, rest_semantic_len)?;
-        First::decode(mid, scratch, semantic_len)
+        let mid = Rest::decode(input, scratch, rest_count)?;
+        First::decode(mid, scratch, count)
     }
 
     #[inline(always)]
@@ -95,14 +123,24 @@ impl<S: Step, C: Check> Step for DecodeCheck<S, C> {
     }
 
     #[inline(always)]
+    fn counted_len(input_len: usize) -> Result<usize, Error> {
+        S::counted_len(input_len)
+    }
+
+    #[inline(always)]
+    fn encoded_len_of_count(count: usize) -> Result<usize, Error> {
+        S::encoded_len_of_count(count)
+    }
+
+    #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         S::encode(output, scratch, input)
     }
 
     #[inline(always)]
-    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], count: Option<usize>) -> Result<&'a [u8], Error> {
         C::validate(input).map_err(length_as_invalid)?;
-        S::decode(input, scratch, semantic_len)
+        S::decode(input, scratch, count)
     }
 
     #[inline(always)]
@@ -145,14 +183,6 @@ mod tests {
         }
         assert_eq!(PadRightEven::<b' '>::encoded_len(usize::MAX), Err(Error::BufferOverflow));
         assert_eq!(PadLeftEven::<b'0'>::encoded_len(usize::MAX), Err(Error::BufferOverflow));
-    }
-
-    #[test]
-    fn oversized_unpack_request_is_invalid() {
-        assert_eq!(
-            UnpackNibbles::<HexDigits>::decode(&[], &mut &mut [][..], Some(usize::MAX / 2 + 1)),
-            Err(Error::Invalid)
-        );
     }
 
     #[test]

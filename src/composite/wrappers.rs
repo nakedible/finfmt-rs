@@ -228,7 +228,7 @@ where
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
         let plan = Len::decode_plan(input, scratch)?;
-        let logical_len = plan.semantic_len.unwrap_or(plan.wire_len);
+        let logical_len = plan.count.unwrap_or(plan.wire_len);
         if logical_len < BASE_LEN {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());

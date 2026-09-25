@@ -824,7 +824,7 @@ mod tests {
 
     #[test]
     fn sign_wrappers_reject_double_signs_and_keep_zero_positive() {
-        type Digits = crate::Field<crate::Numeric<1, 3>, crate::Fixed<3>, crate::PadLeft<3, b'0'>>;
+        type Digits = crate::Field<crate::Numeric<1, 3>, crate::Fixed<3>, crate::PadLeft<3, b'0', 1>>;
         type Cd = SignPrefix<Digits>;
         type Minus = MinusPrefix<Digits>;
         type SignedInner = SignPrefix<FixedSignedComp3<2>>;
@@ -837,9 +837,9 @@ mod tests {
         assert_eq!(Cd::encoded_len(b"-000"), Ok(4));
         assert_eq!(encode_padded::<SignedInner>(b"--1"), Err(Error::Invalid));
         assert_eq!(encode_padded::<Minus>(b"--1"), Err(Error::Invalid));
-        assert_eq!(decode_padded::<Cd>(b"D000"), Ok(b"000".to_vec()));
-        assert_eq!(decode_padded::<Minus>(b"-000"), Ok(b"000".to_vec()));
-        assert_eq!(decode_padded::<Cd>(b"D012"), Ok(b"-012".to_vec()));
+        assert_eq!(decode_padded::<Cd>(b"D000"), Ok(b"0".to_vec()));
+        assert_eq!(decode_padded::<Minus>(b"-000"), Ok(b"0".to_vec()));
+        assert_eq!(decode_padded::<Cd>(b"D012"), Ok(b"-12".to_vec()));
     }
 
     #[test]

@@ -21,9 +21,9 @@ impl<F: NibbleAlphabet, const ALIGN_RIGHT: bool, const PADDING: u8> Step for Pac
     }
 
     #[inline(always)]
-    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
-        match semantic_len {
-            Some(semantic_len) => unpack_padded_nibbles::<F>(scratch, input, semantic_len, ALIGN_RIGHT, PADDING).map(|buf| &*buf),
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], count: Option<usize>) -> Result<&'a [u8], Error> {
+        match count {
+            Some(count) => unpack_padded_nibbles::<F>(scratch, input, count, ALIGN_RIGHT, PADDING).map(|buf| &*buf),
             None => unpack_nibbles::<F>(scratch, input).map(|buf| &*buf),
         }
     }
@@ -46,13 +46,7 @@ impl<F: NibbleAlphabet> Step for UnpackNibbles<F> {
     }
 
     #[inline(always)]
-    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
-        if let Some(semantic_len) = semantic_len
-            && semantic_len != input.len() / 2
-        {
-            cold_path();
-            return Err(Error::Invalid);
-        }
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], _count: Option<usize>) -> Result<&'a [u8], Error> {
         pack_nibbles_checked::<F>(scratch, input).map(|buf| &*buf)
     }
 }
@@ -63,11 +57,10 @@ mod tests {
     use crate::primitive::nibble::UpperHexDigits;
 
     #[test]
-    fn unpack_decode_checks_actual_shape_and_requested_length() {
+    fn unpack_decode_checks_actual_shape() {
         for (input, requested, expected) in [
             (&b"AB"[..], None, Ok(&[0xAB][..])),
             (b"AB", Some(1), Ok(&[0xAB][..])),
-            (b"AB", Some(2), Err(Error::Invalid)),
             (b"A", None, Err(Error::Invalid)),
             (b"A", Some(0), Err(Error::Invalid)),
             (b"AG", Some(1), Err(Error::Invalid)),

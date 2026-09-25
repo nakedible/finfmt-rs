@@ -179,7 +179,8 @@ mod tests {
     fn error_kind<T>(result: Result<T, CompositeError>) -> Result<T, Error> {
         result.map_err(|error| error.kind)
     }
-    type AmountFmt = SignPrefix<Field<Numeric<1, 16>, Fixed<16>, crate::chain!(PadLeft<16, b'0'>, crate::PackNibblesRight<BcdzDigits, 0>)>>;
+    type AmountFmt =
+        SignPrefix<Field<Numeric<1, 16>, Fixed<16>, crate::chain!(PadLeft<16, b'0', 1>, crate::PackNibblesRight<BcdzDigits, 0>)>>;
 
     #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     struct FixedTail {
@@ -911,7 +912,7 @@ mod tests {
     }
 
     type A5Padded = Field<Ascii<0, 5>, WireFixed<5>, crate::chain!(crate::PadRight<5, b' '>)>;
-    type CountN2 = Field<Numeric<1, 2>, Fixed<2>, PadLeft<2, b'0'>>;
+    type CountN2 = Field<Numeric<1, 2>, Fixed<2>, PadLeft<2, b'0', 1>>;
     type CountedAsciiListFmt =
         Frame<Field<Binary<7, 19>, AsciiLength<2>>, BoundedList<String, AsciiLength<2>, DirectScalar<A5Padded>, Separator<b'/'>, 3>>;
     type ScalarCountedAsciiListFmt =
@@ -1059,7 +1060,7 @@ mod tests {
                 assert_eq!(output[5], 0xFF);
             }
         }
-        type Compressed = Field<Numeric<1, 4>, WireFixed<2>, crate::chain!(PadLeft<4, b'0'>, crate::PackNibblesRight<BcdzDigits, 0>)>;
+        type Compressed = Field<Numeric<1, 4>, WireFixed<2>, crate::chain!(PadLeft<4, b'0', 1>, crate::PackNibblesRight<BcdzDigits, 0>)>;
         for capacity in 0..=5 {
             let mut output = [0xFF; 3];
             let mut scratch = [0; 5];

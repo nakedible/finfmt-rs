@@ -2,7 +2,6 @@ use crate::primitive::bytes::{copy_bytes, reserve_bytes};
 use crate::primitive::ebcdic::{
     ASCII_TO_EBCDIC_037, EBCDIC_037_TO_ASCII, decode_ebcdic_1142, encode_ebcdic_1142, translate_bytes, translate_bytes_inplace,
 };
-use crate::utils::cold_path;
 use crate::{Error, Step};
 
 /// Permissive conversion between ASCII bytes and their CP037 counterparts.
@@ -36,13 +35,7 @@ impl Step for Ebcdic037 {
     }
 
     #[inline(always)]
-    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
-        if let Some(semantic_len) = semantic_len
-            && input.len() != semantic_len
-        {
-            cold_path();
-            return Err(Error::Invalid);
-        }
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], _count: Option<usize>) -> Result<&'a [u8], Error> {
         let buf = reserve_bytes(scratch, input.len())?;
         translate_bytes(buf, input, &EBCDIC_037_TO_ASCII)?;
         Ok(buf)
@@ -67,13 +60,7 @@ impl Step for Ebcdic1142 {
     }
 
     #[inline(always)]
-    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
-        if let Some(semantic_len) = semantic_len
-            && input.len() != semantic_len
-        {
-            cold_path();
-            return Err(Error::Invalid);
-        }
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], _count: Option<usize>) -> Result<&'a [u8], Error> {
         decode_ebcdic_1142(scratch, input).map(|buf| &*buf)
     }
 }
