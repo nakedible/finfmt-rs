@@ -4,20 +4,17 @@ macro_rules! __finfmt_bitmap_assert_fields {
     ($layout:expr, $word:ty; $($id:literal => $field:ident : $fmt:ty),* $(,)?) => {
         const _: () = {
             let layout: $crate::bitmap::BitmapLayout = $layout;
+            if let Err(message) = layout.validate() {
+                panic!("{}", message);
+            }
             let width = layout.word_bits as usize / 8;
             let max_words = layout.max_words as usize;
             let [second_flag, third_flag] = layout.word_flags;
-            assert!(layout.word_bits > 0 && layout.word_bits <= 64 && layout.word_bits % 8 == 0, "bitmap word width must be a multiple of 8 bits up to 64");
-            assert!(layout.min_words > 0 && layout.min_words <= layout.max_words && layout.max_words <= 3, "invalid bitmap word counts");
-            assert!(width == 8 || max_words == 1, "a narrow bitmap must be a single word");
             let mut flags: [u16; 2] = [0; 2];
             if max_words > 1 && let Some(flag) = second_flag {
-                assert!(flag > 0 && flag <= 64, "a bitmap word flag must be in an earlier word");
                 flags[0] = flag as u16;
             }
             if max_words > 2 && let Some(flag) = third_flag {
-                assert!(flag > 0 && flag <= 128, "a bitmap word flag must be in an earlier word");
-                assert!(flag as u16 != flags[0], "bitmap word flags must be distinct");
                 flags[1] = flag as u16;
             }
             let fields: &[u16] = &[$($id),*];

@@ -233,19 +233,37 @@ mod tests {
     }
 
     #[test]
-    fn test_bitmap_invalid_minimum() {
-        for layout in [BitmapLayout::iso(0, 2), BitmapLayout::iso(3, 2)] {
+    fn test_bitmap_invalid_layouts_are_debug_errors() {
+        let flags = |second, third| BitmapLayout::new(1, 3, [second, third]);
+        for (layout, error) in [
+            (BitmapLayout::iso(0, 2), "word counts"),
+            (BitmapLayout::iso(3, 2), "word counts"),
+            (BitmapLayout::fixed(4), "word counts"),
+            (BitmapLayout::bits(12), "multiple of 8"),
+            (BitmapLayout::bits(72), "multiple of 8"),
+            (
+                BitmapLayout {
+                    max_words: 2,
+                    ..BitmapLayout::bits(32)
+                },
+                "single word",
+            ),
+            (flags(Some(0), None), "second"),
+            (flags(Some(65), None), "second"),
+            (flags(None, Some(129)), "third"),
+            (flags(Some(1), Some(1)), "distinct"),
+        ] {
+            assert!(layout.validate().is_err_and(|message| message.contains(error)), "{layout:?}");
             let encode = std::panic::catch_unwind(|| {
                 encode_bitmap::<BitmapBinaryWord>(&mut [0; 24].as_mut_slice(), &mut [], &Bitmap::new(), layout)
             });
             let decode = std::panic::catch_unwind(|| decode_bitmap::<BitmapBinaryWord>(&mut [0; 24].as_slice(), &mut [], layout));
-            if cfg!(debug_assertions) {
-                assert!(encode.is_err() && decode.is_err());
-            } else {
-                assert_eq!(encode.unwrap(), Err(crate::Error::Internal));
-                assert_eq!(decode.unwrap(), Err(crate::Error::Internal));
-            }
+            assert_eq!(encode.is_err(), cfg!(debug_assertions));
+            assert_eq!(decode.is_err(), cfg!(debug_assertions));
         }
+        // Flags of words beyond max_words are ignored.
+        assert_eq!(BitmapLayout::new(1, 2, [Some(1), Some(1)]).validate(), Ok(()));
+        assert_eq!(BitmapLayout::new(1, 1, [Some(0), Some(200)]).validate(), Ok(()));
     }
 
     /// A binary word step that decodes into `N` scratch bytes.
@@ -288,18 +306,6 @@ mod tests {
         for scratch_len in [8, 128] {
             assert_eq!(roundtrip::<ScratchWord<8>>(&bitmap, BitmapLayout::iso(1, 3), scratch_len).1, 24);
         }
-    }
-
-    #[cfg(debug_assertions)]
-    #[test]
-    #[should_panic(expected = "bitmap max_words out of range")]
-    fn test_bitmap_invalid_layout_debug_asserts() {
-        let bitmap = Bitmap::new();
-        let layout = BitmapLayout::fixed(4);
-        let mut output = [0u8; 32];
-        let mut scratch = [0u8; 8];
-        let mut out = output.as_mut_slice();
-        let _ = encode_bitmap::<BitmapBinaryWord>(&mut out, &mut scratch, &bitmap, layout);
     }
 
     #[cfg(debug_assertions)]

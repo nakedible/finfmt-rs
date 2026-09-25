@@ -68,6 +68,40 @@ impl BitmapLayout {
             ..Self::fixed(1)
         }
     }
+
+    /// Check the layout, returning what is wrong with it. `bitmap_format!`
+    /// asserts this at compile time; the codecs assert it in debug builds.
+    pub const fn validate(self) -> Result<(), &'static str> {
+        if self.min_words == 0 || self.min_words > self.max_words || self.max_words > 3 {
+            return Err("bitmap word counts must satisfy 1 <= min_words <= max_words <= 3");
+        }
+        if self.word_bits == 0 || self.word_bits > 64 || !self.word_bits.is_multiple_of(8) {
+            return Err("bitmap word width must be a multiple of 8 bits up to 64");
+        }
+        if self.word_bits != 64 && self.max_words != 1 {
+            return Err("a narrow bitmap must be a single word");
+        }
+        let [second, third] = self.word_flags;
+        if self.max_words > 1
+            && let Some(flag) = second
+            && (flag == 0 || flag > 64)
+        {
+            return Err("the second bitmap word's flag must be in the first word");
+        }
+        if self.max_words > 2
+            && let Some(flag) = third
+        {
+            if flag == 0 || flag > 128 {
+                return Err("the third bitmap word's flag must be in an earlier word");
+            }
+            if let Some(second) = second
+                && second == flag
+            {
+                return Err("bitmap word flags must be distinct");
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Bitmap {
@@ -142,45 +176,12 @@ impl Bitmap {
     }
 }
 
+/// The layout's word count, after asserting the layout in debug builds. A
+/// malformed layout in release builds is clamped and may encode garbage.
 #[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-fn validate_bitmap_layout(layout: BitmapLayout) -> Result<usize, Error> {
-    debug_assert!(
-        layout.word_bits > 0 && layout.word_bits <= 64 && layout.word_bits.is_multiple_of(8),
-        "bitmap word width must be a multiple of 8 bits up to 64"
-    );
-    let max_words = usize::from(layout.max_words);
-    debug_assert!(max_words > 0 && max_words <= 3, "bitmap max_words out of range");
-    if max_words == 0 || max_words > 3 {
-        cold_path();
-        return Err(Error::Internal);
-    }
-    debug_assert!(
-        layout.min_words > 0 && layout.min_words <= layout.max_words,
-        "bitmap min_words out of range"
-    );
-    if layout.min_words == 0 || layout.min_words > layout.max_words {
-        cold_path();
-        return Err(Error::Internal);
-    }
-
-    debug_assert!(layout.word_bits == 64 || max_words == 1, "a narrow bitmap must be a single word");
-    let mut index = 1usize;
-    while index < max_words {
-        if let Some(flag) = word_flag(layout, index) {
-            debug_assert!(
-                flag > 0 && usize::from(flag) <= index * 64,
-                "a bitmap word flag must be in an earlier word"
-            );
-        }
-        index += 1;
-    }
-    debug_assert!(
-        max_words < 3 || layout.word_flags[0].is_none() || layout.word_flags[0] != layout.word_flags[1],
-        "bitmap word flags must be distinct"
-    );
-
-    Ok(max_words)
+fn max_words(layout: BitmapLayout) -> usize {
+    debug_assert_eq!(layout.validate(), Ok(()), "invalid bitmap layout");
+    usize::from(layout.max_words).min(3)
 }
 
 /// The flag of zero-based word `index`, 1 or 2, if it has one.
@@ -245,11 +246,11 @@ fn decode_bitmap_word<S: Step>(input: &mut &[u8], scratch: &mut [u8], len: usize
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn encode_bitmap<S: Step>(output: &mut &mut [u8], scratch: &mut [u8], bitmap: &Bitmap, layout: BitmapLayout) -> Result<(), Error> {
-    let max_words = validate_bitmap_layout(layout)?;
+    let max_words = max_words(layout);
     debug_assert!(bitmap.highest_word() < max_words, "bitmap contains words outside layout");
     let flags = flag_bits(layout, max_words);
     let mut wire = Bitmap::new();
-    let mut words = usize::from(layout.min_words);
+    let mut words = usize::from(layout.min_words).min(max_words);
     for index in 0..max_words {
         debug_assert_eq!(bitmap.word(index) & flags.word(index), 0, "bitmap sets a word flag");
         let word = bitmap.word(index) & !flags.word(index);
@@ -261,9 +262,11 @@ pub fn encode_bitmap<S: Step>(output: &mut &mut [u8], scratch: &mut [u8], bitmap
     while words < max_words && word_flag(layout, words).is_none() {
         words += 1;
     }
-    for index in 1..words {
+    // Bounded by max_words, a constant for a constant layout, so this unrolls;
+    // the flag bits are already clear, so setting them is branch-free.
+    for index in 1..max_words {
         if let Some(flag) = word_flag(layout, index) {
-            wire.set(u16::from(flag), true);
+            wire.set(u16::from(flag), index < words);
         }
     }
     for index in 0..words {
@@ -280,7 +283,7 @@ pub fn encode_bitmap<S: Step>(output: &mut &mut [u8], scratch: &mut [u8], bitmap
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_bitmap<S: Step>(input: &mut &[u8], scratch: &mut [u8], layout: BitmapLayout) -> Result<Bitmap, Error> {
-    let max_words = validate_bitmap_layout(layout)?;
+    let max_words = max_words(layout);
     let mut bitmap = Bitmap::new();
     bitmap.set_word(0, decode_bitmap_word::<S>(input, scratch, word_bytes(layout))?);
     let mut words = 1;
