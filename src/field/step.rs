@@ -15,12 +15,6 @@ pub trait Step {
     /// Exact encoded byte count from logical input length. Built-in steps use
     /// bytes, except `Ebcdic1142`, which uses Unicode scalar values.
     fn encoded_len(input_len: usize) -> Result<usize, Error>;
-    /// Upper bound on the final decoded byte length for this many encoded bytes.
-    /// This excludes scratch consumed by intermediate steps. Decoding does not
-    /// call this sizing helper; each step reserves its own output when needed.
-    /// Chains pass upper bounds, so odd lengths and similar data-shape conditions
-    /// must be checked by `decode`, not rejected during capacity calculation.
-    fn decoded_max_len(input_len: usize) -> Result<usize, Error>;
 
     fn encode<'a>(output: &mut &'a mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error>;
 
@@ -54,11 +48,6 @@ impl<First: Step, Rest: Step> Step for Chain<First, Rest> {
     #[inline(always)]
     fn encoded_len(input_len: usize) -> Result<usize, Error> {
         Rest::encoded_len(First::encoded_len(input_len)?)
-    }
-
-    #[inline(always)]
-    fn decoded_max_len(input_len: usize) -> Result<usize, Error> {
-        First::decoded_max_len(Rest::decoded_max_len(input_len)?)
     }
 
     #[inline(always)]
@@ -97,11 +86,6 @@ impl<S: Step, C: Check> Step for DecodeCheck<S, C> {
     #[inline(always)]
     fn encoded_len(input_len: usize) -> Result<usize, Error> {
         S::encoded_len(input_len)
-    }
-
-    #[inline(always)]
-    fn decoded_max_len(input_len: usize) -> Result<usize, Error> {
-        S::decoded_max_len(input_len)
     }
 
     #[inline(always)]

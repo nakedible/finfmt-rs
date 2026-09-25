@@ -16,14 +16,6 @@ impl<F: NibbleAlphabet, const ALIGN_RIGHT: bool, const PADDING: u8> Step for Pac
     }
 
     #[inline(always)]
-    fn decoded_max_len(input_len: usize) -> Result<usize, Error> {
-        input_len.checked_mul(2).ok_or_else(|| {
-            cold_path();
-            Error::BufferOverflow
-        })
-    }
-
-    #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         pack_nibbles::<F>(output, input, ALIGN_RIGHT, PADDING)
     }
@@ -46,11 +38,6 @@ impl<F: NibbleAlphabet> Step for UnpackNibbles<F> {
             cold_path();
             Error::BufferOverflow
         })
-    }
-
-    #[inline(always)]
-    fn decoded_max_len(input_len: usize) -> Result<usize, Error> {
-        Ok(input_len / 2)
     }
 
     #[inline(always)]

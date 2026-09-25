@@ -14,11 +14,6 @@ impl Step for Identity {
     }
 
     #[inline(always)]
-    fn decoded_max_len(input_len: usize) -> Result<usize, Error> {
-        Ok(input_len)
-    }
-
-    #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         copy_bytes(output, input)
     }
@@ -49,11 +44,6 @@ impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadRigh
     }
 
     #[inline(always)]
-    fn decoded_max_len(input_len: usize) -> Result<usize, Error> {
-        Ok(input_len)
-    }
-
-    #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         encode_padded(output, input, PAD_TO, false, CHAR)
     }
@@ -70,11 +60,6 @@ impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadLeft
     #[inline(always)]
     fn encoded_len(input_len: usize) -> Result<usize, Error> {
         Ok(input_len.max(PAD_TO))
-    }
-
-    #[inline(always)]
-    fn decoded_max_len(input_len: usize) -> Result<usize, Error> {
-        Ok(input_len)
     }
 
     #[inline(always)]
@@ -100,11 +85,6 @@ impl<const CHAR: u8> Step for PadRightEven<CHAR> {
     }
 
     #[inline(always)]
-    fn decoded_max_len(input_len: usize) -> Result<usize, Error> {
-        Ok(input_len)
-    }
-
-    #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         encode_padded(output, input, Self::encoded_len(input.len())?, false, CHAR)
     }
@@ -124,11 +104,6 @@ impl<const CHAR: u8> Step for PadLeftEven<CHAR> {
             cold_path();
             Error::BufferOverflow
         })
-    }
-
-    #[inline(always)]
-    fn decoded_max_len(input_len: usize) -> Result<usize, Error> {
-        Ok(input_len)
     }
 
     #[inline(always)]

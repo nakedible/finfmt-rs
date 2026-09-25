@@ -29,11 +29,6 @@ impl Step for Ebcdic037 {
     }
 
     #[inline(always)]
-    fn decoded_max_len(input_len: usize) -> Result<usize, Error> {
-        Ok(input_len)
-    }
-
-    #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         let buf = copy_bytes(output, input)?;
         translate_bytes_inplace(buf, &ASCII_TO_EBCDIC_037);
@@ -64,14 +59,6 @@ impl Step for Ebcdic1142 {
     #[inline(always)]
     fn encoded_len(input_len: usize) -> Result<usize, Error> {
         Ok(input_len)
-    }
-
-    #[inline(always)]
-    fn decoded_max_len(input_len: usize) -> Result<usize, Error> {
-        input_len.checked_mul(3).ok_or_else(|| {
-            cold_path();
-            Error::BufferOverflow
-        })
     }
 
     #[inline(always)]
