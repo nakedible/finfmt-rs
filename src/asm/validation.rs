@@ -102,7 +102,7 @@ pub fn validate_iso8859_1_str_1_99(input: &str) -> Result<usize, Error> {
 }
 
 #[inline(never)]
-pub fn validate_ebcdic_1142_text_1_99(input: &[u8]) -> Result<usize, Error> {
+pub fn validate_ebcdic_1142_text_1_99(input: &str) -> Result<usize, Error> {
     validate_ebcdic_1142_text(input, 1, 99)
 }
 

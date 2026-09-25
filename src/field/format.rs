@@ -10,10 +10,9 @@ use crate::{Error, ScalarFmt};
 pub struct Field<C, L, S = super::Identity>(PhantomData<(C, L, S)>);
 pub struct PaddedField<C, L, S, const PAD_TO: usize, const FILL: u8>(PhantomData<(C, L, S)>);
 
-impl<C: Check, L: LengthSpec<S>, S: Step> ScalarFmt for Field<C, L, S> {
+impl<C: Check, L: LengthSpec<S>, S: Step> Field<C, L, S> {
     #[inline(always)]
-    fn encoded_len(input: &[u8]) -> Result<usize, Error> {
-        let semantic_len = C::validate(input)?;
+    fn total_len(semantic_len: usize) -> Result<usize, Error> {
         let wire_len = S::encoded_len(semantic_len)?;
         L::encoded_len(semantic_len, wire_len)
             .map_err(prefix_overflow)?
@@ -24,40 +23,91 @@ impl<C: Check, L: LengthSpec<S>, S: Step> ScalarFmt for Field<C, L, S> {
             })
     }
 
-    fn encode(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
-        let semantic_len = C::validate(input)?;
+    #[inline(always)]
+    fn encode_checked(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8], semantic_len: usize) -> Result<(), Error> {
         let wire_len = S::encoded_len(semantic_len)?;
         L::encode(output, scratch, semantic_len, wire_len).map_err(prefix_overflow)?;
-
         let encoded = S::encode(output, scratch, input)?;
         debug_assert_eq!(encoded.len(), wire_len, "step encoded a different number of bytes than predicted");
         Ok(())
     }
 
-    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
+    /// Frame and step-decode a value, returning it with the length the framing requires.
+    #[inline(always)]
+    fn decode_unchecked<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<(&'a [u8], Option<usize>), Error> {
         let plan = L::decode_plan(input, scratch)?;
         let wire = take_bytes(input, plan.wire_len)?;
-        let semantic = S::decode(wire, scratch, plan.semantic_len)?;
-        let semantic_len = C::validate(semantic).map_err(length_as_invalid)?;
-        if let Some(expected_len) = plan.semantic_len
-            && semantic_len != expected_len
-        {
-            cold_path();
-            return Err(Error::Invalid);
-        }
-        Ok(semantic)
+        Ok((S::decode(wire, scratch, plan.semantic_len)?, plan.semantic_len))
     }
 }
 
-impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> ScalarFmt for PaddedField<C, L, S, PAD_TO, FILL> {
+/// A decoded value whose length differs from what the framing declared is invalid.
+#[inline(always)]
+fn check_decoded_len(checked: Result<usize, Error>, expected: Option<usize>) -> Result<(), Error> {
+    let semantic_len = checked.map_err(length_as_invalid)?;
+    if expected.is_some_and(|expected| expected != semantic_len) {
+        cold_path();
+        return Err(Error::Invalid);
+    }
+    Ok(())
+}
+
+/// Decode text once: the UTF-8 check here is the only one.
+#[inline(always)]
+fn decoded_text(semantic: &[u8]) -> Result<&str, Error> {
+    core::str::from_utf8(semantic).map_err(|_| {
+        cold_path();
+        Error::Invalid
+    })
+}
+
+impl<C: Check, L: LengthSpec<S>, S: Step> ScalarFmt for Field<C, L, S> {
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
-        let semantic_len = C::validate(input)?;
+        Self::total_len(C::validate(input)?)
+    }
+
+    #[inline(always)]
+    fn encoded_len_str(input: &str) -> Result<usize, Error> {
+        Self::total_len(C::validate_str(input)?)
+    }
+
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
+        Self::encode_checked(output, scratch, input, C::validate(input)?)
+    }
+
+    fn encode_str(output: &mut &mut [u8], scratch: &mut [u8], input: &str) -> Result<(), Error> {
+        Self::encode_checked(output, scratch, input.as_bytes(), C::validate_str(input)?)
+    }
+
+    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
+        let (semantic, expected) = Self::decode_unchecked(input, scratch)?;
+        check_decoded_len(C::validate(semantic), expected)?;
+        Ok(semantic)
+    }
+
+    fn decode_str<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a str, Error> {
+        let (semantic, expected) = Self::decode_unchecked(input, scratch)?;
+        let text = decoded_text(semantic)?;
+        check_decoded_len(C::validate_str(text), expected)?;
+        Ok(text)
+    }
+}
+
+impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> PaddedField<C, L, S, PAD_TO, FILL> {
+    #[inline(always)]
+    fn wire_len(semantic_len: usize) -> Result<usize, Error> {
         let wire_len = S::encoded_len(semantic_len)?;
         if wire_len > PAD_TO {
             cold_path();
             return Err(Error::InvalidValueLength);
         }
+        Ok(wire_len)
+    }
+
+    #[inline(always)]
+    fn total_len(semantic_len: usize) -> Result<usize, Error> {
+        let wire_len = Self::wire_len(semantic_len)?;
         L::encoded_len(semantic_len, wire_len)
             .map_err(prefix_overflow)?
             .checked_add(PAD_TO)
@@ -67,13 +117,9 @@ impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> S
             })
     }
 
-    fn encode(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
-        let semantic_len = C::validate(input)?;
-        let wire_len = S::encoded_len(semantic_len)?;
-        if wire_len > PAD_TO {
-            cold_path();
-            return Err(Error::InvalidValueLength);
-        }
+    #[inline(always)]
+    fn encode_checked(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8], semantic_len: usize) -> Result<(), Error> {
+        let wire_len = Self::wire_len(semantic_len)?;
         L::encode(output, scratch, semantic_len, wire_len).map_err(prefix_overflow)?;
         let area = reserve_filled(output, PAD_TO, FILL)?;
         let (field, _tail) = area.split_at_mut(wire_len);
@@ -86,22 +132,48 @@ impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> S
         Ok(())
     }
 
-    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
+    #[inline(always)]
+    fn decode_unchecked<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<(&'a [u8], Option<usize>), Error> {
         let plan = L::decode_plan(input, scratch)?;
         if plan.wire_len > PAD_TO {
             cold_path();
             return Err(Error::Invalid);
         }
         let wire = take_padded(input, PAD_TO, plan.wire_len, FILL)?;
-        let semantic = S::decode(wire, scratch, plan.semantic_len)?;
-        let semantic_len = C::validate(semantic).map_err(length_as_invalid)?;
-        if let Some(expected_len) = plan.semantic_len
-            && semantic_len != expected_len
-        {
-            cold_path();
-            return Err(Error::Invalid);
-        }
+        Ok((S::decode(wire, scratch, plan.semantic_len)?, plan.semantic_len))
+    }
+}
+
+impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> ScalarFmt for PaddedField<C, L, S, PAD_TO, FILL> {
+    #[inline(always)]
+    fn encoded_len(input: &[u8]) -> Result<usize, Error> {
+        Self::total_len(C::validate(input)?)
+    }
+
+    #[inline(always)]
+    fn encoded_len_str(input: &str) -> Result<usize, Error> {
+        Self::total_len(C::validate_str(input)?)
+    }
+
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
+        Self::encode_checked(output, scratch, input, C::validate(input)?)
+    }
+
+    fn encode_str(output: &mut &mut [u8], scratch: &mut [u8], input: &str) -> Result<(), Error> {
+        Self::encode_checked(output, scratch, input.as_bytes(), C::validate_str(input)?)
+    }
+
+    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
+        let (semantic, expected) = Self::decode_unchecked(input, scratch)?;
+        check_decoded_len(C::validate(semantic), expected)?;
         Ok(semantic)
+    }
+
+    fn decode_str<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a str, Error> {
+        let (semantic, expected) = Self::decode_unchecked(input, scratch)?;
+        let text = decoded_text(semantic)?;
+        check_decoded_len(C::validate_str(text), expected)?;
+        Ok(text)
     }
 }
 
@@ -174,6 +246,21 @@ mod tests {
         let mut input_ptr = input;
         let mut scratch_ptr = scratch.as_mut_slice();
         Ok(F::decode_str(&mut input_ptr, &mut scratch_ptr)?.to_owned())
+    }
+
+    #[test]
+    fn text_checks_see_strings_once() {
+        use crate::Check;
+        type Text = Field<Ebcdic1142Text<1, 3>, AsciiLength<1>, Ebcdic1142>;
+        let mut wire = [0; 8];
+        let mut out = wire.as_mut_slice();
+        Text::encode_str(&mut out, &mut [][..], "ÆØÅ").unwrap();
+        assert_eq!(Text::encoded_len_str("ÆØÅ"), Ok(4));
+        let mut scratch = [0; 16];
+        assert_eq!(Text::decode_str(&mut &wire[..4], &mut &mut scratch[..]), Ok("ÆØÅ"));
+        assert_eq!(Text::encoded_len_str("ÆØÅÆ"), Err(Error::InvalidValueLength));
+        assert_eq!(Ebcdic1142Text::<0, 3>::validate(b"\x80"), Err(Error::Invalid));
+        assert_eq!(Ebcdic1142Text::<0, 3>::validate_str("€"), Ok(1));
     }
 
     #[test]

@@ -97,10 +97,14 @@ fn bench_specialty(suite: &mut Suite) {
             b.iter(|| black_box(validate_iso8859_1_str_1_99(black_box(ISO_8859_1_STR))))
         });
         group.bench("validate_ebcdic_1142_text_ascii", |b| {
-            b.iter(|| black_box(validate_ebcdic_1142_text_1_99(black_box(ASCII_PRINT))))
+            b.iter(|| {
+                black_box(validate_ebcdic_1142_text_1_99(black_box(
+                    core::str::from_utf8(ASCII_PRINT).unwrap(),
+                )))
+            })
         });
         group.bench("validate_ebcdic_1142_text_mixed", |b| {
-            b.iter(|| black_box(validate_ebcdic_1142_text_1_99(black_box("ABCÆØÅ€".as_bytes()))))
+            b.iter(|| black_box(validate_ebcdic_1142_text_1_99(black_box("ABCÆØÅ€"))))
         });
         group.bench("validate_ebcdic_037_ascii_1_99", |b| {
             b.iter(|| black_box(validate_ebcdic_037_ascii_1_99(black_box(EBCDIC_PRINT))))

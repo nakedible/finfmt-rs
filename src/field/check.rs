@@ -5,6 +5,7 @@ use crate::primitive::validation::{
     validate_lower_hex_even, validate_numeric, validate_track2_chars, validate_upper_alpha, validate_upper_alphanum,
     validate_upper_ascii_printable, validate_upper_hex, validate_upper_hex_even,
 };
+use crate::utils::cold_path;
 
 /// Validate a field's value and return its logical length.
 ///
@@ -23,6 +24,13 @@ use crate::primitive::validation::{
 /// [`validate_bytes`](crate::primitive::validation::validate_bytes).
 pub trait Check {
     fn validate(input: &[u8]) -> Result<usize, Error>;
+
+    /// Validate text that is already known to be UTF-8. Checks that count
+    /// characters override this to skip their own UTF-8 check.
+    #[inline(always)]
+    fn validate_str(input: &str) -> Result<usize, Error> {
+        Self::validate(input.as_bytes())
+    }
 }
 
 /// ASCII decimal digits `0`–`9`.
@@ -237,6 +245,15 @@ pub struct Ebcdic1142Text<const MIN: usize, const MAX: usize>;
 impl<const MIN: usize, const MAX: usize> Check for Ebcdic1142Text<MIN, MAX> {
     #[inline(always)]
     fn validate(input: &[u8]) -> Result<usize, Error> {
+        let text = core::str::from_utf8(input).map_err(|_| {
+            cold_path();
+            Error::Invalid
+        })?;
+        validate_ebcdic_1142_text(text, MIN, MAX)
+    }
+
+    #[inline(always)]
+    fn validate_str(input: &str) -> Result<usize, Error> {
         validate_ebcdic_1142_text(input, MIN, MAX)
     }
 }

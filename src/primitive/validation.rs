@@ -199,12 +199,11 @@ pub fn validate_iso8859_1_str(input: &str, minlen: usize, maxlen: usize) -> Resu
     validate_chars(input, minlen, maxlen, |c| (c as u32) <= 0xFF)
 }
 
-/// Validate UTF-8 text representable in IBM1142, returning its Unicode character
-/// count. Invalid UTF-8 or unrepresentable characters return `Invalid`.
+/// Validate text representable in IBM1142, returning its Unicode character count.
+/// Unrepresentable characters return `Invalid`.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_ebcdic_1142_text(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
-    let input = input.as_ref();
+pub fn validate_ebcdic_1142_text(input: &str, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     debug_assert!(minlen <= maxlen, "minlen must be <= maxlen");
     if input.is_ascii() {
         let len = input.len();
@@ -214,11 +213,7 @@ pub fn validate_ebcdic_1142_text(input: impl AsRef<[u8]>, minlen: usize, maxlen:
         }
         return Ok(len);
     }
-    let text = core::str::from_utf8(input).map_err(|_| {
-        cold_path();
-        Error::Invalid
-    })?;
-    validate_chars(text, minlen, maxlen, |ch| encode_ebcdic_1142_char(ch).is_some())
+    validate_chars(input, minlen, maxlen, |ch| encode_ebcdic_1142_char(ch).is_some())
 }
 
 /// Validate CP037 wire bytes representing ASCII characters, including controls,
@@ -446,14 +441,10 @@ mod tests {
 
     #[test]
     fn test_validate_ebcdic_1142_text() {
-        assert_eq!(validate_ebcdic_1142_text("ABC".as_bytes(), 0, 99), Ok(3));
-        assert_eq!(validate_ebcdic_1142_text("ABCÆØÅæøå€".as_bytes(), 0, 99), Ok(10));
-        assert_eq!(
-            validate_ebcdic_1142_text("ABCÆØÅæøå€".as_bytes(), 0, 9),
-            Err(Error::InvalidValueLength)
-        );
-        assert_eq!(validate_ebcdic_1142_text("emoji: 😀".as_bytes(), 0, 99), Err(Error::Invalid));
-        assert_eq!(validate_ebcdic_1142_text([0xFF], 0, 99), Err(Error::Invalid));
+        assert_eq!(validate_ebcdic_1142_text("ABC", 0, 99), Ok(3));
+        assert_eq!(validate_ebcdic_1142_text("ABCÆØÅæøå€", 0, 99), Ok(10));
+        assert_eq!(validate_ebcdic_1142_text("ABCÆØÅæøå€", 0, 9), Err(Error::InvalidValueLength));
+        assert_eq!(validate_ebcdic_1142_text("emoji: 😀", 0, 99), Err(Error::Invalid));
     }
 
     #[test]
@@ -535,8 +526,7 @@ mod tests {
         assert_eq!(validate_bcd_bytes(b"\x12", 1, 1), Ok(1));
         assert_eq!(validate_ebcdic_printable(b"\x41\xCA", 2, 2), Ok(2));
         assert_eq!(validate_ebcdic_1142_text("A€", 2, 2), Ok(2));
-        assert_eq!(validate_ebcdic_1142_text("A€".as_bytes(), 2, 2), Ok(2));
-        for invalid in ["¤".as_bytes(), "😀".as_bytes(), b"\x80"] {
+        for invalid in ["¤", "😀"] {
             for (min, max) in [(0, 0), (0, 10), (10, 10)] {
                 assert_eq!(validate_ebcdic_1142_text(invalid, min, max), Err(Error::Invalid));
             }
