@@ -28,7 +28,7 @@ pub use ebcdic::{Ebcdic037, Ebcdic1142};
 pub use format::{Field, PaddedField};
 pub use length::{
     AsciiLength, AsciiWireLength, BlankableEbcdicLength, DecodePlan, EbcdicLength, EbcdicWireLength, Fixed, Length, LengthSpec, Rest,
-    WireFixed, WireLength,
+    WireLength,
 };
 pub use nibble::{PackNibbles, PackNibblesLeft, PackNibblesRight, UnpackNibbles};
 pub use numeric::{

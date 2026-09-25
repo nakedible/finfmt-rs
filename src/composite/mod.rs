@@ -163,7 +163,7 @@ mod tests {
     use crate::primitive::nibble::{BcdzDigits, UpperHexDigits};
     use crate::{
         Ascii, AsciiLength, AsciiWireLength, Binary, Ebcdic037, EbcdicLength, EbcdicWireLength, Error, Field, Fixed, Numeric, PadLeft,
-        PadRightEven, SignPrefix, Track2, UnpackNibbles, WireFixed,
+        PadRightEven, SignPrefix, Track2, UnpackNibbles,
     };
 
     type N6 = Field<Numeric<6, 6>, Fixed<6>>;
@@ -873,7 +873,7 @@ mod tests {
         third: String,
     }
 
-    type DelimitedSecond = Field<Ascii<0, 3>, WireFixed<3>, crate::chain!(crate::PadRight<3, b' '>)>;
+    type DelimitedSecond = Field<Ascii<0, 3>, crate::Fixed<3>, crate::chain!(crate::PadRight<3, b' '>)>;
 
     crate::delimited_format! {
         struct DelimitedSlotsFmt for DelimitedSlots, b'\\' {
@@ -911,7 +911,7 @@ mod tests {
         }
     }
 
-    type A5Padded = Field<Ascii<0, 5>, WireFixed<5>, crate::chain!(crate::PadRight<5, b' '>)>;
+    type A5Padded = Field<Ascii<0, 5>, crate::Fixed<5>, crate::chain!(crate::PadRight<5, b' '>)>;
     type CountN2 = Field<Numeric<1, 2>, Fixed<2>, PadLeft<2, b'0', 1>>;
     type CountedAsciiListFmt =
         Frame<Field<Binary<7, 19>, AsciiLength<2>>, BoundedList<String, AsciiLength<2>, DirectScalar<A5Padded>, Separator<b'/'>, 3>>;
@@ -1060,7 +1060,7 @@ mod tests {
                 assert_eq!(output[5], 0xFF);
             }
         }
-        type Compressed = Field<Numeric<1, 4>, WireFixed<2>, crate::chain!(PadLeft<4, b'0', 1>, crate::PackNibblesRight<BcdzDigits, 0>)>;
+        type Compressed = Field<Numeric<1, 4>, crate::Fixed<4>, crate::chain!(PadLeft<4, b'0', 1>, crate::PackNibblesRight<BcdzDigits, 0>)>;
         for capacity in 0..=5 {
             let mut output = [0xFF; 3];
             let mut scratch = [0; 5];

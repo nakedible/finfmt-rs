@@ -68,29 +68,6 @@ impl<const N: usize, S: Step> LengthSpec<S> for Fixed<N> {
     }
 }
 
-/// Frame exactly `N` wire bytes; the step determines the decoded logical length.
-/// The check and transform must produce this width; encoding asserts it in debug.
-pub struct WireFixed<const N: usize>;
-
-impl<const N: usize, S: Step> LengthSpec<S> for WireFixed<N> {
-    #[inline(always)]
-    fn encoded_len(_count: usize, wire_len: usize) -> Result<usize, Error> {
-        debug_assert_eq!(wire_len, N);
-        Ok(0)
-    }
-
-    #[inline(always)]
-    fn encode(_output: &mut &mut [u8], _scratch: &mut [u8], count: usize, wire_len: usize) -> Result<(), Error> {
-        <Self as LengthSpec<S>>::encoded_len(count, wire_len)?;
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn decode_plan<'a>(_input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
-        Ok(DecodePlan { wire_len: N, count: None })
-    }
-}
-
 pub struct Length<F>(PhantomData<F>);
 
 impl<F: ScalarFmt, S: Step> LengthSpec<S> for Length<F> {
@@ -272,7 +249,7 @@ impl<S: Step> LengthSpec<S> for Rest {
 #[cfg(test)]
 mod tests {
     use super::{
-        AsciiLength, AsciiWireLength, BlankableEbcdicLength, EbcdicLength, EbcdicWireLength, Fixed, Length, LengthSpec, WireFixed,
+        AsciiLength, AsciiWireLength, BlankableEbcdicLength, EbcdicLength, EbcdicWireLength, Fixed, Length, LengthSpec,
         encode_ascii_decimal_fixed,
     };
     use crate::field::{Ascii, Binary, Field, FixedBinaryBe, Identity, Numeric, PadLeft, PadRightEven, Step, UnpackNibbles};
@@ -341,16 +318,6 @@ mod tests {
     }
 
     #[test]
-    fn test_wire_fixed_length_spec() {
-        let mut input = &b"ignored"[..];
-        let mut scratch = [];
-        let mut scratch_ptr = scratch.as_mut_slice();
-        let plan = <WireFixed<7> as LengthSpec<Identity>>::decode_plan(&mut input, &mut scratch_ptr).unwrap();
-        assert_eq!(plan.wire_len, 7);
-        assert_eq!(plan.count, None);
-    }
-
-    #[test]
     fn fixed_framing_asserts_only_in_debug() {
         fn check<L: LengthSpec<Identity>>() {
             for len in [0, 1, 3] {
@@ -368,7 +335,6 @@ mod tests {
             assert_eq!(L::encoded_len(usize::MAX, 2), Ok(0));
         }
         check::<Fixed<2>>();
-        check::<WireFixed<2>>();
     }
 
     #[test]

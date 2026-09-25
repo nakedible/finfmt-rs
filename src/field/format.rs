@@ -187,7 +187,7 @@ mod tests {
         Numeric, PackNibblesLeft, PackNibblesRight, PadLeft, PadLeftEven, PadRight, PadRightEven, SignPrefix, Track2,
     };
     use crate::primitive::nibble::{BcdzDigits, EbcdicHexDigits, UpperHexDigits};
-    use crate::{AsciiLength, Ebcdic037, Error, Identity, ScalarFmt, WireFixed, WireLength};
+    use crate::{AsciiLength, Ebcdic037, Error, Identity, ScalarFmt, WireLength};
 
     type LlvarPan =
         Field<Numeric<0, 19>, EbcdicLength<2>, crate::chain!(PadRight<19, b'?'>, PadLeftEven<b'0'>, PackNibblesRight<BcdzDigits, 0>)>;
@@ -201,7 +201,7 @@ mod tests {
     type BinaryLenAscii = Field<Ascii<0, 255>, Length<FixedBinaryBe<1>>>;
     type FixedEbcdicNumeric2 = Field<
         Numeric<1, 2>,
-        crate::WireFixed<2>,
+        Fixed<2>,
         crate::chain!(PadLeft<2, b'0', 1>, crate::DecodeCheck<crate::Ebcdic037, crate::EbcdicPrintable<2, 2>>),
     >;
     type FixedIbm1142<const N: usize> = Field<Ebcdic1142Text<0, N>, Fixed<N>, crate::chain!(Ebcdic1142, PadRight<N, 0x40>)>;
@@ -504,7 +504,7 @@ mod tests {
     #[test]
     fn borrowing_and_transforming_decoders_own_their_scratch_reservations() {
         type Borrowed = Field<Ascii<3, 3>, Fixed<3>>;
-        type BorrowedChain = Field<Ascii<0, 8>, WireFixed<8>, crate::chain!(PadLeft<8>, PadRight<8>)>;
+        type BorrowedChain = Field<Ascii<0, 8>, Fixed<8>, crate::chain!(PadLeft<8>, PadRight<8>)>;
         type Padded = PaddedField<Ascii<0, 8>, AsciiLength<1>, Identity, 8, b' '>;
         type Translated = Field<Ascii<3, 3>, Fixed<5>, crate::chain!(Ebcdic037, PadRight<5, 0x40>)>;
         type Utf8 = Field<Ebcdic1142Text<1, 1>, Fixed<1>, Ebcdic1142>;

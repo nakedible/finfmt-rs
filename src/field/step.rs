@@ -152,7 +152,6 @@ impl<S: Step, C: Check> Step for DecodeCheck<S, C> {
 #[cfg(test)]
 mod tests {
     use super::Chain;
-    use crate::primitive::nibble::UpperHexDigits as HexDigits;
     use crate::*;
 
     fn encode_without_scratch<F: ScalarFmt>(input: &[u8], expected: &[u8]) {
@@ -168,7 +167,7 @@ mod tests {
         encode_without_scratch::<Field<Ascii<3, 3>, Fixed<3>>>(b"ABC", b"ABC");
         encode_without_scratch::<Field<Ascii<3, 3>, Fixed<3>, Ebcdic037>>(b"ABC", &[0xC1, 0xC2, 0xC3]);
         encode_without_scratch::<Field<Ascii<3, 3>, Fixed<3>, Chain<Identity, Ebcdic037>>>(b"ABC", &[0xC1, 0xC2, 0xC3]);
-        encode_without_scratch::<Field<Ascii<0, 8>, WireFixed<8>, Chain<PadRight<8>, Ebcdic037>>>(
+        encode_without_scratch::<Field<Ascii<0, 8>, Fixed<8>, Chain<PadRight<8>, Ebcdic037>>>(
             b"ABC",
             &[0xC1, 0xC2, 0xC3, 0x40, 0x40, 0x40, 0x40, 0x40],
         );
@@ -211,13 +210,6 @@ mod tests {
             DecodeCheck::<Identity, Numeric<1, 1>>::encode(&mut &mut output[..], &mut [][..], b"?").as_deref(),
             Ok(&b"?"[..])
         );
-    }
-
-    #[test]
-    fn decoded_capacity_is_an_upper_bound_not_a_shape_check() {
-        type F = Field<Binary<1, 1>, WireFixed<3>, chain!(UnpackNibbles<HexDigits>, PadRight<3, b' '>)>;
-        let mut scratch = [0; 8];
-        assert_eq!(F::decode(&mut &b"AB "[..], &mut &mut scratch[..]), Ok(&[0xAB][..]));
     }
 }
 
