@@ -69,6 +69,14 @@ fn bench_decode_bytes(suite: &mut Suite) {
                 black_box(decode_padded_left_8_space(input))
             })
         });
+        group.bench("decode_padded_even_right_question", |b| {
+            b.iter(|| {
+                black_box(decode_padded_even_right_question(
+                    black_box(b"1234567890123456789?"),
+                    black_box(Some(19)),
+                ))
+            })
+        });
         group.bench("decode_padded_protected_6", |b| {
             b.iter(|| black_box(decode_padded_protected_6(black_box(b"        "))))
         });

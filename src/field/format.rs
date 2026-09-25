@@ -177,6 +177,34 @@ mod tests {
     }
 
     #[test]
+    fn even_padding_is_exact_with_a_count_and_bounded_without() {
+        fn roundtrip<F: ScalarFmt>(value: &[u8]) -> Result<(Vec<u8>, Vec<u8>), Error> {
+            let mut wire = [0; 32];
+            let mut out = wire.as_mut_slice();
+            F::encode(&mut out, &mut [0; 64][..], value)?;
+            let written = 32 - out.len();
+            let decoded = F::decode(&mut &wire[..written], &mut &mut [0; 64][..])?.to_vec();
+            Ok((wire[..written].to_vec(), decoded))
+        }
+        type ByteCount = Field<Track2<0, 37>, EbcdicWireLength<2>, crate::chain!(PadRightEven<b'?'>, PackNibblesLeft<BcdzDigits, 0>)>;
+        type DigitCount = Field<Numeric<0, 19>, EbcdicLength<2>, crate::chain!(PadRightEven<b'?'>, PackNibblesLeft<BcdzDigits, 0>)>;
+        assert_eq!(
+            roundtrip::<ByteCount>(b"123=45"),
+            Ok((b"\xF0\xF3\x12\x3D\x45".to_vec(), b"123=45".to_vec()))
+        );
+        assert_eq!(roundtrip::<ByteCount>(b"123"), Ok((b"\xF0\xF2\x12\x3F".to_vec(), b"123".to_vec())));
+        assert_eq!(
+            roundtrip::<DigitCount>(b"0000"),
+            Ok((b"\xF0\xF4\x00\x00".to_vec(), b"0000".to_vec()))
+        );
+        // An odd count needs the pad: a zero nibble in its place is invalid.
+        assert_eq!(
+            DigitCount::decode(&mut &b"\xF0\xF3\x12\x30"[..], &mut &mut [0; 64][..]),
+            Err(Error::Invalid)
+        );
+    }
+
+    #[test]
     fn value_length_errors_only_come_from_encoding() {
         fn encode<F: ScalarFmt>(input: &[u8]) -> Result<(), Error> {
             F::encode(&mut &mut [0; 32][..], &mut [0; 32][..], input)

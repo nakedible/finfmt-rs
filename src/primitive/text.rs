@@ -3,6 +3,7 @@ use no_panic::no_panic;
 
 use crate::Error;
 use crate::primitive::bytes::reserve_bytes;
+use crate::utils::cold_path;
 
 /// Write `input` followed by `fill` bytes up to `pad_to` bytes, or the fill
 /// first when `pad_left` is true. Advances output and returns the written area.
@@ -59,6 +60,37 @@ pub fn decode_padded(mut input: &[u8], min_len: usize, pad_left: bool, fill: u8)
     input
 }
 
+/// Remove the padding added by padding to an even length: at most one `fill`
+/// byte, on the left when `pad_left` is true, otherwise on the right.
+///
+/// With the unpadded length `len` known, its parity decides: odd means the fill
+/// byte must be there (otherwise `Invalid`), even means nothing is removed. The
+/// input must then be `len + len % 2` bytes; debug builds assert this, since
+/// framing derived the input from `len`. Without `len`, one matching fill byte
+/// is removed if present.
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub fn decode_padded_even(input: &[u8], len: Option<usize>, pad_left: bool, fill: u8) -> Result<&[u8], Error> {
+    let (edge, rest) = match (pad_left, input) {
+        (true, [edge, rest @ ..]) | (false, [rest @ .., edge]) => (*edge, rest),
+        _ => return Ok(input),
+    };
+    match len {
+        Some(len) => {
+            debug_assert_eq!(input.len(), len + len % 2, "framing must match the unpadded length");
+            if len % 2 == 0 {
+                Ok(input)
+            } else if edge == fill {
+                Ok(rest)
+            } else {
+                cold_path();
+                Err(Error::Invalid)
+            }
+        }
+        None => Ok(if edge == fill { rest } else { input }),
+    }
+}
+
 /// Retain at most `max_len` bytes from the left, or from the right when
 /// `keep_right` is true. Returns a borrowed slice without copying.
 /// Byte truncation may split UTF-8 characters; this is not Unicode truncation.
@@ -95,6 +127,24 @@ pub fn truncate_str(input: &str, max_chars: usize, keep_right: bool) -> &str {
 mod tests {
     use super::*;
     use crate::primitive::bytes::take_bytes;
+
+    #[test]
+    fn even_padding_removes_at_most_one_fill_byte() {
+        for (input, len, pad_left, fill, expected) in [
+            (&b"123?"[..], Some(3), false, b'?', Ok(&b"123"[..])),
+            (b"?123", Some(3), true, b'?', Ok(b"123")),
+            (b"1230", Some(3), false, b'?', Err(Error::Invalid)),
+            (b"000?", Some(4), false, b'?', Ok(b"000?")),
+            (b"0000", Some(4), false, b'0', Ok(b"0000")),
+            (b"0000", None, false, b'0', Ok(b"000")),
+            (b"00123", None, true, b'0', Ok(b"0123")),
+            (b"123", None, false, b'?', Ok(b"123")),
+            (b"", Some(0), false, b'?', Ok(b"")),
+            (b"", None, true, b'?', Ok(b"")),
+        ] {
+            assert_eq!(decode_padded_even(input, len, pad_left, fill), expected, "{input:?} {len:?}");
+        }
+    }
 
     #[test]
     fn text_truncation_counts_characters() {

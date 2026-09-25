@@ -1,5 +1,5 @@
 use crate::Error;
-use crate::primitive::text::{decode_padded, encode_padded, truncate_bytes, truncate_str};
+use crate::primitive::text::{decode_padded, decode_padded_even, encode_padded, truncate_bytes, truncate_str};
 
 #[inline(never)]
 pub fn encode_padded_right_8_space<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
@@ -55,4 +55,9 @@ pub fn encode_truncated_ascii_4(output: &mut &mut [u8], input: &str) -> Result<(
 #[inline(never)]
 pub fn decode_padded_protected_6(input: &[u8; 8]) -> Result<&[u8], Error> {
     Ok(decode_padded(input, 6, false, b' '))
+}
+
+#[inline(never)]
+pub fn decode_padded_even_right_question(input: &[u8], len: Option<usize>) -> Result<&[u8], Error> {
+    decode_padded_even(input, len, false, b'?')
 }

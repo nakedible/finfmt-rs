@@ -1,5 +1,5 @@
 use crate::primitive::bytes::copy_bytes;
-use crate::primitive::text::{decode_padded, encode_padded};
+use crate::primitive::text::{decode_padded, decode_padded_even, encode_padded};
 use crate::utils::cold_path;
 use crate::{Error, Step};
 
@@ -73,6 +73,9 @@ impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadLeft
     }
 }
 
+/// Pad to an even length with at most one `CHAR` on the right, typically so an
+/// odd digit count packs into whole bytes. Decoding removes that one character:
+/// exactly when the length is known, otherwise if it is present.
 pub struct PadRightEven<const CHAR: u8 = b' '>;
 
 impl<const CHAR: u8> Step for PadRightEven<CHAR> {
@@ -91,10 +94,12 @@ impl<const CHAR: u8> Step for PadRightEven<CHAR> {
 
     #[inline(always)]
     fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
-        Ok(decode_padded(input, semantic_len.unwrap_or(0), false, CHAR))
+        decode_padded_even(input, semantic_len, false, CHAR)
     }
 }
 
+/// Pad to an even length with at most one `CHAR` on the left; decoding mirrors
+/// [`PadRightEven`].
 pub struct PadLeftEven<const CHAR: u8 = b' '>;
 
 impl<const CHAR: u8> Step for PadLeftEven<CHAR> {
@@ -113,6 +118,6 @@ impl<const CHAR: u8> Step for PadLeftEven<CHAR> {
 
     #[inline(always)]
     fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], semantic_len: Option<usize>) -> Result<&'a [u8], Error> {
-        Ok(decode_padded(input, semantic_len.unwrap_or(0), true, CHAR))
+        decode_padded_even(input, semantic_len, true, CHAR)
     }
 }
