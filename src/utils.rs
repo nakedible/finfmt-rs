@@ -22,14 +22,3 @@ pub(crate) fn length_as_invalid(error: Error) -> Error {
         error
     }
 }
-
-/// Report a length prefix that cannot hold the value's length as a value
-/// length error: shortening the value is what fixes it.
-#[inline(always)]
-pub(crate) fn prefix_overflow(error: Error) -> Error {
-    if error == Error::Invalid {
-        Error::InvalidValueLength
-    } else {
-        error
-    }
-}

@@ -269,7 +269,7 @@ mod tests {
         AsciiLength, AsciiWireLength, BlankableEbcdicLength, EbcdicLength, EbcdicWireLength, Fixed, Length, LengthSpec,
         encode_ascii_decimal_fixed,
     };
-    use crate::field::{Ascii, Binary, Field, FixedBinaryBe, Identity, Numeric, PadLeft, PadRightEven, Step, UnpackNibbles};
+    use crate::field::{Ascii, Field, FixedBinaryBe, Identity, Numeric, PadLeft, PadRightEven, Step, UnpackNibbles};
     use crate::{Error, ScalarFmt};
 
     fn encode_length<L: LengthSpec<Identity>>(count: usize, wire_len: usize) -> Result<Vec<u8>, Error> {
@@ -381,10 +381,6 @@ mod tests {
                 expected
             );
         }
-        assert_eq!(
-            Field::<Binary<0, 100>, AsciiLength<1>>::encoded_len(b"0123456789"),
-            Err(Error::InvalidValueLength)
-        );
         assert_eq!(encode_length::<AsciiLength<20>>(usize::MAX, 0).map(|v| v.len()), Ok(20));
         assert_eq!(encode_length::<AsciiLength<32>>(usize::MAX, 0).map(|v| v.len()), Ok(32));
     }

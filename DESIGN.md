@@ -219,10 +219,12 @@ A format treats its value either as text or as a number.
 - `InvalidValueLength`: when encoding, the supplied value is too long or too
   short for the field, so adding or removing characters or bytes would fix it.
   It points at the configuration or value to correct, or at a format that
-  should truncate. Decoding never returns it: a decoded value of the wrong
-  length means the incoming message was encoded wrong, which is `Invalid`. A
-  typed number that does not fit is `Invalid` too, since it has no characters
-  to remove.
+  should truncate. It comes from the value's own length check. A length
+  prefix or padded area too small for what the check accepts is a miswritten
+  field, caught by debug assertions. Decoding never returns it: a decoded
+  value of the wrong length means the incoming message was encoded wrong,
+  which is `Invalid`. A typed number that does not fit is `Invalid` too, since
+  it has no characters to remove.
 - `Invalid`: input data was malformed or rejected by the format.
 - `Internal`: format composition or library invariant was inconsistent.
 

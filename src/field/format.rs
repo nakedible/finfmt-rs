@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 
 use super::{Check, LengthSpec, Step};
 use crate::primitive::bytes::{reserve_filled, take_bytes, take_padded};
-use crate::utils::{cold_path, length_as_invalid, prefix_overflow};
+use crate::utils::{cold_path, length_as_invalid};
 use crate::{Error, ScalarFmt};
 
 /// Compose a semantic check, length framing, and byte transform.
@@ -17,8 +17,7 @@ impl<C: Check, L: LengthSpec<S>, S: Step> Field<C, L, S> {
     #[inline(always)]
     fn total_len(semantic_len: usize) -> Result<usize, Error> {
         let wire_len = S::encoded_len(semantic_len)?;
-        L::encoded_len(S::counted_len(semantic_len)?, wire_len)
-            .map_err(prefix_overflow)?
+        framed(L::encoded_len(S::counted_len(semantic_len)?, wire_len))?
             .checked_add(wire_len)
             .ok_or_else(|| {
                 cold_path();
@@ -29,7 +28,7 @@ impl<C: Check, L: LengthSpec<S>, S: Step> Field<C, L, S> {
     #[inline(always)]
     fn encode_checked(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8], semantic_len: usize) -> Result<(), Error> {
         let wire_len = S::encoded_len(semantic_len)?;
-        L::encode(output, scratch, S::counted_len(semantic_len)?, wire_len).map_err(prefix_overflow)?;
+        framed(L::encode(output, scratch, S::counted_len(semantic_len)?, wire_len))?;
         let encoded = S::encode(output, scratch, input)?;
         debug_assert_eq!(encoded.len(), wire_len, "step encoded a different number of bytes than predicted");
         Ok(())
@@ -42,6 +41,17 @@ impl<C: Check, L: LengthSpec<S>, S: Step> Field<C, L, S> {
         let wire = take_bytes(input, plan.wire_len)?;
         Ok((S::decode(wire, scratch, plan.count)?, plan.count))
     }
+}
+
+/// A field whose check accepts a length its framing cannot hold is written
+/// wrong. Debug builds catch it; release passes the framing's error through.
+#[inline(always)]
+fn framed<T>(result: Result<T, Error>) -> Result<T, Error> {
+    debug_assert!(
+        !matches!(result, Err(Error::Invalid | Error::InvalidValueLength)),
+        "the field's check accepts a length its framing cannot hold"
+    );
+    result
 }
 
 /// Check the decoded value. The framing's count is the field's width, which
@@ -103,18 +113,14 @@ impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> P
     #[inline(always)]
     fn wire_len(semantic_len: usize) -> Result<usize, Error> {
         let wire_len = S::encoded_len(semantic_len)?;
-        if wire_len > PAD_TO {
-            cold_path();
-            return Err(Error::InvalidValueLength);
-        }
+        debug_assert!(wire_len <= PAD_TO, "the field's check accepts a value wider than its area");
         Ok(wire_len)
     }
 
     #[inline(always)]
     fn total_len(semantic_len: usize) -> Result<usize, Error> {
         let wire_len = Self::wire_len(semantic_len)?;
-        L::encoded_len(S::counted_len(semantic_len)?, wire_len)
-            .map_err(prefix_overflow)?
+        framed(L::encoded_len(S::counted_len(semantic_len)?, wire_len))?
             .checked_add(PAD_TO)
             .ok_or_else(|| {
                 cold_path();
@@ -125,10 +131,10 @@ impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> P
     #[inline(always)]
     fn encode_checked(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8], semantic_len: usize) -> Result<(), Error> {
         let wire_len = Self::wire_len(semantic_len)?;
-        L::encode(output, scratch, S::counted_len(semantic_len)?, wire_len).map_err(prefix_overflow)?;
+        framed(L::encode(output, scratch, S::counted_len(semantic_len)?, wire_len))?;
         let encoded = S::encode(output, scratch, input)?;
         debug_assert_eq!(encoded.len(), wire_len, "step encoded a different number of bytes than predicted");
-        reserve_filled(output, PAD_TO - wire_len, FILL)?;
+        reserve_filled(output, PAD_TO.saturating_sub(wire_len), FILL)?;
         Ok(())
     }
 
@@ -298,12 +304,6 @@ mod tests {
         type Short = Field<Ascii<1, 3>, AsciiLength<1>>;
         assert_eq!(encode::<Short>(b"ABCD"), Err(Error::InvalidValueLength));
         assert_eq!(decode::<Short>(b"4ABCD"), Err(Error::Invalid));
-        type Padded = PaddedField<Ascii<0, 8>, AsciiLength<1>, Identity, 2, b' '>;
-        assert_eq!(encode::<Padded>(b"ABC"), Err(Error::InvalidValueLength));
-        type BinaryPrefix = Field<Ascii<0, 300>, Length<FixedBinaryBe<1>>>;
-        type PackedPrefix = Field<Ascii<0, 300>, Length<crate::FixedComp3<1>>>;
-        assert_eq!(encode::<BinaryPrefix>(&[b'A'; 256]), Err(Error::InvalidValueLength));
-        assert_eq!(encode::<PackedPrefix>(&[b'A'; 10]), Err(Error::InvalidValueLength));
         assert_eq!(encode::<crate::FixedSignedComp3<2>>(b""), Err(Error::InvalidValueLength));
         assert_eq!(encode::<crate::FixedSignedComp3<2>>(b"-"), Err(Error::InvalidValueLength));
         assert_eq!(encode::<SignPrefix<N16>>(b""), Err(Error::InvalidValueLength));
@@ -528,10 +528,6 @@ mod tests {
         assert_eq!(F::decode(&mut input, &mut &mut [][..]), Ok(&b"A"[..]));
         assert_eq!(input, b"B  ");
         assert_eq!(P::decode(&mut &b"1AB   "[..], &mut &mut [][..]), Err(Error::Invalid));
-        // Sizing checks the padded width against the prefix, as encoding does.
-        type Wide = Field<Ascii<0, 12>, AsciiLength<1>, PadRight<12>>;
-        assert_eq!(Wide::encoded_len(b"AB"), Err(Error::InvalidValueLength));
-        assert_eq!(encode_field::<Wide>(b"AB", 16, 8), Err(Error::InvalidValueLength));
     }
 
     #[test]
@@ -571,6 +567,21 @@ mod tests {
                 Err(Error::Invalid)
             );
         }
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn framing_too_small_for_the_check_is_diagnosed_in_debug() {
+        fn fails<F: ScalarFmt>(input: &[u8]) {
+            assert!(std::panic::catch_unwind(|| F::encoded_len(input)).is_err());
+            assert!(std::panic::catch_unwind(|| F::encode(&mut &mut [0; 512][..], &mut [0; 512][..], input)).is_err());
+        }
+        fails::<Field<crate::Binary<0, 100>, AsciiLength<1>>>(b"0123456789");
+        fails::<Field<Ascii<0, 300>, Length<FixedBinaryBe<1>>>>(&[b'A'; 256]);
+        fails::<Field<Ascii<0, 300>, Length<crate::FixedComp3<1>>>>(&[b'A'; 10]);
+        // Sizing and encoding both check the padded width against the prefix.
+        fails::<Field<Ascii<0, 12>, AsciiLength<1>, PadRight<12>>>(b"AB");
+        fails::<PaddedField<Ascii<0, 8>, AsciiLength<1>, Identity, 2, b' '>>(b"ABC");
     }
 
     #[test]
