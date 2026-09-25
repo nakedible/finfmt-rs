@@ -14,7 +14,7 @@ impl<C: Check, L: LengthSpec<S>, S: Step> Field<C, L, S> {
     #[inline(always)]
     fn total_len(semantic_len: usize) -> Result<usize, Error> {
         let wire_len = S::encoded_len(semantic_len)?;
-        L::encoded_len(semantic_len, wire_len)
+        L::encoded_len(S::counted_len(semantic_len)?, wire_len)
             .map_err(prefix_overflow)?
             .checked_add(wire_len)
             .ok_or_else(|| {
@@ -110,7 +110,7 @@ impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> P
     #[inline(always)]
     fn total_len(semantic_len: usize) -> Result<usize, Error> {
         let wire_len = Self::wire_len(semantic_len)?;
-        L::encoded_len(semantic_len, wire_len)
+        L::encoded_len(S::counted_len(semantic_len)?, wire_len)
             .map_err(prefix_overflow)?
             .checked_add(PAD_TO)
             .ok_or_else(|| {
@@ -534,6 +534,10 @@ mod tests {
         assert_eq!(F::decode(&mut input, &mut &mut [][..]), Ok(&b"A"[..]));
         assert_eq!(input, b"B  ");
         assert_eq!(P::decode(&mut &b"1AB   "[..], &mut &mut [][..]), Err(Error::Invalid));
+        // Sizing checks the padded width against the prefix, as encoding does.
+        type Wide = Field<Ascii<0, 12>, AsciiLength<1>, PadRight<12>>;
+        assert_eq!(Wide::encoded_len(b"AB"), Err(Error::InvalidValueLength));
+        assert_eq!(encode_field::<Wide>(b"AB", 16, 8), Err(Error::InvalidValueLength));
     }
 
     #[test]
