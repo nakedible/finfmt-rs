@@ -123,24 +123,15 @@ impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> P
     fn encode_checked(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8], semantic_len: usize) -> Result<(), Error> {
         let wire_len = Self::wire_len(semantic_len)?;
         L::encode(output, scratch, S::counted_len(semantic_len)?, wire_len).map_err(prefix_overflow)?;
-        let area = reserve_filled(output, PAD_TO, FILL)?;
-        let (field, _tail) = area.split_at_mut(wire_len);
-        let mut field_out = field;
-        S::encode(&mut field_out, scratch, input)?;
-        if !field_out.is_empty() {
-            cold_path();
-            return Err(Error::Internal);
-        }
+        let encoded = S::encode(output, scratch, input)?;
+        debug_assert_eq!(encoded.len(), wire_len, "step encoded a different number of bytes than predicted");
+        reserve_filled(output, PAD_TO - wire_len, FILL)?;
         Ok(())
     }
 
     #[inline(always)]
     fn decode_unchecked<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<(&'a [u8], Option<usize>), Error> {
         let plan = L::decode_plan(input, scratch)?;
-        if plan.wire_len > PAD_TO {
-            cold_path();
-            return Err(Error::Invalid);
-        }
         let wire = take_padded(input, PAD_TO, plan.wire_len, FILL)?;
         Ok((S::decode(wire, scratch, plan.count)?, plan.count))
     }
