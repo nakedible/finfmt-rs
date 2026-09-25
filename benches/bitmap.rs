@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use finfmt::asm::bitmap::*;
-use finfmt::primitive::bitmap::Bitmap;
+use finfmt::bitmap::Bitmap;
 use zenbench::prelude::*;
 
 fn quick(group: &mut BenchGroup) {

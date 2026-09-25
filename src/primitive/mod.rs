@@ -1,5 +1,5 @@
 pub mod bertlv;
-pub mod bitmap;
+pub(crate) mod bitmap;
 pub mod bytes;
 pub mod decimal;
 pub mod ebcdic;

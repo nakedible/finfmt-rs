@@ -39,6 +39,10 @@ ordered unions, and absent/filler wrappers. Composite code may route data
 between scalar formats and primitives, but byte-level conversion still belongs
 in `primitive`.
 
+`src/bitmap.rs` frames presence bitmaps: word layouts and flags, with each
+word's representation a `Step`. It is the public home of `Bitmap`, whose bit
+storage is a crate-internal primitive.
+
 `src/asm/` and `benches/` are verification aids. Primitives are normally
 `#[inline(always)]`, so `asm` wrappers provide `#[inline(never)]` call sites for
 assembly inspection and benchmark checkpoints.

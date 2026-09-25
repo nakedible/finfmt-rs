@@ -1,4 +1,4 @@
-use crate::primitive::bitmap::{Bitmap, BitmapLayout, decode_bitmap, encode_bitmap};
+use crate::bitmap::{Bitmap, BitmapLayout, decode_bitmap, encode_bitmap};
 use crate::{Error, Identity, UnpackNibbles};
 
 const ISO_2_LAYOUT: BitmapLayout = BitmapLayout::iso(1, 2);
