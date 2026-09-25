@@ -517,11 +517,18 @@ pub fn encode_ebcdic_decimal_fixed(output: &mut &mut [u8], value: usize, len: us
     encode_decimal_fixed(output, value, len, 0xF0)
 }
 
+/// Whether `value` fits in `len` decimal digits.
 #[inline(always)]
-fn encode_decimal_fixed(output: &mut &mut [u8], mut value: usize, len: usize, zero: u8) -> Result<(), Error> {
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub(crate) fn fits_decimal_width(value: usize, len: usize) -> bool {
     debug_assert!(len != 0, "decimal width must be nonzero");
     let limit = u32::try_from(len).ok().and_then(|len| 10usize.checked_pow(len));
-    if limit.is_some_and(|limit| value >= limit) {
+    limit.is_none_or(|limit| value < limit)
+}
+
+#[inline(always)]
+fn encode_decimal_fixed(output: &mut &mut [u8], mut value: usize, len: usize, zero: u8) -> Result<(), Error> {
+    if !fits_decimal_width(value, len) {
         cold_path();
         return Err(Error::Invalid);
     }
@@ -1223,7 +1230,7 @@ mod tests {
 mod proptests {
     use proptest::{prop_assert, prop_assert_eq, proptest};
 
-    use super::{MAX_INTEGER_TEXT_LEN, decode_implied_decimal, encode_implied_decimal, format_i64, format_u64};
+    use super::{MAX_INTEGER_TEXT_LEN, decode_implied_decimal, encode_implied_decimal, fits_decimal_width, format_i64, format_u64};
 
     fn canonical_scaled(value: u64, negative: bool, scale: usize) -> Vec<u8> {
         if value == 0 {
@@ -1268,6 +1275,12 @@ mod proptests {
     }
 
     proptest! {
+        #[test]
+        fn decimal_width_fit_matches_formatting(value in proptest::prelude::any::<usize>(), width in 1usize..33) {
+            let mut digits = [0; MAX_INTEGER_TEXT_LEN];
+            prop_assert_eq!(fits_decimal_width(value, width), format_u64(&mut digits, value as u64).len() <= width);
+        }
+
         #[test]
         fn fixed_decimal_matches_std(value: usize, width in 1usize..=32, capacity in 0usize..=34) {
             super::tests::check_fixed_decimal(value, width, capacity);

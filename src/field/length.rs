@@ -2,16 +2,15 @@ use core::marker::PhantomData;
 
 use super::Step;
 use crate::primitive::decimal::{
-    MAX_INTEGER_TEXT_LEN, decode_ascii_decimal_fixed, decode_ebcdic_decimal_blank_zero_fixed, decode_ebcdic_decimal_fixed,
-    encode_ascii_decimal_fixed, encode_ebcdic_decimal_blank_zero_fixed, encode_ebcdic_decimal_fixed, format_u64,
+    decode_ascii_decimal_fixed, decode_ebcdic_decimal_blank_zero_fixed, decode_ebcdic_decimal_fixed, encode_ascii_decimal_fixed,
+    encode_ebcdic_decimal_blank_zero_fixed, encode_ebcdic_decimal_fixed, fits_decimal_width,
 };
 use crate::utils::cold_path;
 use crate::{Error, ScalarFmt};
 
 #[inline(always)]
 fn decimal_prefix_len(value: usize, width: usize) -> Result<usize, Error> {
-    let mut digits = [0; MAX_INTEGER_TEXT_LEN];
-    if format_u64(&mut digits, value as u64).len() > width {
+    if !fits_decimal_width(value, width) {
         cold_path();
         return Err(Error::Invalid);
     }
@@ -186,7 +185,7 @@ pub struct BlankableEbcdicLength<const N: usize>;
 impl<const N: usize, S: Step> LengthSpec<S> for BlankableEbcdicLength<N> {
     #[inline(always)]
     fn encoded_len(count: usize, _wire_len: usize) -> Result<usize, Error> {
-        if count == 0 { Ok(N) } else { decimal_prefix_len(count, N) }
+        decimal_prefix_len(count, N)
     }
 
     #[inline(always)]
@@ -389,22 +388,5 @@ mod tests {
         assert_eq!(decode::<PadRightEven, AsciiLength<20>>(&ascii), Err(Error::Invalid));
         assert_eq!(decode::<PadRightEven, EbcdicLength<20>>(&ebcdic), Err(Error::Invalid));
         assert_eq!(decode::<PadRightEven, BlankableEbcdicLength<20>>(&ebcdic), Err(Error::Invalid));
-    }
-}
-
-#[cfg(test)]
-mod proptests {
-    use proptest::prelude::*;
-
-    use super::*;
-
-    proptest! {
-        #[test]
-        fn prefix_prediction_matches_encoding(value in any::<usize>(), width in 1usize..33) {
-            let mut output = [0; 32];
-            let mut out = &mut output[..];
-            let encoded = encode_ascii_decimal_fixed(&mut out, value, width).map(|()| 32 - out.len());
-            prop_assert_eq!(decimal_prefix_len(value, width), encoded);
-        }
     }
 }
