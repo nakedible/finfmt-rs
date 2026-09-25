@@ -138,7 +138,7 @@ For invalid inputs that violate those assumptions, a primitive may return
 
 Bitmap representability is one such caller-side invariant: populated fields
 must fit the layout and decoded word width, and semantic presence bits must not
-occupy reserved continuation positions. Violating these encoding preconditions
+be word flags. Violating these encoding preconditions
 may discard fields in release builds; malformed wire input is still checked on
 decode.
 

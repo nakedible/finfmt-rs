@@ -40,7 +40,7 @@ mod tests {
         bitmap.set(3, true);
         bitmap.set(63, true);
         bitmap.set(97, true);
-        let layout = BitmapLayout::new(1, 3, [Some(64), Some(64), None]);
+        let layout = BitmapLayout::new(1, 3, [Some(64), Some(128)]);
         let mut output = [0u8; 64];
         let mut scratch = [0u8; 8];
         let used = {
@@ -134,10 +134,16 @@ mod tests {
             (BitmapLayout::iso(3, 3), &[], &[flag, flag, 0]),
             (BitmapLayout::fixed(2), &[], &[0, 0]),
             (BitmapLayout::fixed(2), &[1, 65], &[flag, flag]),
-            (BitmapLayout::new(1, 3, [Some(1), None, None]), &[66], &[flag, field, 0]),
-            (BitmapLayout::new(1, 3, [None, Some(1), None]), &[], &[0, 0]),
-            (BitmapLayout::new(1, 2, [None, None, Some(1)]), &[], &[0, 0]),
-            (BitmapLayout::new(2, 2, [Some(64), None, None]), &[], &[1, 0]),
+            (BitmapLayout::new(1, 3, [Some(1), None]), &[66], &[flag, field, 0]),
+            (BitmapLayout::new(1, 3, [None, Some(65)]), &[], &[0, 0]),
+            (BitmapLayout::new(1, 2, [None, Some(1)]), &[], &[0, 0]),
+            (BitmapLayout::new(2, 2, [Some(64), None]), &[], &[1, 0]),
+            // Only flags of configured words are reserved: 65 is a field here.
+            (BitmapLayout::iso(1, 2), &[65], &[flag, flag]),
+            // Both flags in the first word; the third word still needs the second.
+            (BitmapLayout::new(1, 3, [Some(1), Some(2)]), &[], &[0]),
+            (BitmapLayout::new(1, 3, [Some(1), Some(2)]), &[66], &[flag, field]),
+            (BitmapLayout::new(1, 3, [Some(1), Some(2)]), &[130], &[flag | field, 0, field]),
         ];
         for &(layout, ids, expected) in cases {
             let mut bitmap = Bitmap::new();
@@ -176,9 +182,11 @@ mod tests {
             assert_eq!(decoded, Bitmap::new());
             assert_eq!(roundtrip::<BitmapBinaryWord>(&decoded, layout, 0).1, usize::from(min_words) * 8);
         }
+        let mut field_65 = Bitmap::new();
+        field_65.set(65, true);
         assert_eq!(
             decode_bitmap::<BitmapBinaryWord>(&mut wire.as_slice(), &mut [], BitmapLayout::iso(1, 2)),
-            Err(crate::Error::Invalid)
+            Ok(field_65)
         );
         wire[8] = 0;
         assert_eq!(
@@ -189,6 +197,25 @@ mod tests {
         assert_eq!(
             decode_bitmap::<BitmapBinaryWord>(&mut wire.as_slice(), &mut [], BitmapLayout::iso(2, 2)),
             Err(crate::Error::Invalid)
+        );
+    }
+
+    #[test]
+    fn test_bitmap_flag_for_a_word_that_did_not_follow_is_invalid() {
+        let layout = BitmapLayout::new(1, 3, [Some(1), Some(2)]);
+        let mut wire = [0; 24];
+        wire[0] = 0x40;
+        assert_eq!(
+            decode_bitmap::<BitmapBinaryWord>(&mut wire.as_slice(), &mut [], layout),
+            Err(crate::Error::Invalid)
+        );
+        wire[0] = 0xC0;
+        let mut expected = Bitmap::new();
+        expected.set(130, true);
+        wire[16] = 0x40;
+        assert_eq!(
+            decode_bitmap::<BitmapBinaryWord>(&mut wire.as_slice(), &mut [], layout),
+            Ok(expected)
         );
     }
 
@@ -301,24 +328,23 @@ mod tests {
 
     #[test]
     fn test_bitmap_representability_diagnostics() {
-        for (id, layout) in [
-            (33, BitmapLayout::fixed(1)),
-            (97, BitmapLayout::fixed(2)),
-            (1, BitmapLayout::iso(1, 2)),
-            (65, BitmapLayout::iso(1, 2)),
-            (66, BitmapLayout::new(1, 2, [Some(64), None, None])),
-            (65, BitmapLayout::fixed(1)),
-        ] {
+        fn diagnosed<F: BitmapWord>(id: u16, layout: BitmapLayout) {
             let result = std::panic::catch_unwind(|| {
                 let mut bitmap = Bitmap::new();
                 bitmap.set(id, true);
-                encode_bitmap::<BitmapBinaryHalfWord>(&mut [0; 24].as_mut_slice(), &mut [], &bitmap, layout)
+                encode_bitmap::<F>(&mut [0; 24].as_mut_slice(), &mut [], &bitmap, layout)
             });
             assert_eq!(result.is_err(), cfg!(debug_assertions));
         }
-        let decode = std::panic::catch_unwind(|| {
-            decode_bitmap::<BitmapBinaryHalfWord>(&mut [0; 8].as_slice(), &mut [], BitmapLayout::new(1, 2, [Some(64), None, None]))
-        });
+        diagnosed::<BitmapBinaryHalfWord>(33, BitmapLayout::fixed(1));
+        diagnosed::<BitmapBinaryHalfWord>(2, BitmapLayout::fixed(2));
+        diagnosed::<BitmapBinaryWord>(65, BitmapLayout::fixed(1));
+        diagnosed::<BitmapBinaryWord>(1, BitmapLayout::iso(1, 2));
+        diagnosed::<BitmapBinaryWord>(64, BitmapLayout::new(1, 2, [Some(64), None]));
+        diagnosed::<BitmapBinaryWord>(2, BitmapLayout::new(1, 3, [Some(1), Some(1)]));
+        diagnosed::<BitmapBinaryWord>(2, BitmapLayout::new(1, 2, [Some(65), None]));
+        let decode =
+            std::panic::catch_unwind(|| decode_bitmap::<BitmapBinaryHalfWord>(&mut [0; 8].as_slice(), &mut [], BitmapLayout::iso(1, 2)));
         assert_eq!(decode.is_err(), cfg!(debug_assertions));
     }
 
@@ -326,12 +352,11 @@ mod tests {
     fn test_bitmap_narrow_word_boundaries() {
         fn check<const N: usize>() {
             let mut bitmap = Bitmap::new();
-            for index in 0..3 {
-                bitmap.set((index * 64 + N * 8) as u16, true);
-            }
-            for layout in [BitmapLayout::fixed(3), BitmapLayout::iso(1, 3), BitmapLayout::iso(3, 3)] {
-                assert_eq!(roundtrip::<Field<Binary<N, N>, Fixed<N>>>(&bitmap, layout, 128).1, N * 3);
-            }
+            bitmap.set((N * 8) as u16, true);
+            assert_eq!(
+                roundtrip::<Field<Binary<N, N>, Fixed<N>>>(&bitmap, BitmapLayout::fixed(1), 128).1,
+                N
+            );
         }
         check::<1>();
         check::<2>();
@@ -341,6 +366,13 @@ mod tests {
         check::<6>();
         check::<7>();
         check::<8>();
+        let mut bitmap = Bitmap::new();
+        for index in 0..3 {
+            bitmap.set(index * 64 + 64, true);
+        }
+        for layout in [BitmapLayout::fixed(3), BitmapLayout::iso(1, 3), BitmapLayout::iso(3, 3)] {
+            assert_eq!(roundtrip::<BitmapBinaryWord>(&bitmap, layout, 128).1, 24);
+        }
     }
 
     #[cfg(not(debug_assertions))]
@@ -349,8 +381,8 @@ mod tests {
         fn check<const N: usize>() {
             for min in [0, 1, 2, 3, 4, 255] {
                 for max in [0, 1, 2, 3, 4, 255] {
-                    for bit in [None, Some(0), Some(1), Some(64), Some(65), Some(255)] {
-                        let layout = BitmapLayout::new(min, max, [bit; 3]);
+                    for bit in [None, Some(0), Some(1), Some(64), Some(65), Some(128), Some(193), Some(255)] {
+                        let layout = BitmapLayout::new(min, max, [bit; 2]);
                         for capacity in [0, 1, 7, 8, 16, 24] {
                             let mut bitmap = Bitmap::new();
                             for index in 0..3 {
@@ -393,14 +425,19 @@ mod proptests {
         fn bitmap_layout_roundtrip(
             max_words in 1u8..=3,
             min_seed in 0u8..3,
-            continuation_bits in prop::array::uniform3(prop::option::of(1u8..=64)),
+            second_flag in prop::option::of(1u8..=64),
+            third_flag in prop::option::of(1u8..=128),
             words in prop::array::uniform3(prop_oneof![Just(0u64), any::<u64>()]),
         ) {
-            let layout = BitmapLayout::new(1 + min_seed % max_words, max_words, continuation_bits);
+            prop_assume!(max_words < 3 || second_flag.is_none() || second_flag != third_flag);
+            let layout = BitmapLayout::new(1 + min_seed % max_words, max_words, [second_flag, third_flag]);
+            let flags = [second_flag, third_flag].into_iter().take(usize::from(max_words) - 1).flatten();
             let mut bitmap = Bitmap::new();
             for (index, &word) in words.iter().enumerate().take(usize::from(max_words)) {
-                let reserved = continuation_bits[index].map_or(0, |bit| 1u64 << (64 - bit));
-                bitmap.set_word(index, word & !reserved);
+                bitmap.set_word(index, word);
+            }
+            for flag in flags {
+                bitmap.set(u16::from(flag), false);
             }
             let (_, used) = super::tests::roundtrip::<Field<Binary<8, 8>, Fixed<8>>>(&bitmap, layout, 128);
             prop_assert!((usize::from(layout.min_words) * 8..=usize::from(max_words) * 8).contains(&used));

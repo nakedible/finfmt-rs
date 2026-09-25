@@ -7,19 +7,24 @@ use crate::{Error, ScalarFmt};
 
 /// Presence bits for fields 1 through 192, stored most-significant bit first.
 ///
-/// Field numbers are independent of wire width: each raw word covers 64 fields.
+/// Word `k` holds fields `64k + 1` through `64k + 64`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Bitmap([u64; 3]);
 
-/// Bitmap word counts and one-based, MSB-first continuation positions.
+/// Bitmap word counts and the flags that announce the second and third words.
 ///
-/// A clear continuation bit ends the bitmap, provided `min_words` have been
-/// read. With no continuation bit, the next configured word is mandatory.
+/// Words form a prefix: the second word may follow the first, and the third
+/// the second. `word_flags[0]` and `word_flags[1]` flag the second and third
+/// words as global field numbers in an earlier word, such as 1 and 65 in ISO
+/// 8583. A word with a flag is present when that bit is set; a word without
+/// one always follows its predecessor. The first `min_words` words are always
+/// present, with their flags set. Flags of words within `max_words` are not
+/// fields, so decoding clears them; other bits are ordinary fields.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BitmapLayout {
     pub min_words: u8,
     pub max_words: u8,
-    pub continuation_bits: [Option<u8>; 3],
+    pub word_flags: [Option<u8>; 2],
 }
 
 /// A scalar codec for the semantic bytes of one bitmap word.
@@ -37,29 +42,31 @@ pub trait BitmapWord: ScalarFmt {
 }
 
 impl BitmapLayout {
-    /// Configure one to three words with custom continuation positions.
+    /// Configure one to three words with custom word flags.
     ///
-    /// Requires `1 <= min_words <= max_words <= 3`. Continuation positions
-    /// must be in `1..=64`; entries beyond `max_words` do not affect framing.
+    /// Requires `1 <= min_words <= max_words <= 3`. The flag of word `k`
+    /// (one-based) must be a distinct field number in words before it, so in
+    /// `1..=64` for the second word and `1..=128` for the third. Flags of words
+    /// beyond `max_words` are ignored.
     #[inline(always)]
-    pub const fn new(min_words: u8, max_words: u8, continuation_bits: [Option<u8>; 3]) -> Self {
+    pub const fn new(min_words: u8, max_words: u8, word_flags: [Option<u8>; 2]) -> Self {
         Self {
             min_words,
             max_words,
-            continuation_bits,
+            word_flags,
         }
     }
 
-    /// Use ISO continuation bits with the given minimum and maximum word counts.
+    /// Use the ISO 8583 flags, fields 1 and 65, with the given word counts.
     #[inline(always)]
     pub const fn iso(min_words: u8, max_words: u8) -> Self {
-        Self::new(min_words, max_words, [Some(1), Some(1), None])
+        Self::new(min_words, max_words, [Some(1), Some(65)])
     }
 
-    /// Always encode and decode exactly `words` words, without continuation bits.
+    /// Always encode and decode exactly `words` words, without flags.
     #[inline(always)]
     pub const fn fixed(words: u8) -> Self {
-        Self::new(words, words, [None; 3])
+        Self::new(words, words, [None; 2])
     }
 }
 
@@ -158,33 +165,43 @@ fn validate_bitmap_layout<F: BitmapWord>(layout: BitmapLayout) -> Result<usize, 
         return Err(Error::Internal);
     }
 
-    let mut index = 0usize;
-    while index < 3 {
-        if let Some(bit) = layout.continuation_bits[index] {
-            debug_assert!(bit > 0 && bit <= 64, "bitmap continuation bit out of range");
+    debug_assert!(F::DECODED_BYTES == 8 || max_words == 1, "a narrow bitmap must be a single word");
+    let mut index = 1usize;
+    while index < max_words {
+        if let Some(flag) = word_flag(layout, index) {
             debug_assert!(
-                index >= max_words || usize::from(bit) <= F::DECODED_BYTES * 8,
-                "bitmap continuation bit outside word width"
+                flag > 0 && usize::from(flag) <= index * 64,
+                "a bitmap word flag must be in an earlier word"
             );
-            if bit == 0 || bit > 64 {
-                cold_path();
-                return Err(Error::Internal);
-            }
         }
         index += 1;
     }
+    debug_assert!(
+        max_words < 3 || layout.word_flags[0].is_none() || layout.word_flags[0] != layout.word_flags[1],
+        "bitmap word flags must be distinct"
+    );
 
     Ok(max_words)
 }
 
+/// The flag of zero-based word `index`, 1 or 2, if it has one.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-fn continuation_mask(layout: BitmapLayout, index: usize) -> u64 {
-    debug_assert!(index < 3, "bitmap word index out of range");
-    match layout.continuation_bits.get(index).copied().flatten() {
-        Some(bit @ 1..=64) => 1u64 << (64 - bit),
-        _ => 0,
+fn word_flag(layout: BitmapLayout, index: usize) -> Option<u8> {
+    layout.word_flags.get(index.wrapping_sub(1)).copied().flatten()
+}
+
+/// The flags of the words within `max_words`, as bits.
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+fn flag_bits(layout: BitmapLayout, max_words: usize) -> Bitmap {
+    let mut flags = Bitmap::new();
+    for index in 1..max_words {
+        if let Some(flag) = word_flag(layout, index) {
+            flags.set(u16::from(flag), true);
+        }
     }
+    flags
 }
 
 #[inline(always)]
@@ -235,11 +252,11 @@ fn decode_bitmap_word<F: BitmapWord>(input: &mut &[u8], scratch: &mut [u8]) -> R
 
 /// Encode semantic presence bits through the supplied word format.
 ///
-/// The bitmap must fit the layout, with all continuation positions clear and
-/// no populated bits outside each word's decoded byte width. Short words use
-/// the high bytes of each 64-field group: four-byte words cover fields 1–32,
-/// 65–96, and 129–160. Active continuation positions must fit that width.
-/// These caller/configuration preconditions are asserted in debug builds.
+/// Sends the words up to the last one with a field set, but at least
+/// `min_words`, and any flagless words that must follow them, setting the flags
+/// of the words sent. The bitmap must fit the layout and word width and must
+/// not set word flags itself; these caller preconditions are asserted in debug
+/// builds. A narrow word uses the high bytes of the first word.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn encode_bitmap<F: BitmapWord>(
@@ -250,57 +267,67 @@ pub fn encode_bitmap<F: BitmapWord>(
 ) -> Result<(), Error> {
     let max_words = validate_bitmap_layout::<F>(layout)?;
     debug_assert!(bitmap.highest_word() < max_words, "bitmap contains words outside layout");
-    let mut highest_words = 1;
+    let flags = flag_bits(layout, max_words);
+    let mut wire = Bitmap::new();
+    let mut words = usize::from(layout.min_words);
     for index in 0..max_words {
-        if bitmap.word(index) != 0 {
-            highest_words = index + 1;
+        debug_assert_eq!(bitmap.word(index) & flags.word(index), 0, "bitmap sets a word flag");
+        let word = bitmap.word(index) & !flags.word(index);
+        if word != 0 {
+            words = words.max(index + 1);
         }
+        wire.set_word(index, word);
     }
-    let required_words = highest_words.max(usize::from(layout.min_words));
-    let mut words = max_words;
-    for index in 0..max_words {
-        if index + 1 >= required_words && continuation_mask(layout, index) != 0 {
-            words = index + 1;
-            break;
+    while words < max_words && word_flag(layout, words).is_none() {
+        words += 1;
+    }
+    for index in 1..words {
+        if let Some(flag) = word_flag(layout, index) {
+            wire.set(u16::from(flag), true);
         }
     }
     for index in 0..words {
-        let cont = continuation_mask(layout, index);
-        debug_assert_eq!(bitmap.word(index) & cont, 0, "bitmap contains reserved continuation bits");
-        let mut word = bitmap.word(index) & !cont;
-        if index + 1 < words {
-            word |= cont;
-        }
-        encode_bitmap_word::<F>(output, scratch, word)?;
+        encode_bitmap_word::<F>(output, scratch, wire.word(index))?;
     }
     Ok(())
 }
 
-/// Decode presence bits, removing continuation flags from the returned bitmap.
+/// Decode presence bits, removing word flags from the returned bitmap.
 ///
-/// The word format and active continuation positions must agree on the decoded
-/// width. Scratch is reused for each word; no borrow escapes into the bitmap.
+/// A required word whose flag is clear, or a set flag for a word that did not
+/// follow, is `Invalid`. Scratch is reused for each word; no borrow escapes
+/// into the bitmap.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_bitmap<F: BitmapWord>(input: &mut &[u8], scratch: &mut [u8], layout: BitmapLayout) -> Result<Bitmap, Error> {
     let max_words = validate_bitmap_layout::<F>(layout)?;
     let mut bitmap = Bitmap::new();
-    for index in 0..max_words {
-        let word = decode_bitmap_word::<F>(input, scratch)?;
-        let cont = continuation_mask(layout, index);
-        bitmap.set_word(index, word & !cont);
-        if cont != 0 {
-            if word & cont == 0 {
-                if index + 1 < usize::from(layout.min_words) {
-                    cold_path();
-                    return Err(Error::Invalid);
-                }
-                return Ok(bitmap);
+    bitmap.set_word(0, decode_bitmap_word::<F>(input, scratch)?);
+    let mut words = 1;
+    while words < max_words {
+        if let Some(flag) = word_flag(layout, words)
+            && !bitmap.get(u16::from(flag))
+        {
+            if words < usize::from(layout.min_words) {
+                cold_path();
+                return Err(Error::Invalid);
             }
-        } else if index + 1 == max_words {
-            return Ok(bitmap);
+            break;
+        }
+        bitmap.set_word(words, decode_bitmap_word::<F>(input, scratch)?);
+        words += 1;
+    }
+    let flags = flag_bits(layout, max_words);
+    for index in words + 1..max_words {
+        if let Some(flag) = word_flag(layout, index)
+            && bitmap.get(u16::from(flag))
+        {
+            cold_path();
+            return Err(Error::Invalid);
         }
     }
-    cold_path();
-    Err(Error::Invalid)
+    for index in 0..max_words {
+        bitmap.set_word(index, bitmap.word(index) & !flags.word(index));
+    }
+    Ok(bitmap)
 }

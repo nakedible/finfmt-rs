@@ -1544,8 +1544,8 @@ mod tests {
         crate::bitmap_format! { struct Format for Record, BitmapLayout::fixed(3), BitmapBinaryWord {
             3 => low: Option<A2>, 97 => middle: Option<A2>, 192 => high: Option<A2>,
         } }
-        crate::__finfmt_bitmap_assert_fields!(BitmapLayout::fixed(2), BitmapBinaryHalfWord;
-            1 => first: A2, 32 => second: A2, 65 => third: A2, 96 => fourth: A2);
+        crate::__finfmt_bitmap_assert_fields!(BitmapLayout::fixed(1), BitmapBinaryHalfWord;
+            1 => first: A2, 32 => second: A2);
         let mut output = [0; 32];
         let mut scratch = [0; 16];
         for id in 1..=192 {

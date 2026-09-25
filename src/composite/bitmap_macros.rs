@@ -5,29 +5,32 @@ macro_rules! __finfmt_bitmap_assert_fields {
         const _: () = {
             let layout: $crate::bitmap::BitmapLayout = $layout;
             let width = <$word as $crate::bitmap::BitmapWord>::DECODED_BYTES;
+            let max_words = layout.max_words as usize;
+            let [second_flag, third_flag] = layout.word_flags;
             assert!(width > 0 && width <= 8, "bitmap word byte width out of range");
             assert!(layout.min_words > 0 && layout.min_words <= layout.max_words && layout.max_words <= 3, "invalid bitmap word counts");
-            let mut index = 0;
-            while index < 3 {
-                if let Some(bit) = layout.continuation_bits[index] {
-                    assert!(bit > 0 && bit <= 64, "bitmap continuation bit out of range");
-                    assert!(index >= layout.max_words as usize || bit as usize <= width * 8, "bitmap continuation bit outside word width");
-                }
-                index += 1;
+            assert!(width == 8 || max_words == 1, "a narrow bitmap must be a single word");
+            let mut flags: [u16; 2] = [0; 2];
+            if max_words > 1 && let Some(flag) = second_flag {
+                assert!(flag > 0 && flag <= 64, "a bitmap word flag must be in an earlier word");
+                flags[0] = flag as u16;
+            }
+            if max_words > 2 && let Some(flag) = third_flag {
+                assert!(flag > 0 && flag <= 128, "a bitmap word flag must be in an earlier word");
+                assert!(flag as u16 != flags[0], "bitmap word flags must be distinct");
+                flags[1] = flag as u16;
             }
             let fields: &[u16] = &[$($id),*];
-            index = 0;
+            let mut index = 0;
             while index < fields.len() {
                 let id = fields[index] as usize;
                 assert!(id > 0 && id <= 192, "bitmap field must be in 1..=192");
                 assert!(index == 0 || fields[index - 1] < fields[index], "bitmap fields must be declared in ascending order");
                 let word = (id - 1) / 64;
                 let bit = (id - 1) % 64 + 1;
-                assert!(word < layout.max_words as usize, "bitmap field exceeds configured word count");
+                assert!(word < max_words, "bitmap field exceeds configured word count");
                 assert!(bit <= width * 8, "bitmap field exceeds decoded word width");
-                if let Some(continuation) = layout.continuation_bits[word] {
-                    assert!(bit != continuation as usize, "bitmap field uses reserved continuation bit");
-                }
+                assert!(fields[index] != flags[0] && fields[index] != flags[1], "bitmap field uses a word flag");
                 index += 1;
             }
         };
@@ -234,7 +237,7 @@ macro_rules! __finfmt_bitmap_encode_fields {
 /// Define a bitmap record with a constant layout and ascending field numbers.
 ///
 /// Fields must fit the configured words and their decoded width, and must not
-/// occupy continuation positions. Unknown incoming fields are rejected before
+/// be word flags. Unknown incoming fields are rejected before
 /// any body field is decoded. Header slots are always physically present; use
 /// an explicit `OptionalAbsent` format for a header absence pattern.
 ///
@@ -274,7 +277,7 @@ macro_rules! __finfmt_bitmap_encode_fields {
 /// } }
 /// ```
 ///
-/// Narrow words preserve 64-field group numbering.
+/// A narrow bitmap is a single word.
 ///
 /// ```compile_fail
 /// # use finfmt::*;
@@ -282,11 +285,11 @@ macro_rules! __finfmt_bitmap_encode_fields {
 /// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
 /// # struct Record { value: String }
 /// bitmap_format! { struct Format for Record, BitmapLayout::fixed(2), Field<Binary<4, 4>, Fixed<4>> {
-///     33 => value: A2,
+///     2 => value: A2,
 /// } }
 /// ```
 ///
-/// Continuation positions are reserved.
+/// Word flags are not fields.
 ///
 /// ```compile_fail
 /// # use finfmt::*;
@@ -294,7 +297,7 @@ macro_rules! __finfmt_bitmap_encode_fields {
 /// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
 /// # struct Record { value: String }
 /// bitmap_format! { struct Format for Record, BitmapLayout::iso(1, 2), Field<Binary<8, 8>, Fixed<8>> {
-///     65 => value: A2,
+///     1 => value: A2,
 /// } }
 /// ```
 ///
