@@ -50,7 +50,8 @@ pub struct Fixed<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for Fixed<N> {
     #[inline(always)]
-    fn encoded_len(_count: usize, wire_len: usize) -> Result<usize, Error> {
+    fn encoded_len(count: usize, wire_len: usize) -> Result<usize, Error> {
+        debug_assert_eq!(count, N, "value does not fill the fixed width");
         debug_assert_eq!(S::encoded_len_of_count(N), Ok(wire_len));
         Ok(0)
     }
@@ -320,9 +321,10 @@ mod tests {
     #[test]
     fn fixed_framing_asserts_only_in_debug() {
         fn check<L: LengthSpec<Identity>>() {
-            for len in [0, 1, 3] {
-                let predicted = std::panic::catch_unwind(|| L::encoded_len(len, len));
-                let encoded = std::panic::catch_unwind(|| L::encode(&mut &mut [][..], &mut [][..], len, len));
+            // A short count with the right wire length is a packed value one digit short.
+            for (count, wire_len) in [(0, 0), (1, 1), (3, 3), (1, 2)] {
+                let predicted = std::panic::catch_unwind(|| L::encoded_len(count, wire_len));
+                let encoded = std::panic::catch_unwind(|| L::encode(&mut &mut [][..], &mut [][..], count, wire_len));
                 if cfg!(debug_assertions) {
                     assert!(predicted.is_err());
                     assert!(encoded.is_err());
@@ -331,8 +333,7 @@ mod tests {
                     assert_eq!(encoded.unwrap(), Ok(()));
                 }
             }
-            // Framing does not forbid an explicit transform from shortening input.
-            assert_eq!(L::encoded_len(usize::MAX, 2), Ok(0));
+            assert_eq!(L::encoded_len(2, 2), Ok(0));
         }
         check::<Fixed<2>>();
     }
