@@ -171,8 +171,7 @@ mod tests {
     type A2 = Field<Ascii<2, 2>, Fixed<2>>;
     type A3 = Field<Ascii<3, 3>, Fixed<3>>;
     type A4 = Field<crate::Ascii<4, 4>, Fixed<4>>;
-    type BitmapBinaryHalfWord = Field<Binary<4, 4>, Fixed<4>>;
-    type BitmapBinaryWord = Field<Binary<8, 8>, Fixed<8>>;
+    type BitmapBinaryWord = crate::Identity;
     type Track2Fmt = Field<Track2<1, 37>, EbcdicWireLength<2>, crate::chain!(PadRightEven<b'?'>, crate::PackNibblesLeft<BcdzDigits, 0x0F>)>;
     const PIPE_SEPARATOR: u8 = b'|';
 
@@ -250,7 +249,7 @@ mod tests {
     }
 
     crate::bitmap_format! {
-        struct BorrowedBitmapFmt for<'a> BorrowedBitmap<'a>, crate::bitmap::BitmapLayout::fixed(1), BitmapBinaryHalfWord {
+        struct BorrowedBitmapFmt for<'a> BorrowedBitmap<'a>, crate::bitmap::BitmapLayout::bits(32), BitmapBinaryWord {
             2 => required: A4,
             3 => optional: Option<A4>,
             4 => ebcdic: Option<A4Ebcdic>,
@@ -522,7 +521,7 @@ mod tests {
     }
 
     crate::bitmap_format! {
-        struct LocalBitmapDataFmt for LocalBitmapData, crate::bitmap::BitmapLayout::fixed(1), BitmapBinaryHalfWord {
+        struct LocalBitmapDataFmt for LocalBitmapData, crate::bitmap::BitmapLayout::bits(32), BitmapBinaryWord {
             head: {
                 _: A4 = b"HEAD",
             }
@@ -539,7 +538,7 @@ mod tests {
     }
 
     crate::bitmap_format! {
-        struct BitmapNoDefaultFmt for BitmapNoDefault, crate::bitmap::BitmapLayout::fixed(1), BitmapBinaryHalfWord {
+        struct BitmapNoDefaultFmt for BitmapNoDefault, crate::bitmap::BitmapLayout::bits(32), BitmapBinaryWord {
             head: {
                 head_code: N2,
                 _: A4 = b"HEAD",
@@ -1544,7 +1543,7 @@ mod tests {
         crate::bitmap_format! { struct Format for Record, BitmapLayout::fixed(3), BitmapBinaryWord {
             3 => low: Option<A2>, 97 => middle: Option<A2>, 192 => high: Option<A2>,
         } }
-        crate::__finfmt_bitmap_assert_fields!(BitmapLayout::fixed(1), BitmapBinaryHalfWord;
+        crate::__finfmt_bitmap_assert_fields!(BitmapLayout::bits(32), BitmapBinaryWord;
             1 => first: A2, 32 => second: A2);
         let mut output = [0; 32];
         let mut scratch = [0; 16];

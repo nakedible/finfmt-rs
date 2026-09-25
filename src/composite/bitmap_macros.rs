@@ -4,10 +4,10 @@ macro_rules! __finfmt_bitmap_assert_fields {
     ($layout:expr, $word:ty; $($id:literal => $field:ident : $fmt:ty),* $(,)?) => {
         const _: () = {
             let layout: $crate::bitmap::BitmapLayout = $layout;
-            let width = <$word as $crate::bitmap::BitmapWord>::DECODED_BYTES;
+            let width = layout.word_bits as usize / 8;
             let max_words = layout.max_words as usize;
             let [second_flag, third_flag] = layout.word_flags;
-            assert!(width > 0 && width <= 8, "bitmap word byte width out of range");
+            assert!(layout.word_bits > 0 && layout.word_bits <= 64 && layout.word_bits % 8 == 0, "bitmap word width must be a multiple of 8 bits up to 64");
             assert!(layout.min_words > 0 && layout.min_words <= layout.max_words && layout.max_words <= 3, "invalid bitmap word counts");
             assert!(width == 8 || max_words == 1, "a narrow bitmap must be a single word");
             let mut flags: [u16; 2] = [0; 2];
@@ -248,7 +248,7 @@ macro_rules! __finfmt_bitmap_encode_fields {
 /// # use finfmt::bitmap::BitmapLayout;
 /// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
 /// # struct Record { value: String }
-/// bitmap_format! { struct Format for Record, BitmapLayout::fixed(3), Field<Binary<8, 8>, Fixed<8>> {
+/// bitmap_format! { struct Format for Record, BitmapLayout::fixed(3), Identity {
 ///     193 => value: A2,
 /// } }
 /// ```
@@ -260,7 +260,7 @@ macro_rules! __finfmt_bitmap_encode_fields {
 /// # use finfmt::bitmap::BitmapLayout;
 /// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
 /// # struct Record { first: String, second: String }
-/// bitmap_format! { struct Format for Record, BitmapLayout::fixed(1), Field<Binary<8, 8>, Fixed<8>> {
+/// bitmap_format! { struct Format for Record, BitmapLayout::fixed(1), Identity {
 ///     3 => first: A2, 2 => second: A2,
 /// } }
 /// ```
@@ -272,8 +272,20 @@ macro_rules! __finfmt_bitmap_encode_fields {
 /// # use finfmt::bitmap::BitmapLayout;
 /// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
 /// # struct Record { value: String }
-/// bitmap_format! { struct Format for Record, BitmapLayout::fixed(1), Field<Binary<8, 8>, Fixed<8>> {
+/// bitmap_format! { struct Format for Record, BitmapLayout::fixed(1), Identity {
 ///     65 => value: A2,
+/// } }
+/// ```
+///
+/// Fields must fit a narrow word.
+///
+/// ```compile_fail
+/// # use finfmt::*;
+/// # use finfmt::bitmap::BitmapLayout;
+/// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
+/// # struct Record { value: String }
+/// bitmap_format! { struct Format for Record, BitmapLayout::bits(32), Identity {
+///     33 => value: A2,
 /// } }
 /// ```
 ///
@@ -284,7 +296,7 @@ macro_rules! __finfmt_bitmap_encode_fields {
 /// # use finfmt::bitmap::BitmapLayout;
 /// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
 /// # struct Record { value: String }
-/// bitmap_format! { struct Format for Record, BitmapLayout::fixed(2), Field<Binary<4, 4>, Fixed<4>> {
+/// bitmap_format! { struct Format for Record, BitmapLayout { max_words: 2, ..BitmapLayout::bits(32) }, Identity {
 ///     2 => value: A2,
 /// } }
 /// ```
@@ -296,7 +308,7 @@ macro_rules! __finfmt_bitmap_encode_fields {
 /// # use finfmt::bitmap::BitmapLayout;
 /// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
 /// # struct Record { value: String }
-/// bitmap_format! { struct Format for Record, BitmapLayout::iso(1, 2), Field<Binary<8, 8>, Fixed<8>> {
+/// bitmap_format! { struct Format for Record, BitmapLayout::iso(1, 2), Identity {
 ///     1 => value: A2,
 /// } }
 /// ```
@@ -308,7 +320,7 @@ macro_rules! __finfmt_bitmap_encode_fields {
 /// # use finfmt::bitmap::BitmapLayout;
 /// # type A2 = Field<Ascii<2, 2>, Fixed<2>>;
 /// # struct Record { value: Option<String> }
-/// bitmap_format! { struct Format for Record, BitmapLayout::fixed(1), Field<Binary<8, 8>, Fixed<8>> {
+/// bitmap_format! { struct Format for Record, BitmapLayout::fixed(1), Identity {
 ///     head: { value: Option<A2>, }
 /// } }
 /// ```

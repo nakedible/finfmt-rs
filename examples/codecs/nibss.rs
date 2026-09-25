@@ -11,8 +11,7 @@ impl<const MIN: usize, const MAX: usize> Check for Track2Nibss<MIN, MAX> {
     }
 }
 
-type BitmapAsciiHexWord =
-    finfmt::Field<finfmt::Binary<8, 8>, finfmt::Fixed<8>, finfmt::UnpackNibbles<finfmt::primitive::nibble::UpperHexDigits>>;
+type BitmapAsciiHexWord = finfmt::UnpackNibbles<finfmt::primitive::nibble::UpperHexDigits>;
 
 pub type FixedAsciiNumeric<const N: usize> = Field<Numeric<N, N>, Fixed<N>>;
 pub type FixedAsciiAmount<const N: usize> = Field<Numeric<1, N>, Fixed<N>, PadLeft<N, b'0', 1>>;

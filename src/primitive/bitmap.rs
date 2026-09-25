@@ -1,9 +1,9 @@
 #[cfg(all(not(debug_assertions), feature = "no-panic"))]
 use no_panic::no_panic;
 
-use super::bytes::is_filled;
+use super::bytes::{is_filled, take_bytes};
 use crate::utils::cold_path;
-use crate::{Error, ScalarFmt};
+use crate::{Error, Step};
 
 /// Presence bits for fields 1 through 192, stored most-significant bit first.
 ///
@@ -20,25 +20,14 @@ pub struct Bitmap([u64; 3]);
 /// one always follows its predecessor. The first `min_words` words are always
 /// present, with their flags set. Flags of words within `max_words` are not
 /// fields, so decoding clears them; other bits are ordinary fields.
+///
+/// Words are 64 bits, except a single-word bitmap made with [`Self::bits`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BitmapLayout {
     pub min_words: u8,
     pub max_words: u8,
     pub word_flags: [Option<u8>; 2],
-}
-
-/// A scalar codec for the semantic bytes of one bitmap word.
-///
-/// Encoding receives exactly [`Self::DECODED_BYTES`] high-order bytes of a
-/// 64-field word. The codec must preserve those bytes, and successful decoding
-/// must return exactly that byte count. Wire framing, validation, and cursor
-/// advancement follow [`ScalarFmt`]. Scratch may hold the decoded bytes until
-/// they are copied into the owned bitmap.
-///
-/// Wire size can differ: eight decoded bytes become sixteen hexadecimal wire bytes.
-pub trait BitmapWord: ScalarFmt {
-    /// Number of semantic bytes per word, in `1..=8`, before wire transforms.
-    const DECODED_BYTES: usize;
+    pub word_bits: u8,
 }
 
 impl BitmapLayout {
@@ -54,6 +43,7 @@ impl BitmapLayout {
             min_words,
             max_words,
             word_flags,
+            word_bits: 64,
         }
     }
 
@@ -67,6 +57,16 @@ impl BitmapLayout {
     #[inline(always)]
     pub const fn fixed(words: u8) -> Self {
         Self::new(words, words, [None; 2])
+    }
+
+    /// A single word of `bits` bits, a multiple of 8 up to 64, holding fields
+    /// 1 through `bits`.
+    #[inline(always)]
+    pub const fn bits(bits: u8) -> Self {
+        Self {
+            word_bits: bits,
+            ..Self::fixed(1)
+        }
     }
 }
 
@@ -144,12 +144,11 @@ impl Bitmap {
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-fn validate_bitmap_layout<F: BitmapWord>(layout: BitmapLayout) -> Result<usize, Error> {
-    debug_assert!(F::DECODED_BYTES > 0 && F::DECODED_BYTES <= 8, "bitmap word byte width out of range");
-    if F::DECODED_BYTES == 0 || F::DECODED_BYTES > 8 {
-        cold_path();
-        return Err(Error::Internal);
-    }
+fn validate_bitmap_layout(layout: BitmapLayout) -> Result<usize, Error> {
+    debug_assert!(
+        layout.word_bits > 0 && layout.word_bits <= 64 && layout.word_bits.is_multiple_of(8),
+        "bitmap word width must be a multiple of 8 bits up to 64"
+    );
     let max_words = usize::from(layout.max_words);
     debug_assert!(max_words > 0 && max_words <= 3, "bitmap max_words out of range");
     if max_words == 0 || max_words > 3 {
@@ -165,7 +164,7 @@ fn validate_bitmap_layout<F: BitmapWord>(layout: BitmapLayout) -> Result<usize, 
         return Err(Error::Internal);
     }
 
-    debug_assert!(F::DECODED_BYTES == 8 || max_words == 1, "a narrow bitmap must be a single word");
+    debug_assert!(layout.word_bits == 64 || max_words == 1, "a narrow bitmap must be a single word");
     let mut index = 1usize;
     while index < max_words {
         if let Some(flag) = word_flag(layout, index) {
@@ -204,53 +203,39 @@ fn flag_bits(layout: BitmapLayout, max_words: usize) -> Bitmap {
     flags
 }
 
+/// The bytes of each word, clamped so a malformed width cannot index past it.
 #[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-fn encode_bitmap_word<F: BitmapWord>(output: &mut &mut [u8], scratch: &mut [u8], word: u64) -> Result<(), Error> {
-    let scratch_ptr = &mut scratch[..];
-    let word = word.to_be_bytes();
-    debug_assert!(
-        word.get(F::DECODED_BYTES..).is_some_and(|tail| is_filled(tail, 0)),
-        "bitmap contains bits outside word width"
-    );
-    let bytes = word.get(..F::DECODED_BYTES).ok_or_else(|| {
-        cold_path();
-        Error::Internal
-    })?;
-    F::encode(output, scratch_ptr, bytes)
+fn word_bytes(layout: BitmapLayout) -> usize {
+    usize::from(layout.word_bits / 8).min(8)
 }
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-fn decode_bitmap_word<F: BitmapWord>(input: &mut &[u8], scratch: &mut [u8]) -> Result<u64, Error> {
-    // Reborrow input for scratch's lifetime, then restore a suffix of the original slice.
-    let source = *input;
-    let mut input_ptr = source;
-    let mut scratch_ptr = &mut scratch[..];
-    let bytes = F::decode(&mut input_ptr, &mut scratch_ptr)?;
-    debug_assert_eq!(bytes.len(), F::DECODED_BYTES, "bitmap word decoder returned incorrect length");
-    if bytes.len() != F::DECODED_BYTES {
-        cold_path();
-        return Err(Error::Internal);
-    }
+fn encode_bitmap_word<S: Step>(output: &mut &mut [u8], scratch: &mut [u8], word: u64, len: usize) -> Result<(), Error> {
+    let word = word.to_be_bytes();
+    debug_assert!(
+        word.get(len..).is_some_and(|tail| is_filled(tail, 0)),
+        "bitmap contains bits outside word width"
+    );
+    S::encode(output, scratch, word.get(..len).unwrap_or(&word))?;
+    Ok(())
+}
+
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+fn decode_bitmap_word<S: Step>(input: &mut &[u8], scratch: &mut [u8], len: usize) -> Result<u64, Error> {
+    let wire = take_bytes(input, S::encoded_len_of_count(len)?)?;
+    let bytes = S::decode(wire, &mut &mut scratch[..], Some(len))?;
+    debug_assert_eq!(bytes.len(), len, "bitmap word step decoded a different number of bytes");
     let mut word = [0u8; 8];
-    let dst = word.get_mut(..F::DECODED_BYTES).ok_or_else(|| {
-        cold_path();
-        Error::Internal
-    })?;
-    dst.copy_from_slice(bytes);
-    let consumed = source.len().checked_sub(input_ptr.len()).ok_or_else(|| {
-        cold_path();
-        Error::Internal
-    })?;
-    *input = source.get(consumed..).ok_or_else(|| {
-        cold_path();
-        Error::Internal
-    })?;
+    for (dst, &src) in word.iter_mut().zip(bytes) {
+        *dst = src;
+    }
     Ok(u64::from_be_bytes(word))
 }
 
-/// Encode semantic presence bits through the supplied word format.
+/// Encode semantic presence bits, each word through the representation step
+/// `S`, such as `Identity` for binary or `UnpackNibbles` for hex.
 ///
 /// Sends the words up to the last one with a field set, but at least
 /// `min_words`, and any flagless words that must follow them, setting the flags
@@ -259,13 +244,8 @@ fn decode_bitmap_word<F: BitmapWord>(input: &mut &[u8], scratch: &mut [u8]) -> R
 /// builds. A narrow word uses the high bytes of the first word.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn encode_bitmap<F: BitmapWord>(
-    output: &mut &mut [u8],
-    scratch: &mut [u8],
-    bitmap: &Bitmap,
-    layout: BitmapLayout,
-) -> Result<(), Error> {
-    let max_words = validate_bitmap_layout::<F>(layout)?;
+pub fn encode_bitmap<S: Step>(output: &mut &mut [u8], scratch: &mut [u8], bitmap: &Bitmap, layout: BitmapLayout) -> Result<(), Error> {
+    let max_words = validate_bitmap_layout(layout)?;
     debug_assert!(bitmap.highest_word() < max_words, "bitmap contains words outside layout");
     let flags = flag_bits(layout, max_words);
     let mut wire = Bitmap::new();
@@ -287,7 +267,7 @@ pub fn encode_bitmap<F: BitmapWord>(
         }
     }
     for index in 0..words {
-        encode_bitmap_word::<F>(output, scratch, wire.word(index))?;
+        encode_bitmap_word::<S>(output, scratch, wire.word(index), word_bytes(layout))?;
     }
     Ok(())
 }
@@ -299,10 +279,10 @@ pub fn encode_bitmap<F: BitmapWord>(
 /// into the bitmap.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn decode_bitmap<F: BitmapWord>(input: &mut &[u8], scratch: &mut [u8], layout: BitmapLayout) -> Result<Bitmap, Error> {
-    let max_words = validate_bitmap_layout::<F>(layout)?;
+pub fn decode_bitmap<S: Step>(input: &mut &[u8], scratch: &mut [u8], layout: BitmapLayout) -> Result<Bitmap, Error> {
+    let max_words = validate_bitmap_layout(layout)?;
     let mut bitmap = Bitmap::new();
-    bitmap.set_word(0, decode_bitmap_word::<F>(input, scratch)?);
+    bitmap.set_word(0, decode_bitmap_word::<S>(input, scratch, word_bytes(layout))?);
     let mut words = 1;
     while words < max_words {
         if let Some(flag) = word_flag(layout, words)
@@ -314,7 +294,7 @@ pub fn decode_bitmap<F: BitmapWord>(input: &mut &[u8], scratch: &mut [u8], layou
             }
             break;
         }
-        bitmap.set_word(words, decode_bitmap_word::<F>(input, scratch)?);
+        bitmap.set_word(words, decode_bitmap_word::<S>(input, scratch, word_bytes(layout))?);
         words += 1;
     }
     let flags = flag_bits(layout, max_words);

@@ -1,9 +1,9 @@
 use crate::primitive::bitmap::{Bitmap, BitmapLayout, decode_bitmap, encode_bitmap};
-use crate::{Binary, Error, Field, Fixed, UnpackNibbles};
+use crate::{Error, Identity, UnpackNibbles};
 
 const ISO_2_LAYOUT: BitmapLayout = BitmapLayout::iso(1, 2);
-type BitmapBinaryWord = Field<Binary<8, 8>, Fixed<8>>;
-type BitmapAsciiHexWord = Field<Binary<8, 8>, Fixed<8>, UnpackNibbles<crate::primitive::nibble::UpperHexDigits>>;
+type BitmapBinaryWord = Identity;
+type BitmapAsciiHexWord = UnpackNibbles<crate::primitive::nibble::UpperHexDigits>;
 
 #[inline(never)]
 pub fn encode_bitmap_binary_iso2(output: &mut &mut [u8], scratch: &mut [u8], bitmap: &Bitmap) -> Result<(), Error> {
@@ -47,12 +47,12 @@ pub fn decode_bitmap_binary_fixed2(input: &mut &[u8], scratch: &mut [u8]) -> Res
 
 #[inline(never)]
 pub fn encode_bitmap_binary_half_word(output: &mut &mut [u8], scratch: &mut [u8], bitmap: &Bitmap) -> Result<(), Error> {
-    encode_bitmap::<Field<Binary<4, 4>, Fixed<4>>>(output, scratch, bitmap, BitmapLayout::fixed(1))
+    encode_bitmap::<BitmapBinaryWord>(output, scratch, bitmap, BitmapLayout::bits(32))
 }
 
 #[inline(never)]
 pub fn decode_bitmap_binary_half_word(input: &mut &[u8], scratch: &mut [u8]) -> Result<Bitmap, Error> {
-    decode_bitmap::<Field<Binary<4, 4>, Fixed<4>>>(input, scratch, BitmapLayout::fixed(1))
+    decode_bitmap::<BitmapBinaryWord>(input, scratch, BitmapLayout::bits(32))
 }
 
 #[inline(never)]
