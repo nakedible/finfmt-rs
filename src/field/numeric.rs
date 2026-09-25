@@ -19,8 +19,15 @@ use crate::primitive::validation::validate_byte_length;
 use crate::utils::cold_path;
 use crate::{Error, ScalarFmt};
 
-/// Prefix a nonnegative magnitude with one of two distinct sign bytes; equal
-/// sign bytes are a composition mistake, asserted in debug builds. Typed numeric methods
+/// Prefix a nonnegative magnitude with one of two distinct sign bytes. Equal
+/// sign bytes fail to build:
+///
+/// ```compile_fail
+/// use finfmt::{FixedBinaryBe, ScalarFmt, SignPrefix};
+/// let _ = SignPrefix::<FixedBinaryBe<1>, b'X', b'X'>::encoded_len(b"1");
+/// ```
+///
+/// Typed numeric methods
 /// delegate the magnitude to the inner numeric codec.
 pub struct SignPrefix<F, const POS: u8 = b'C', const NEG: u8 = b'D'>(PhantomData<F>);
 /// Prefix negative magnitudes only. The inner format represents a nonnegative
@@ -29,6 +36,13 @@ pub struct SignPrefix<F, const POS: u8 = b'C', const NEG: u8 = b'D'>(PhantomData
 pub struct MinusPrefix<F, const NEG: u8 = b'-'>(PhantomData<F>);
 pub struct FixedNibbleInt<F, const N: usize>(PhantomData<F>);
 pub struct FixedBinaryBe<const N: usize>;
+/// A two's-complement big-endian integer of `N` bytes, 1 to 8. Other widths
+/// fail to build:
+///
+/// ```compile_fail
+/// use finfmt::{FixedSignedBinaryBe, ScalarFmt};
+/// let _ = FixedSignedBinaryBe::<9>::encoded_len_i64(1);
+/// ```
 pub struct FixedSignedBinaryBe<const N: usize>;
 pub struct FixedComp3<const N: usize>;
 pub struct FixedSignedComp3<const N: usize>;
@@ -46,11 +60,13 @@ impl<const N: usize> FixedDecimalCodec for FixedComp3<N> {
     const WIRE_LEN: usize = N;
     #[inline(always)]
     fn max_digits() -> usize {
+        const { assert!(N != 0, "packed decimal width must be nonzero") };
         packed_decimal_max_digits(N)
     }
     const SIGNED: bool = false;
     #[inline(always)]
     fn encode_digits(output: &mut &mut [u8], digits: &[u8], negative: bool) -> Result<(), Error> {
+        const { assert!(N != 0, "packed decimal width must be nonzero") };
         encode_packed_decimal_digits(output, digits, negative, false, N)
     }
 }
@@ -59,11 +75,13 @@ impl<const N: usize> FixedDecimalCodec for FixedSignedComp3<N> {
     const WIRE_LEN: usize = N;
     #[inline(always)]
     fn max_digits() -> usize {
+        const { assert!(N != 0, "packed decimal width must be nonzero") };
         packed_decimal_max_digits(N)
     }
     const SIGNED: bool = true;
     #[inline(always)]
     fn encode_digits(output: &mut &mut [u8], digits: &[u8], negative: bool) -> Result<(), Error> {
+        const { assert!(N != 0, "packed decimal width must be nonzero") };
         encode_packed_decimal_digits(output, digits, negative, true, N)
     }
 }
@@ -72,12 +90,13 @@ impl<const N: usize> FixedDecimalCodec for FixedSignedZonedEbcdic<N> {
     const WIRE_LEN: usize = N;
     #[inline(always)]
     fn max_digits() -> usize {
-        debug_assert!(N != 0, "zoned decimal width must be nonzero");
+        const { assert!(N != 0, "zoned decimal width must be nonzero") };
         N
     }
     const SIGNED: bool = true;
     #[inline(always)]
     fn encode_digits(output: &mut &mut [u8], digits: &[u8], negative: bool) -> Result<(), Error> {
+        const { assert!(N != 0, "zoned decimal width must be nonzero") };
         encode_zoned_decimal_digits(output, digits, negative, N)
     }
 }
@@ -85,7 +104,7 @@ impl<const N: usize> FixedDecimalCodec for FixedSignedZonedEbcdic<N> {
 impl<F, const POS: u8, const NEG: u8> SignPrefix<F, POS, NEG> {
     #[inline(always)]
     fn assert_distinct_signs() {
-        debug_assert!(POS != NEG, "SignPrefix needs distinct sign bytes");
+        const { assert!(POS != NEG, "SignPrefix needs distinct sign bytes") }
     }
 }
 
@@ -377,12 +396,14 @@ impl<const N: usize> ScalarFmt for FixedBinaryBe<N> {
 impl<const N: usize> ScalarFmt for FixedSignedBinaryBe<N> {
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
+        const { assert!(N >= 1 && N <= 8, "signed binary width must be 1 to 8 bytes") };
         validate_byte_length(input, N, N)?;
         Ok(N)
     }
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
+        const { assert!(N >= 1 && N <= 8, "signed binary width must be 1 to 8 bytes") };
         validate_byte_length(input, N, N)?;
         copy_bytes(output, input)?;
         Ok(())
@@ -390,11 +411,13 @@ impl<const N: usize> ScalarFmt for FixedSignedBinaryBe<N> {
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
+        const { assert!(N >= 1 && N <= 8, "signed binary width must be 1 to 8 bytes") };
         take_bytes(input, N)
     }
 
     #[inline(always)]
     fn encoded_len_u64(input: u64) -> Result<usize, Error> {
+        const { assert!(N >= 1 && N <= 8, "signed binary width must be 1 to 8 bytes") };
         let input = i64::try_from(input).map_err(|_| {
             cold_path();
             Error::Invalid
@@ -404,6 +427,7 @@ impl<const N: usize> ScalarFmt for FixedSignedBinaryBe<N> {
 
     #[inline(always)]
     fn encode_u64(output: &mut &mut [u8], _scratch: &mut [u8], input: u64) -> Result<(), Error> {
+        const { assert!(N >= 1 && N <= 8, "signed binary width must be 1 to 8 bytes") };
         let input = i64::try_from(input).map_err(|_| {
             cold_path();
             Error::Invalid
@@ -413,6 +437,7 @@ impl<const N: usize> ScalarFmt for FixedSignedBinaryBe<N> {
 
     #[inline(always)]
     fn decode_u64<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<u64, Error> {
+        const { assert!(N >= 1 && N <= 8, "signed binary width must be 1 to 8 bytes") };
         let value = Self::decode_i64(input, scratch)?;
         u64::try_from(value).map_err(|_| {
             cold_path();
@@ -422,17 +447,20 @@ impl<const N: usize> ScalarFmt for FixedSignedBinaryBe<N> {
 
     #[inline(always)]
     fn encoded_len_i64(input: i64) -> Result<usize, Error> {
+        const { assert!(N >= 1 && N <= 8, "signed binary width must be 1 to 8 bytes") };
         validate_binary_i64_be_fixed(input, N)?;
         Ok(N)
     }
 
     #[inline(always)]
     fn encode_i64(output: &mut &mut [u8], _scratch: &mut [u8], input: i64) -> Result<(), Error> {
+        const { assert!(N >= 1 && N <= 8, "signed binary width must be 1 to 8 bytes") };
         encode_binary_i64_be_fixed(output, input, N)
     }
 
     #[inline(always)]
     fn decode_i64<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<i64, Error> {
+        const { assert!(N >= 1 && N <= 8, "signed binary width must be 1 to 8 bytes") };
         decode_binary_i64_be_fixed(input, N)
     }
 }
@@ -440,17 +468,20 @@ impl<const N: usize> ScalarFmt for FixedSignedBinaryBe<N> {
 impl<const N: usize> ScalarFmt for FixedComp3<N> {
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
+        const { assert!(N != 0, "packed decimal width must be nonzero") };
         parse_unsigned_decimal(input, packed_decimal_max_digits(N))?;
         Ok(N)
     }
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
+        const { assert!(N != 0, "packed decimal width must be nonzero") };
         encode_packed_decimal_fixed(output, input, N)
     }
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
+        const { assert!(N != 0, "packed decimal width must be nonzero") };
         decode_packed_decimal_fixed(input, scratch, N).map(|buf| &*buf)
     }
 }
@@ -458,17 +489,20 @@ impl<const N: usize> ScalarFmt for FixedComp3<N> {
 impl<const N: usize> ScalarFmt for FixedSignedComp3<N> {
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
+        const { assert!(N != 0, "packed decimal width must be nonzero") };
         parse_signed_decimal(input, packed_decimal_max_digits(N))?;
         Ok(N)
     }
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
+        const { assert!(N != 0, "packed decimal width must be nonzero") };
         encode_packed_decimal_signed_fixed(output, input, N)
     }
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
+        const { assert!(N != 0, "packed decimal width must be nonzero") };
         decode_packed_decimal_signed_fixed(input, scratch, N).map(|buf| &*buf)
     }
 }
@@ -476,18 +510,20 @@ impl<const N: usize> ScalarFmt for FixedSignedComp3<N> {
 impl<const N: usize> ScalarFmt for FixedSignedZonedEbcdic<N> {
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
-        debug_assert!(N != 0, "zoned decimal width must be nonzero");
+        const { assert!(N != 0, "zoned decimal width must be nonzero") };
         parse_signed_decimal(input, N)?;
         Ok(N)
     }
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
+        const { assert!(N != 0, "zoned decimal width must be nonzero") };
         encode_zoned_decimal_signed_fixed(output, input, N)
     }
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
+        const { assert!(N != 0, "zoned decimal width must be nonzero") };
         decode_zoned_decimal_signed_fixed(input, scratch, N).map(|buf| &*buf)
     }
 }
@@ -770,27 +806,14 @@ mod tests {
     #[test]
     #[cfg(debug_assertions)]
     fn composition_mistakes_are_debug_assertions() {
-        fn panics(f: impl FnOnce()) {
-            assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err());
-        }
-        panics(|| {
-            let _ = SignPrefix::<FixedBinaryBe<1>, b'X', b'X'>::encoded_len(b"1");
-        });
-        panics(|| {
-            let _ = FixedComp3::<0>::encoded_len(b"0");
-        });
-        panics(|| {
-            let _ = ImpliedDecimal::<FixedSignedComp3<0>, 0>::encoded_len(b"0");
-        });
-        panics(|| {
-            let _ = FixedSignedZonedEbcdic::<0>::encoded_len(b"0");
-        });
-        panics(|| {
-            let _ = FixedSignedBinaryBe::<9>::encoded_len_i64(1);
-        });
-        panics(|| {
-            let _ = crate::primitive::decimal::encode_ascii_decimal_fixed(&mut &mut [0; 4][..], 0, 0);
-        });
+        // Formats with impossible const parameters fail to build instead; see
+        // the `compile_fail` examples on `SignPrefix` and `FixedSignedBinaryBe`.
+        assert!(
+            std::panic::catch_unwind(|| {
+                let _ = crate::primitive::decimal::encode_ascii_decimal_fixed(&mut &mut [0; 4][..], 0, 0);
+            })
+            .is_err()
+        );
     }
 
     #[test]
