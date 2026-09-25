@@ -10,6 +10,12 @@ use crate::utils::{cold_path, length_as_invalid, split_scratch};
 /// Chained steps must agree on the units at each intermediate boundary.
 pub trait Step {
     /// Encoding can transform the bytes in place without changing their length.
+    ///
+    /// This is a speed optimisation: a `Chain` ending in such a step lets the
+    /// earlier steps write straight into output and transforms them there,
+    /// skipping a scratch stage. For padded CP037 text this is 12–67% faster on
+    /// 8–32 byte fields; the gain fades by 64 bytes. It also lets such chains
+    /// encode without scratch, though callers always provide scratch.
     const ENCODE_IN_PLACE: bool = false;
 
     /// Exact encoded byte count from logical input length. Built-in steps use
