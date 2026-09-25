@@ -273,9 +273,9 @@ explicitly consumes them.
 
 Union and literal matching paths are allowed to decode speculatively. They must
 snapshot input cursors before trial decoding and only advance the input for the
-successful path. Union decode tries arms in order. `Invalid`,
-`InvalidValueLength`, and `UnexpectedEof` mean "try the next arm";
-`BufferOverflow` and `Internal` are fatal. Scratch is arena space for borrowed
+successful path. Union decode tries arms in order. `Invalid` and
+`UnexpectedEof` mean "try the next arm"; `BufferOverflow` and `Internal` are
+fatal. Decoding never returns `InvalidValueLength`. Scratch is arena space for borrowed
 decode, so speculative failure may consume scratch before a later union arm
 succeeds. Owned union decode can retry each arm with the original scratch slice.
 

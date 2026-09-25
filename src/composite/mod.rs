@@ -2673,7 +2673,7 @@ where
 #[inline(always)]
 #[doc(hidden)]
 pub fn should_retry_union(error: Error) -> bool {
-    matches!(error, Error::Invalid | Error::InvalidValueLength | Error::UnexpectedEof)
+    matches!(error, Error::Invalid | Error::UnexpectedEof)
 }
 
 #[inline(always)]
@@ -3011,9 +3011,8 @@ mod tagged_tests {
         fn decode<'a>(_input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
             Err(match CODE {
                 0 => Error::Invalid,
-                1 => Error::InvalidValueLength,
-                2 => Error::UnexpectedEof,
-                3 => Error::BufferOverflow,
+                1 => Error::UnexpectedEof,
+                2 => Error::BufferOverflow,
                 _ => Error::Internal,
             })
         }
@@ -3028,14 +3027,13 @@ mod tagged_tests {
                 } }
                 let mut input = &b"A"[..];
                 assert_eq!(Format::decode(&mut input, &mut &mut [][..]).map_err(|e| e.kind), $expected);
-                assert_eq!(input, if $code < 3 { &b""[..] } else { &b"A"[..] });
+                assert_eq!(input, if $code < 2 { &b""[..] } else { &b"A"[..] });
             }};
         }
         check!(0, Ok(Value::Short(())));
         check!(1, Ok(Value::Short(())));
-        check!(2, Ok(Value::Short(())));
-        check!(3, Err(Error::BufferOverflow));
-        check!(4, Err(Error::Internal));
+        check!(2, Err(Error::BufferOverflow));
+        check!(3, Err(Error::Internal));
         #[derive(Debug, PartialEq)]
         enum Body {
             Required(String),

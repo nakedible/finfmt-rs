@@ -12,7 +12,7 @@ macro_rules! __finfmt_tagged_const_decode_arm {
                 }
                 *$input = source;
             }
-            Ok(false) | Err($crate::Error::Invalid | $crate::Error::InvalidValueLength) => {}
+            Ok(false) | Err($crate::Error::Invalid) => {}
             Err($crate::Error::UnexpectedEof) => $eof = true,
             Err(error) => return Err($crate::CompositeError::from(error)),
         }
