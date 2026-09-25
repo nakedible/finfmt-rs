@@ -654,7 +654,10 @@ fn decode_packed_decimal_common<'a>(input: &[u8], output: &mut &'a mut [u8], sig
     };
     let len = digits.len();
     unpack_padded_nibbles::<BcdzDigits>(&mut &mut *digits, input, len, false, sign)?;
-    validate_numeric(&*digits, len, len)?;
+    if !digits.iter().all(u8::is_ascii_digit) {
+        cold_path();
+        return Err(Error::Invalid);
+    }
     Ok(canonical_signed_digits(buf, negative))
 }
 

@@ -14,7 +14,7 @@ use crate::primitive::int::{
     encode_binary_i64_be_fixed, encode_binary_u64_be_fixed, encode_nibble_int_fixed, validate_binary_i64_be_fixed,
     validate_nibble_int_fixed,
 };
-use crate::primitive::nibble::NibbleAlphabet;
+use crate::primitive::nibble::{NibbleAlphabet, validate_nibbles};
 use crate::primitive::validation::validate_byte_length;
 use crate::utils::cold_path;
 use crate::{Error, ScalarFmt};
@@ -295,7 +295,7 @@ impl<F: NibbleAlphabet, const N: usize> ScalarFmt for FixedNibbleInt<F, N> {
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
         let bytes = take_bytes(input, N)?;
-        validate_nibble_int_fixed::<F>(bytes, N)?;
+        validate_nibbles::<F>(bytes)?;
         Ok(bytes)
     }
 
