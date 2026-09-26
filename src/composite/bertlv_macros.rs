@@ -419,6 +419,8 @@ macro_rules! __finfmt_ber_tlv_assert_tags {
 ///
 /// Declared tags must be unique constant expressions. Repeated wire occurrences
 /// of a known tag are also rejected, independently of this declaration check.
+/// Unknown tags go to the extras collection, which decides about repeats: a map
+/// keeps the last value.
 ///
 /// ```compile_fail
 /// # use finfmt::*;

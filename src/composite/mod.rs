@@ -106,7 +106,10 @@ pub struct Empty<T>(PhantomData<T>);
 /// such as `t9F02_unknown`; values use even-length uppercase hex, including `""`.
 ///
 /// Order and duplicates are preserved if the chosen collection type preserves
-/// them. Decoding is strict by default. Set `ALLOW_ZERO_PADDING` to accept `00`
+/// them: a sequence keeps every entry, while a std map keeps the last value of a
+/// repeated tag. To catch repeats, decode into a sequence or into a map type
+/// that rejects duplicate keys, such as `serde_with`'s `MapPreventDuplicates`.
+/// Decoding is strict by default. Set `ALLOW_ZERO_PADDING` to accept `00`
 /// bytes before, between and after entries. Values are never trimmed, and
 /// encoding never emits padding.
 pub struct BerTlvList<T, const ALLOW_ZERO_PADDING: bool = false>(PhantomData<T>);
@@ -2297,14 +2300,11 @@ mod tests {
     }
 
     #[test]
-    fn test_ber_tlv_extras_duplicate_unknown_rejected_for_map() {
-        let bytes = b"\x9F\x02\x01\x01\x9F\x02\x01\x02";
-        let mut input = &bytes[..];
+    fn test_ber_tlv_extras_repeated_unknown_tag_keeps_the_last_in_a_map() {
+        let bytes = b"\x59\x04ABCD\x9F\x02\x01\x01\x9F\x02\x01\x02";
         let mut scratch = [0u8; 64];
-        assert_eq!(
-            error_kind(TlvWithExtrasFmt::decode(&mut input, &mut scratch.as_mut_slice())),
-            Err(Error::Invalid)
-        );
+        let decoded = TlvWithExtrasFmt::decode(&mut &bytes[..], &mut scratch.as_mut_slice()).unwrap();
+        assert_eq!(decoded.extras, BTreeMap::from([("t9F02_unknown".to_owned(), "02".to_owned())]));
     }
 
     #[test]

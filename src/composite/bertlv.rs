@@ -43,7 +43,7 @@ impl<T, K, V> BerTlvExtras for T
 where
     T: Extend<(K, V)>,
     for<'a> &'a T: IntoIterator<Item = (&'a K, &'a V)>,
-    K: AsRef<str> + FromStr + PartialEq,
+    K: AsRef<str> + FromStr,
     V: AsRef<str> + FromStr,
 {
     #[inline(always)]
@@ -56,13 +56,8 @@ where
 
     #[inline(always)]
     fn decode_unknown(&mut self, tag: &[u8], value: &[u8], scratch: &mut &mut [u8]) -> Result<(), Error> {
+        // A repeated unknown tag is left to the collection: a map keeps the last value.
         let (key, value) = decode_unknown_entry::<K, V>(tag, value, scratch)?;
-        for (existing_key, _) in &*self {
-            if existing_key == &key {
-                crate::utils::cold_path();
-                return Err(Error::Invalid);
-            }
-        }
         self.extend(core::iter::once((key, value)));
         Ok(())
     }
