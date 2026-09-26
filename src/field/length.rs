@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use super::Step;
+use super::{Identity, Step};
 use crate::primitive::decimal::{
     decode_ascii_decimal_fixed, decode_ebcdic_decimal_blank_zero_fixed, decode_ebcdic_decimal_fixed, encode_ascii_decimal_fixed,
     encode_ebcdic_decimal_blank_zero_fixed, encode_ebcdic_decimal_fixed, fits_decimal_width,
@@ -241,6 +241,51 @@ impl<const N: usize, S: Step> LengthSpec<S> for EbcdicWireLength<N> {
     }
 }
 
+/// A length prefix `L` whose value is the length plus `K`, for lengths that also
+/// count bytes or items outside the payload: the prefix itself, a header before
+/// it, or a header item. An IBM RDW is `Offset<WireLength<FixedBinaryBe<2>>, 2>`
+/// framing its two reserved bytes and the record. Only for [`Identity`]
+/// framing, where the length's units need no conversion. A value below `K` is
+/// `Invalid`.
+pub struct Offset<L, const K: usize>(PhantomData<L>);
+
+#[inline(always)]
+fn add_offset<const K: usize>(len: usize) -> Result<usize, Error> {
+    len.checked_add(K).ok_or_else(|| {
+        cold_path();
+        Error::Invalid
+    })
+}
+
+#[inline(always)]
+fn remove_offset<const K: usize>(len: usize) -> Result<usize, Error> {
+    len.checked_sub(K).ok_or_else(|| {
+        cold_path();
+        Error::Invalid
+    })
+}
+
+impl<L: LengthSpec<Identity>, const K: usize> LengthSpec<Identity> for Offset<L, K> {
+    #[inline(always)]
+    fn encoded_len(count: usize, wire_len: usize) -> Result<usize, Error> {
+        L::encoded_len(add_offset::<K>(count)?, add_offset::<K>(wire_len)?)
+    }
+
+    #[inline(always)]
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], count: usize, wire_len: usize) -> Result<(), Error> {
+        L::encode(output, scratch, add_offset::<K>(count)?, add_offset::<K>(wire_len)?)
+    }
+
+    #[inline(always)]
+    fn decode_plan<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<DecodePlan, Error> {
+        let plan = L::decode_plan(input, scratch)?;
+        Ok(DecodePlan {
+            wire_len: remove_offset::<K>(plan.wire_len)?,
+            count: plan.count.map(remove_offset::<K>).transpose()?,
+        })
+    }
+}
+
 /// Consume the entire remaining input supplied by the enclosing format.
 /// A following sibling requires an enclosing frame that bounds this input.
 pub struct Rest;
@@ -266,7 +311,7 @@ impl<S: Step> LengthSpec<S> for Rest {
 #[cfg(test)]
 mod tests {
     use super::{
-        AsciiLength, AsciiWireLength, BlankableEbcdicLength, EbcdicLength, EbcdicWireLength, Fixed, Length, LengthSpec,
+        AsciiLength, AsciiWireLength, BlankableEbcdicLength, EbcdicLength, EbcdicWireLength, Fixed, Length, LengthSpec, Offset, WireLength,
         encode_ascii_decimal_fixed,
     };
     use crate::field::{Ascii, Field, FixedBinaryBe, Identity, Numeric, PadLeft, PadRightEven, Step, UnpackNibbles};
@@ -287,6 +332,31 @@ mod tests {
         let mut scratch_ptr = scratch.as_mut_slice();
         let plan = L::decode_plan(&mut input, &mut scratch_ptr).unwrap();
         (plan.wire_len, plan.count)
+    }
+
+    #[test]
+    fn offset_prefixes_count_what_lies_outside_the_payload() {
+        // An IBM RDW: a 2-byte length counting itself and two reserved bytes.
+        type Rdw = Offset<WireLength<FixedBinaryBe<2>>, 2>;
+        assert_eq!(encode_length::<Rdw>(0, 10).unwrap(), [0x00, 0x0C]);
+        assert_eq!(decode_semantic::<Rdw>(&[0x00, 0x0C]), (10, None));
+        // A count that includes a header item.
+        type Items = Offset<AsciiLength<5>, 1>;
+        assert_eq!(encode_length::<Items>(2, 2).unwrap(), b"00003");
+        assert_eq!(decode_semantic::<Items>(b"00003"), (2, Some(2)));
+        for wire in [&[0x00, 0x01][..], &[0x00, 0x00]] {
+            assert!(Rdw::decode_plan(&mut &wire[..], &mut &mut [][..]).is_err_and(|error| error == Error::Invalid));
+        }
+        assert_eq!(
+            Items::decode_plan(&mut &b"00000"[..], &mut &mut [][..]).map(|plan| plan.count),
+            Err(Error::Invalid)
+        );
+
+        type Record = Field<crate::Binary<0, 20>, Rdw>;
+        let mut output = [0; 8];
+        Record::encode(&mut &mut output[..], &mut [], b"\0\0AB").unwrap();
+        assert_eq!(output[..6], *b"\x00\x06\0\0AB");
+        assert_eq!(Record::decode(&mut &output[..6], &mut &mut [][..]), Ok(&b"\0\0AB"[..]));
     }
 
     #[test]
