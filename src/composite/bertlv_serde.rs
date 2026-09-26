@@ -3,10 +3,10 @@ use serde::de::value::StrDeserializer;
 use serde::de::{DeserializeOwned, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::ser::{Impossible, SerializeMap, SerializeSeq, SerializeTuple, SerializeTupleStruct};
 
-use super::bertlv::{encode_hex_upper, encode_unknown_tag_key, encode_unknown_tlv_from_tag, parse_unknown_tag_key};
+use super::bertlv::{encode_hex_upper, encode_unknown_tlv_from_tag};
 use super::*;
 use crate::Error;
-use crate::primitive::bertlv::{BerTlvEntry, MAX_BER_TAG_BYTES};
+use crate::primitive::bertlv::{BerTlvEntry, MAX_BER_TAG_BYTES, parse_ber_tag_hex};
 use crate::utils::cold_path;
 
 trait BerTlvTextSink {
@@ -22,7 +22,7 @@ impl BerTlvTextSink for ParseUnknownTagSink {
 
     #[inline(always)]
     fn accept(self, text: &str) -> Result<Self::Ok, Error> {
-        parse_unknown_tag_key(text)
+        parse_ber_tag_hex(text)
     }
 }
 
@@ -37,7 +37,8 @@ impl BerTlvTextSink for EncodeUnknownValueSink<'_, '_> {
 
     #[inline(always)]
     fn accept(self, text: &str) -> Result<Self::Ok, Error> {
-        encode_unknown_tlv_from_tag(self.output, &self.tag_bytes[..self.tag_len], text)
+        let tag = self.tag_bytes.get(..self.tag_len).unwrap_or(&self.tag_bytes);
+        encode_unknown_tlv_from_tag(self.output, tag, text)
     }
 }
 
@@ -743,7 +744,7 @@ impl<'de, const ALLOW_ZERO_PADDING: bool> SeqAccess<'de> for BerTlvSeqDeserializ
         };
         // The text is copied into owned values, so each entry reuses the same scratch.
         let mut workspace = &mut **self.scratch;
-        let key = encode_unknown_tag_key(&mut workspace, entry.tag)?;
+        let key = encode_hex_upper(&mut workspace, entry.tag)?;
         let value = encode_hex_upper(&mut workspace, entry.value)?;
         seed.deserialize(BerTlvPairDeserializer { key, value }).map(Some)
     }
@@ -768,7 +769,7 @@ impl<'de, const ALLOW_ZERO_PADDING: bool> MapAccess<'de> for BerTlvMapDeserializ
         };
         self.pending = Some(entry);
         // The text is copied into owned values, so each entry reuses the same scratch.
-        let key = encode_unknown_tag_key(&mut &mut **self.scratch, entry.tag)?;
+        let key = encode_hex_upper(&mut &mut **self.scratch, entry.tag)?;
         seed.deserialize(BerTlvTextDeserializer { text: key }).map(Some)
     }
 
@@ -1534,23 +1535,21 @@ mod tests {
 
     #[test]
     fn collect_str_uses_reusable_bounded_scratch() {
-        let value = [
-            (Formatted("t59_unknown"), Formatted("ABCD")),
-            (Formatted("t59_unknown"), Formatted("")),
-        ];
-        for capacity in [0, 10, 11, 64] {
-            let expected = if capacity < 11 {
+        let value = [(Formatted("59"), Formatted("ABCD")), (Formatted("59"), Formatted(""))];
+        // Keys and values are formatted in turn, reusing scratch: the longest, "ABCD", sets the bound.
+        for capacity in [0, 3, 4, 64] {
+            let expected = if capacity < 4 {
                 Err(Error::BufferOverflow)
             } else {
                 Ok(b"\x59\x02\xAB\xCD\x59\0".to_vec())
             };
             assert_eq!(encode(&value.as_slice(), capacity), expected);
         }
-        assert_eq!(encode(&[("t59_unknown", "ABCD")].as_slice(), 0), Ok(b"\x59\x02\xAB\xCD".to_vec()));
-        let map = std::collections::BTreeMap::from([("t59_unknown", Formatted("ABCD"))]);
+        assert_eq!(encode(&[("59", "ABCD")].as_slice(), 0), Ok(b"\x59\x02\xAB\xCD".to_vec()));
+        let map = std::collections::BTreeMap::from([("59", Formatted("ABCD"))]);
         assert_eq!(encode(&map, 4), Ok(b"\x59\x02\xAB\xCD".to_vec()));
         assert_eq!(encode(&map, 3), Err(Error::BufferOverflow));
-        assert_eq!(encode(&[("t59_unknown", Formatted(""))].as_slice(), 0), Ok(b"\x59\0".to_vec()));
+        assert_eq!(encode(&[("59", Formatted(""))].as_slice(), 0), Ok(b"\x59\0".to_vec()));
         assert_eq!(encode(&[(Formatted("bad"), "AB")].as_slice(), 11), Err(Error::Invalid));
         for (value, error) in [
             ("A", Error::InvalidValueLength),
@@ -1558,7 +1557,7 @@ mod tests {
             ("GG", Error::Invalid),
             ("€", Error::InvalidValueLength),
         ] {
-            assert_eq!(encode(&[("t59_unknown", Formatted(value))].as_slice(), 11), Err(error));
+            assert_eq!(encode(&[("59", Formatted(value))].as_slice(), 11), Err(error));
         }
         assert_eq!(
             encode_ber_tlv_serde(&mut [0; 3].as_mut_slice(), [0; 11].as_mut_slice(), &map),
@@ -1577,7 +1576,7 @@ mod tests {
             }
         }
         let counted = Formatted(Counted(core::cell::Cell::new(0)));
-        assert_eq!(encode(&[("t59_unknown", &counted)].as_slice(), 4), Ok(b"\x59\x02\xAB\xCD".to_vec()));
+        assert_eq!(encode(&[("59", &counted)].as_slice(), 4), Ok(b"\x59\x02\xAB\xCD".to_vec()));
         assert_eq!(counted.0.0.get(), 1);
         assert_eq!(encode(&counted, 4), Err(Error::Internal));
         assert_eq!(encode(&[&counted].as_slice(), 4), Err(Error::Internal));
@@ -1596,7 +1595,7 @@ mod tests {
                 seq.end()
             }
         }
-        let elements = ["t59_unknown", "ABCD", "extra"];
+        let elements = ["59", "ABCD", "extra"];
         for hint in [None, Some(0), Some(1), Some(2), Some(3)] {
             for len in 0..=elements.len() {
                 let expected = if len == 2 && hint.is_none_or(|n| n == 2) {
@@ -1637,10 +1636,7 @@ mod tests {
         }
         for complete in [false, true] {
             let expected = if complete { Ok(()) } else { Err(Error::Internal) };
-            let pair = BerTlvPairDeserializer {
-                key: "t59_unknown",
-                value: "ABCD",
-            };
+            let pair = BerTlvPairDeserializer { key: "59", value: "ABCD" };
             assert_eq!(pair.deserialize_seq(ReadEntry(complete)), expected);
             let mut input = b"\x59\x02\xAB\xCD".as_slice();
             let mut scratch = [0; 32];
@@ -1654,7 +1650,7 @@ mod tests {
             decode_ber_tlv_serde::<Vec<(String, IgnoredAny)>, false>(&mut b"\x59\x02\xAB\xCD".as_slice(), &mut [0; 32].as_mut_slice())
                 .unwrap();
         assert_eq!(values.len(), 1);
-        assert_eq!(values[0].0, "t59_unknown");
+        assert_eq!(values[0].0, "59");
     }
 
     #[test]
@@ -1662,7 +1658,7 @@ mod tests {
         type Pairs = Vec<(String, String)>;
         type Map = std::collections::BTreeMap<String, String>;
         let wire = b"\0\x59\x02\0\xFF\0\0\xFF\x01\0\0";
-        let expected = vec![("t59_unknown".into(), "00FF".into()), ("tFF01_unknown".into(), "".into())];
+        let expected = vec![("59".into(), "00FF".into()), ("FF01".into(), "".into())];
         let decoded = BerTlvList::<Pairs, true>::decode(&mut wire.as_slice(), &mut &mut [0; 64][..]).unwrap();
         assert_eq!(decoded, expected);
         assert_eq!(
@@ -1733,7 +1729,7 @@ mod tests {
         for bytes in [b"\x59\x01\xAB".as_slice(), b"\x59\x01\xAB\0\0"] {
             assert_eq!(
                 BerTlvList::<One, true>::decode(&mut &*bytes, &mut &mut [0; 32][..]).unwrap(),
-                One(("t59_unknown".into(), "AB".into()))
+                One(("59".into(), "AB".into()))
             );
         }
         assert_eq!(
@@ -1766,7 +1762,7 @@ mod tests {
                 wire.extend_from_slice(&[0x59, 0]);
                 wire.extend(std::iter::repeat_n(0, padding[2]));
                 let hex: String = bytes.iter().map(|byte| format!("{byte:02X}")).collect();
-                let expected = vec![("t59_unknown".into(), hex), ("t59_unknown".into(), "".into())];
+                let expected = vec![("59".into(), hex), ("59".into(), "".into())];
                 let mut input = wire.as_slice();
                 let mut scratch = [0;128];
                 prop_assert_eq!(BerTlvList::<Pairs, true>::decode(&mut input, &mut &mut scratch[..]).unwrap(), expected.clone());
@@ -1777,9 +1773,9 @@ mod tests {
 
             #[test]
             fn formatted_hex_matches_plain_strings(value in "([0-9A-F]{2}){0,16}") {
-                let capacity = 11.max(value.len());
-                let formatted = [(Formatted("t59_unknown"), Formatted(value.as_str()))];
-                let plain = [("t59_unknown", value.as_str())];
+                let capacity = 2.max(value.len());
+                let formatted = [(Formatted("59"), Formatted(value.as_str()))];
+                let plain = [("59", value.as_str())];
                 prop_assert_eq!(encode(&formatted.as_slice(), capacity), encode(&plain.as_slice(), 0));
                 prop_assert_eq!(encode(&formatted.as_slice(), capacity - 1), Err(Error::BufferOverflow));
             }

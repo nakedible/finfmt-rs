@@ -102,8 +102,9 @@ pub struct TrailingField<Field, Rest = NoTrailingFields>(PhantomData<(Field, Res
 pub struct NoTrailingFields;
 pub struct Empty<T>(PhantomData<T>);
 /// Structural BER-TLV representation as a Serde map or sequence of
-/// `(tag_key, value_hex)` pairs. Keys use `t{TAG}_unknown` with uppercase tag hex,
-/// such as `t9F02_unknown`; values use even-length uppercase hex, including `""`.
+/// `(tag, value)` pairs. Tags and values are uppercase hex, such as `"9F02"` and
+/// `"000000012345"`; an empty value is `""`. Only `ber_tlv_format!` extras, which
+/// sit beside named fields, use `t9F02_unknown` keys.
 ///
 /// Order and duplicates are preserved if the chosen collection type preserves
 /// them: a sequence keeps every entry, while a std map keeps the last value of a
@@ -2336,9 +2337,9 @@ mod tests {
         type TlvListFmt = BerTlvList<Vec<(String, String)>>;
 
         let value = vec![
-            ("t59_unknown".to_owned(), "ABCD".to_owned()),
-            ("t9F02_unknown".to_owned(), "1234".to_owned()),
-            ("t59_unknown".to_owned(), "00FF".to_owned()),
+            ("59".to_owned(), "ABCD".to_owned()),
+            ("9F02".to_owned(), "1234".to_owned()),
+            ("59".to_owned(), "00FF".to_owned()),
         ];
         let mut output = [0u8; 64];
         let mut scratch = [0u8; 64];
@@ -2379,14 +2380,11 @@ mod tests {
         type TlvMapFmt = BerTlvList<BTreeMap<String, String>>;
         type TlvSeqWrapperFmt = BerTlvList<TlvSeqWrapper>;
 
-        let map = BTreeMap::from([
-            ("t59_unknown".to_owned(), "ABCD".to_owned()),
-            ("t9F02_unknown".to_owned(), "1234".to_owned()),
-        ]);
+        let map = BTreeMap::from([("59".to_owned(), "ABCD".to_owned()), ("9F02".to_owned(), "1234".to_owned())]);
         let wrapper = TlvSeqWrapper(vec![
-            ("t59_unknown".to_owned(), "ABCD".to_owned()),
-            ("t9F02_unknown".to_owned(), "1234".to_owned()),
-            ("t59_unknown".to_owned(), "00FF".to_owned()),
+            ("59".to_owned(), "ABCD".to_owned()),
+            ("9F02".to_owned(), "1234".to_owned()),
+            ("59".to_owned(), "00FF".to_owned()),
         ]);
         let map_bytes = b"\x59\x02\xAB\xCD\x9F\x02\x02\x12\x34";
         let wrapper_bytes = b"\x59\x02\xAB\xCD\x9F\x02\x02\x12\x34\x59\x02\x00\xFF";
@@ -2423,7 +2421,7 @@ mod tests {
         type TlvListFmt = BerTlvList<Vec<(String, String)>>;
 
         let invalid_key = vec![("bad".to_owned(), "1234".to_owned())];
-        let invalid_value = vec![("t9F02_unknown".to_owned(), "12fg".to_owned())];
+        let invalid_value = vec![("9F02".to_owned(), "12fg".to_owned())];
         let mut output = [0u8; 64];
         let mut scratch = [0u8; 64];
         let mut out = output.as_mut_slice();
