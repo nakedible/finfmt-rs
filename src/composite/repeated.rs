@@ -85,22 +85,19 @@ where
             if index != 0 {
                 encode_list_separator::<Sep>(output)?;
             }
-            let available = output.len();
-            let used = {
-                let mut item_out = &mut **output;
-                Item::encode(&mut item_out, scratch, item).map_err(|error| error.with_index(index))?;
-                available - item_out.len()
-            };
-            let encoded = output.split_off_mut(..used).ok_or_else(|| {
-                crate::utils::cold_path();
-                CompositeError::from(Error::Internal)
+            // The item's format must keep the wire unambiguous; debug builds check it.
+            let encode =
+                |out: &mut &mut [u8], scratch: &mut [u8]| Item::encode(out, scratch, item).map_err(|error| error.with_index(index));
+            encode_debug_checked(output, scratch, encode, |encoded| {
+                debug_assert!(
+                    Sep::BYTE.is_none_or(|separator| Count::HAS_COUNT && index + 1 == value.len() || !encoded.contains(&separator)),
+                    "a list item encoded the separator; its check must exclude it"
+                );
+                debug_assert!(
+                    Count::HAS_COUNT || !encoded.is_empty() || Sep::BYTE.is_some() && value.len() != 1,
+                    "an uncounted list item encoded to nothing, which decodes differently"
+                );
             })?;
-            if Sep::BYTE.is_some_and(|separator| (!Count::HAS_COUNT || index + 1 != value.len()) && encoded.contains(&separator))
-                || (!Count::HAS_COUNT && used == 0 && (Sep::BYTE.is_none() || value.len() == 1))
-            {
-                crate::utils::cold_path();
-                return Err(Error::Invalid.into());
-            }
         }
         Ok(())
     }
@@ -357,6 +354,12 @@ mod tests {
         Ok((values, input.to_vec()))
     }
 
+    /// Encoding an ambiguous list is a composition mistake: debug builds panic,
+    /// release builds encode whatever the items produce.
+    pub(super) fn rejected_in_debug<F: CompositeFmt<Vec<String>>>(texts: &[&str]) -> bool {
+        std::panic::catch_unwind(|| encode::<F>(texts)).is_err() == cfg!(debug_assertions)
+    }
+
     pub(super) fn roundtrip<F>(texts: &[&str], wire: &[u8])
     where
         F: for<'de> CompositeFmt<Vec<String>, Decoded<'de> = Vec<String>>,
@@ -406,17 +409,17 @@ mod tests {
             roundtrip::<Counted>(texts, format!("{}{wire}", texts.len()).as_bytes());
         }
         roundtrip::<Counted>(&[""], b"1");
-        assert_eq!(encode::<Delimited>(&[""]), Err(Error::Invalid));
+        assert!(rejected_in_debug::<Delimited>(&[""]));
         assert_eq!(decode::<Delimited>(b"A|B|C|D|"), Err(Error::Invalid));
     }
 
     #[test]
     fn only_final_counted_items_may_contain_wire_separators() {
         for texts in [&["A|B"][..], &["A|B", "C"], &["A", "B|C"]] {
-            assert_eq!(encode::<Delimited>(texts), Err(Error::Invalid));
+            assert!(rejected_in_debug::<Delimited>(texts));
         }
-        assert_eq!(encode::<Counted>(&["A|B", "C"]), Err(Error::Invalid));
-        assert_eq!(encode::<Counted>(&["A", "B|C", "D"]), Err(Error::Invalid));
+        assert!(rejected_in_debug::<Counted>(&["A|B", "C"]));
+        assert!(rejected_in_debug::<Counted>(&["A", "B|C", "D"]));
         for (texts, wire) in [(&["A|B"][..], &b"1A|B"[..]), (&["A", "B|C"], b"2A|B|C"), (&["A", "|"], b"2A||")] {
             roundtrip::<Counted>(texts, wire);
         }
@@ -424,7 +427,7 @@ mod tests {
             assert_eq!(decode::<Counted>(wire), Err(Error::Invalid));
         }
         type Encoded = BoundedList<String, AsciiLength<1>, DirectScalar<Field<Ascii<1, 1>, Fixed<1>, Ebcdic037>>, Separator<0xC1>, 4>;
-        assert_eq!(encode::<Encoded>(&["A", "B"]), Err(Error::Invalid));
+        assert!(rejected_in_debug::<Encoded>(&["A", "B"]));
         roundtrip::<Encoded>(&["B", "A"], b"2\xC2\xC1\xC1");
         let mut output = [0; 4];
         Counted::encode(&mut output.as_mut_slice(), &mut [], &vec!["A".into(), "B".into()]).unwrap();
@@ -435,7 +438,7 @@ mod tests {
     fn zero_width_items_require_count_or_separators() {
         type Plain = BoundedList<String, (), Text, (), 4>;
         for texts in [&[""][..], &["A", ""], &["", "A"]] {
-            assert_eq!(encode::<Plain>(texts), Err(Error::Invalid));
+            assert!(rejected_in_debug::<Plain>(texts));
         }
         type Zero = FixedCountList<(), Empty<()>, 2>;
         let mut input = &b"TAIL"[..];
@@ -576,8 +579,7 @@ mod tests {
 mod proptests {
     use proptest::prelude::*;
 
-    use super::tests::{Counted, Delimited, encode, roundtrip};
-    use crate::Error;
+    use super::tests::{Counted, Delimited, rejected_in_debug, roundtrip};
 
     proptest! {
         #[test]
@@ -587,12 +589,12 @@ mod proptests {
             if texts.iter().take(texts.len().saturating_sub(1)).all(|s| !s.contains('|')) {
                 roundtrip::<Counted>(&texts, format!("{}{body}", texts.len()).as_bytes());
             } else {
-                prop_assert_eq!(encode::<Counted>(&texts), Err(Error::Invalid));
+                prop_assert!(rejected_in_debug::<Counted>(&texts));
             }
             if texts.iter().all(|s| !s.contains('|')) && !(texts.len() == 1 && texts[0].is_empty()) {
                 roundtrip::<Delimited>(&texts, body.as_bytes());
             } else {
-                prop_assert_eq!(encode::<Delimited>(&texts), Err(Error::Invalid));
+                prop_assert!(rejected_in_debug::<Delimited>(&texts));
             }
         }
     }

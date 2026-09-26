@@ -1119,15 +1119,12 @@ mod tests {
         assert!(input.is_empty());
         assert_eq!(decoded, value);
 
-        let invalid = DelimitedSlots {
+        let separator_inside = DelimitedSlots {
             first: "AB\\D".into(),
             ..value
         };
-        let mut out = output.as_mut_slice();
-        assert_eq!(
-            error_kind(DelimitedSlotsFmt::encode(&mut out, scratch.as_mut_slice(), &invalid)),
-            Err(Error::Invalid)
-        );
+        let result = std::panic::catch_unwind(|| DelimitedSlotsFmt::encode(&mut &mut [0u8; 32][..], &mut [0u8; 32], &separator_inside));
+        assert_eq!(result.is_err(), cfg!(debug_assertions));
 
         let mut invalid = b"ABCD\\X  ".as_slice();
         assert_eq!(
@@ -1259,7 +1256,7 @@ mod tests {
         let mut scratch = [0u8; 32];
 
         let invalid = DelimitedSlots {
-            first: "AB\\D".into(),
+            first: "AB\u{e9}".into(),
             second: "X".into(),
             third: "WXYZ".into(),
         };
@@ -1999,15 +1996,10 @@ mod tests {
             body: RetainedVariantData::B(VariantBTail { tail: "WX|Z".into() }),
             suffix: "DONE".into(),
         };
-        let mut out = output.as_mut_slice();
-        assert_eq!(
-            error_kind(DelimitedRetainedVariantRecordFmt::encode(
-                &mut out,
-                scratch.as_mut_slice(),
-                &with_separator
-            )),
-            Err(Error::Invalid)
-        );
+        let separator_inside = std::panic::catch_unwind(|| {
+            DelimitedRetainedVariantRecordFmt::encode(&mut &mut [0u8; 32][..], &mut [0u8; 32], &with_separator)
+        });
+        assert_eq!(separator_inside.is_err(), cfg!(debug_assertions));
     }
 
     #[test]
@@ -2685,29 +2677,40 @@ where
     F::decode(input, &mut scratch)
 }
 
+/// Encode through `encode`, then, in debug builds only, pass the bytes it wrote
+/// to `check`. Release builds encode straight into the output.
+#[inline(always)]
+pub(crate) fn encode_debug_checked<E, C>(output: &mut &mut [u8], scratch: &mut [u8], encode: E, check: C) -> Result<(), CompositeError>
+where
+    E: FnOnce(&mut &mut [u8], &mut [u8]) -> Result<(), CompositeError>,
+    C: FnOnce(&[u8]),
+{
+    if !cfg!(debug_assertions) {
+        return encode(output, scratch);
+    }
+    let available = output.len();
+    let mut out = &mut **output;
+    encode(&mut out, scratch)?;
+    let used = available - out.len();
+    let (written, rest) = core::mem::take(output).split_at_mut(used);
+    check(written);
+    *output = rest;
+    Ok(())
+}
+
+/// Encode one segment. A separator inside it would split the field on decode:
+/// the field's check must exclude the separator, which debug builds assert.
 #[inline]
 fn encode_delimited_segment<E>(output: &mut &mut [u8], scratch: &mut [u8], separator: Option<u8>, encode: E) -> Result<(), CompositeError>
 where
     E: FnOnce(&mut &mut [u8], &mut [u8]) -> Result<(), CompositeError>,
 {
-    let available = output.len();
-    let used = {
-        let mut segment_out = &mut **output;
-        encode(&mut segment_out, scratch)?;
-        available.checked_sub(segment_out.len()).ok_or_else(|| {
-            crate::utils::cold_path();
-            Error::Internal
-        })?
-    };
-    let segment = output.split_off_mut(..used).ok_or_else(|| {
-        crate::utils::cold_path();
-        Error::Internal
-    })?;
-    if separator.is_some_and(|byte| segment.contains(&byte)) {
-        crate::utils::cold_path();
-        return Err(Error::Invalid.into());
-    }
-    Ok(())
+    encode_debug_checked(output, scratch, encode, |segment| {
+        debug_assert!(
+            separator.is_none_or(|byte| !segment.contains(&byte)),
+            "a delimited field encoded its separator; its check must exclude it"
+        );
+    })
 }
 
 #[inline]
@@ -2931,19 +2934,14 @@ mod delimited_proptests {
             roundtrip("A".into(), tail.map(str::to_owned));
         }
         let mut output = [0; 16];
-        assert_eq!(
-            Format::encode(
-                &mut &mut output[..],
-                &mut [],
-                &Record {
-                    first: "A|B".into(),
-                    tail: None
-                }
-            )
-            .unwrap_err()
-            .kind,
-            Error::Invalid
-        );
+        let separator_inside = std::panic::catch_unwind(|| {
+            let value = Record {
+                first: "A|B".into(),
+                tail: None,
+            };
+            Format::encode(&mut &mut [0; 16][..], &mut [], &value)
+        });
+        assert_eq!(separator_inside.is_err(), cfg!(debug_assertions));
         #[derive(Debug, PartialEq)]
         struct Literal {
             first: String,
