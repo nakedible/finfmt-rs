@@ -64,12 +64,10 @@ fn bench_bertlv(suite: &mut Suite) {
                 black_box(buf)
             })
         });
-        group.bench("encode_ber_tlv_in_place_9f02", |b| {
+        group.bench("pack_ber_tag_hex_9f02", |b| {
             b.iter(|| {
-                let mut buf = [0u8; 16];
-                buf[..6].copy_from_slice(black_box(&TLV_ENTRY[3..]));
-                let _ = encode_ber_tlv_in_place_9f02(&mut buf.as_mut_slice(), black_box(6));
-                black_box(buf)
+                let mut buf = [0u8; 4];
+                black_box(pack_ber_tag_hex_9f02(&mut buf).len())
             })
         });
         group.bench("decode_ber_tlv_entry_runtime", |b| {

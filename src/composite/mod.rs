@@ -2220,7 +2220,7 @@ mod tests {
             );
             let mut output = [0; 16];
             let mut out = output.as_mut_slice();
-            Padded::encode(&mut out, &mut [], &expected).unwrap();
+            Padded::encode(&mut out, &mut [0; 8], &expected).unwrap();
             let used = 16 - out.len();
             assert_eq!(&output[..used], b"\x59\x04ABCD");
         }
@@ -2287,8 +2287,12 @@ mod tests {
                 extras: value.extras.clone(),
             };
             let expected = CompositeError::from(Error::Invalid).with_field("extras");
-            assert_eq!(Fmt::encode(&mut [0; 32].as_mut_slice(), &mut [], &value), Err(expected));
-            assert_eq!(BorrowedFmt::encode(&mut [0; 32].as_mut_slice(), &mut [], &borrowed), Err(expected));
+            // Values are staged in scratch before their head is written.
+            assert_eq!(Fmt::encode(&mut [0; 32].as_mut_slice(), &mut [0; 8], &value), Err(expected));
+            assert_eq!(
+                BorrowedFmt::encode(&mut [0; 32].as_mut_slice(), &mut [0; 8], &borrowed),
+                Err(expected)
+            );
         }
     }
 
@@ -2630,20 +2634,20 @@ pub fn encode_ber_tlv_field<F>(
 where
     F: FnOnce(&mut &mut [u8], &mut [u8]) -> Result<(), CompositeError>,
 {
-    let (tag_bytes, tag_len) =
-        crate::primitive::bertlv::parse_ber_tag_hex(tag_hex).map_err(|_| wrap_composite_error(Error::Internal, field))?;
-    let available = output.len();
+    let mut tag = [0; crate::primitive::bertlv::MAX_BER_TAG_BYTES];
+    let tag = crate::primitive::bertlv::pack_ber_tag_hex(&mut tag, tag_hex);
+    // Stage the value in scratch, using the unwritten output as its workspace
+    // as `Frame` does, so the head can be written before it.
     let used = {
-        let mut value_out = &mut **output;
-        encode_value(&mut value_out, scratch).map_err(|error| wrap_composite_error(error, field))?;
-        available.checked_sub(value_out.len()).ok_or_else(|| {
-            crate::utils::cold_path();
-            wrap_composite_error(Error::Internal, field)
-        })?
+        let mut staged = &mut *scratch;
+        let available = staged.len();
+        encode_value(&mut staged, output).map_err(|error| wrap_composite_error(error, field))?;
+        available - staged.len()
     };
-    crate::primitive::bertlv::encode_ber_tlv_in_place(output, &tag_bytes[..tag_len], used)
-        .map(|_| ())
-        .map_err(|error| wrap_composite_error(error, field))
+    let value = scratch.get(..used).unwrap_or_default();
+    crate::primitive::bertlv::encode_ber_tlv_head(output, tag, used).map_err(|error| wrap_composite_error(error, field))?;
+    copy_bytes(output, value).map_err(|error| wrap_composite_error(error, field))?;
+    Ok(())
 }
 
 #[inline(always)]
@@ -2906,12 +2910,11 @@ mod ber_tag_boundary_tests {
     use super::*;
 
     #[test]
-    fn malformed_configured_tags_are_internal_errors() {
+    fn malformed_configured_tags_are_debug_errors() {
         for tag in ["9F", "5A5B", "00", "9f02"] {
-            let mut storage = [0u8; 16];
-            let mut scratch = [0u8; 16];
-            let result = encode_ber_tlv_field(&mut &mut storage[..], &mut scratch[..], tag, "field", |_, _| Ok(()));
-            assert_eq!(result.unwrap_err().kind, Error::Internal);
+            let encoded =
+                std::panic::catch_unwind(|| encode_ber_tlv_field(&mut &mut [0u8; 16][..], &mut [0u8; 16][..], tag, "field", |_, _| Ok(())));
+            assert_eq!(encoded.is_err(), cfg!(debug_assertions));
             // Decoding compares literals as written; a malformed one is caught in debug builds.
             let result = std::panic::catch_unwind(|| {
                 decode_ber_tlv_field(

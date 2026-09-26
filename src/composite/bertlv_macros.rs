@@ -412,6 +412,11 @@ macro_rules! __finfmt_ber_tlv_assert_tags {
 /// accept `00` bytes between entries and at either end. Each nested format has
 /// its own setting. Encoding never adds padding; value bytes are not trimmed.
 ///
+/// Encoding stages each value in scratch before writing its tag and length, so
+/// scratch must hold the largest value. The unwritten output is the value's own
+/// workspace, as for `Frame`: with an output sized exactly to the message, a
+/// value that needs workspace can report `BufferOverflow`.
+///
 /// Declared tags must be unique constant expressions. Repeated wire occurrences
 /// of a known tag are also rejected, independently of this declaration check.
 ///
