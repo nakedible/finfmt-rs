@@ -4,7 +4,7 @@ use core::str::FromStr;
 use no_panic::no_panic;
 
 use super::*;
-use crate::primitive::bertlv::{MAX_BER_TAG_BYTES, ber_tag_matches_hex, encode_ber_tlv_head, parse_ber_tag_hex};
+use crate::primitive::bertlv::{MAX_BER_TAG_BYTES, encode_ber_tlv_head, parse_ber_tag_hex};
 use crate::primitive::bytes::reserve_bytes;
 use crate::primitive::nibble::{UpperHexDigits, pack_nibbles_checked, unpack_nibbles};
 use crate::utils::cold_path;
@@ -117,18 +117,15 @@ pub(super) fn parse_unknown_tag_key(key: &str) -> Result<([u8; MAX_BER_TAG_BYTES
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub(super) fn encode_unknown_tlv_from_key(output: &mut &mut [u8], key: &str, value: &str, known_tags: &[&str]) -> Result<(), Error> {
     let (tag_bytes, tag_len) = parse_unknown_tag_key(key)?;
-    let tag = tag_bytes.get(..tag_len).ok_or_else(|| {
+    let tag = tag_bytes.get(..tag_len).unwrap_or(&tag_bytes);
+    // A parsed key is canonical uppercase hex, as are the declared literals.
+    let tag_hex = key
+        .strip_prefix('t')
+        .and_then(|rest| rest.strip_suffix("_unknown"))
+        .unwrap_or_default();
+    if known_tags.contains(&tag_hex) {
         cold_path();
-        Error::Internal
-    })?;
-    for known in known_tags {
-        if ber_tag_matches_hex(tag, known).map_err(|_| {
-            cold_path();
-            Error::Internal
-        })? {
-            cold_path();
-            return Err(Error::Invalid);
-        }
+        return Err(Error::Invalid);
     }
     encode_unknown_tlv_from_tag(output, tag, value)
 }

@@ -210,15 +210,6 @@ pub fn pack_ber_tag_hex<'a>(output: &'a mut [u8; MAX_BER_TAG_BYTES], tag_hex: &s
     pack_nibbles::<UpperHexDigits>(&mut out, tag_hex.as_bytes(), false, 0).map_or(&[], |tag| &*tag)
 }
 
-/// Compares tag bytes with a checked uppercase textual data tag.
-/// The wire tag is already framed; it is not validated again.
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn ber_tag_matches_hex(tag_bytes: &[u8], tag_hex: &str) -> Result<bool, Error> {
-    let (parsed, len) = parse_ber_tag_hex(tag_hex)?;
-    Ok(tag_bytes == &parsed[..len])
-}
-
 /// Write the tag and definite length of an entry whose value length is known,
 /// advancing the cursor so the value can be encoded directly after them.
 /// Tag bytes are copied without validation. Insufficient capacity returns
@@ -499,7 +490,8 @@ mod tests {
             ("FF818000", [0xFF, 0x81, 0x80, 0], 4),
         ] {
             assert_eq!(parse_ber_tag_hex(text), Ok((expected, len)));
-            assert_eq!(ber_tag_matches_hex(&expected[..len], text), Ok(true));
+            let mut hex = [0; MAX_BER_TAG_HEX];
+            assert_eq!(format_ber_tag_hex(&mut hex, &expected[..len]), text.as_bytes());
         }
         for text in [
             "00",
@@ -516,9 +508,6 @@ mod tests {
         ] {
             assert_eq!(parse_ber_tag_hex(text), Err(Error::Invalid), "{text}");
         }
-        assert_eq!(ber_tag_matches_hex(&[0x9F, 0x03], "9F02"), Ok(false));
-        assert_eq!(ber_tag_matches_hex(&[0x5A], "9F02"), Ok(false));
-        assert_eq!(ber_tag_matches_hex(&[0x9F], "9F"), Err(Error::Invalid));
         assert_eq!(parse_ber_tag_hex(""), Err(Error::Invalid));
         assert_eq!(parse_ber_tag_hex("9f02"), Err(Error::Invalid));
         assert_eq!(parse_ber_tag_hex("9F0"), Err(Error::Invalid));
@@ -581,7 +570,8 @@ mod proptests {
             let text: String = input.iter().map(|byte| format!("{byte:02X}")).collect();
             let (tag, len) = parse_ber_tag_hex(&text).unwrap();
             prop_assert_eq!(&tag[..len], input.as_slice());
-            prop_assert_eq!(ber_tag_matches_hex(&input, &text), Ok(true));
+            let mut hex = [0; MAX_BER_TAG_HEX];
+            prop_assert_eq!(format_ber_tag_hex(&mut hex, &input), text.as_bytes());
         }
 
         #[test]
