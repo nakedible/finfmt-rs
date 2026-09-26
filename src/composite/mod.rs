@@ -2649,7 +2649,7 @@ where
 #[inline(always)]
 #[doc(hidden)]
 pub fn decode_ber_tlv_field<'a, T, D>(
-    tag_bytes: &[u8],
+    wire_tag_hex: &[u8],
     tag_hex: &str,
     value_input: &mut &'a [u8],
     scratch: &mut &'a mut [u8],
@@ -2660,7 +2660,11 @@ pub fn decode_ber_tlv_field<'a, T, D>(
 where
     D: FnOnce(&mut &'a [u8], &mut &'a mut [u8]) -> Result<T, CompositeError>,
 {
-    if !crate::primitive::bertlv::ber_tag_matches_hex(tag_bytes, tag_hex).map_err(|_| wrap_composite_error(Error::Internal, field))? {
+    debug_assert!(
+        crate::primitive::bertlv::parse_ber_tag_hex(tag_hex).is_ok(),
+        "a BER tag literal must be a valid tag in uppercase hex"
+    );
+    if wire_tag_hex != tag_hex.as_bytes() {
         return Ok(false);
     }
     if field_value.is_some() {
@@ -2908,8 +2912,22 @@ mod ber_tag_boundary_tests {
             let mut scratch = [0u8; 16];
             let result = encode_ber_tlv_field(&mut &mut storage[..], &mut scratch[..], tag, "field", |_, _| Ok(()));
             assert_eq!(result.unwrap_err().kind, Error::Internal);
-            let result = decode_ber_tlv_field(&[0x5A], tag, &mut &[][..], &mut &mut scratch[..], &mut None, "field", |_, _| Ok(()));
-            assert_eq!(result.unwrap_err().kind, Error::Internal);
+            // Decoding compares literals as written; a malformed one is caught in debug builds.
+            let result = std::panic::catch_unwind(|| {
+                decode_ber_tlv_field(
+                    b"5A",
+                    tag,
+                    &mut &[][..],
+                    &mut &mut [0u8; 16][..],
+                    &mut None::<()>,
+                    "field",
+                    |_, _| Ok(()),
+                )
+            });
+            assert_eq!(result.is_err(), cfg!(debug_assertions));
+            if let Ok(matched) = result {
+                assert_eq!(matched, Ok(false));
+            }
         }
     }
 }

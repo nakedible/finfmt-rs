@@ -19,11 +19,13 @@ use no_panic::no_panic;
 
 use crate::Error;
 use crate::primitive::bytes::{copy_bytes, reserve_bytes, take_bytes};
-use crate::primitive::nibble::{UpperHexDigits, pack_nibbles_checked};
+use crate::primitive::nibble::{UpperHexDigits, pack_nibbles_checked, unpack_nibbles};
 use crate::utils::cold_path;
 
 /// Maximum encoded tag size accepted by this library's tag parsers.
 pub const MAX_BER_TAG_BYTES: usize = 4;
+/// Maximum length of a tag written as hex.
+pub const MAX_BER_TAG_HEX: usize = 2 * MAX_BER_TAG_BYTES;
 /// Maximum value length supported by this library's definite BER length codec.
 pub const MAX_BER_VALUE_LEN: usize = u16::MAX as usize;
 
@@ -182,6 +184,16 @@ pub fn parse_ber_tag_hex(tag: &str) -> Result<([u8; MAX_BER_TAG_BYTES], usize), 
         return Err(Error::Invalid);
     }
     Ok((out, bytes.len() / 2))
+}
+
+/// Write a framed tag as uppercase hex, the form of textual tag literals, so an
+/// entry's tag is formatted once and compared with each literal as bytes.
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub fn format_ber_tag_hex<'a>(output: &'a mut [u8; MAX_BER_TAG_HEX], tag: &[u8]) -> &'a [u8] {
+    debug_assert!(tag.len() <= MAX_BER_TAG_BYTES, "a framed BER tag has at most four bytes");
+    let mut out = &mut output[..];
+    unpack_nibbles::<UpperHexDigits>(&mut out, tag).map_or(&[], |hex| &*hex)
 }
 
 /// Compares tag bytes with a checked uppercase textual data tag.

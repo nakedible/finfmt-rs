@@ -343,7 +343,9 @@ macro_rules! __finfmt_ber_tlv_decode_construct_as {
         while let Some(entry) = $crate::composite::decode_ber_tlv_collection_entry::<{ $padding }>($input).map_err($crate::CompositeError::from)? {
             let mut value_input = entry.value;
             let mut matched = false;
-            $crate::__finfmt_ber_tlv_match_fields!(entry.tag, &mut value_input, $scratch, matched; $($fields)*);
+            let mut tag_hex = [0; $crate::primitive::bertlv::MAX_BER_TAG_HEX];
+            let tag_hex = $crate::primitive::bertlv::format_ber_tag_hex(&mut tag_hex, entry.tag);
+            $crate::__finfmt_ber_tlv_match_fields!(tag_hex, &mut value_input, $scratch, matched; $($fields)*);
             if !matched {
                 $crate::composite::BerTlvExtras::decode_unknown(&mut $extras, entry.tag, value_input, $scratch)
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($extras)))?;
@@ -358,7 +360,9 @@ macro_rules! __finfmt_ber_tlv_decode_construct_as {
         while let Some(entry) = $crate::composite::decode_ber_tlv_collection_entry::<{ $padding }>($input).map_err($crate::CompositeError::from)? {
             let mut value_input = entry.value;
             let mut matched = false;
-            $crate::__finfmt_ber_tlv_match_fields!(entry.tag, &mut value_input, $scratch, matched; $($fields)*);
+            let mut tag_hex = [0; $crate::primitive::bertlv::MAX_BER_TAG_HEX];
+            let tag_hex = $crate::primitive::bertlv::format_ber_tag_hex(&mut tag_hex, entry.tag);
+            $crate::__finfmt_ber_tlv_match_fields!(tag_hex, &mut value_input, $scratch, matched; $($fields)*);
             if !matched {
                 $crate::__private::cold_path();
                 return Err($crate::CompositeError::from($crate::Error::Invalid));
