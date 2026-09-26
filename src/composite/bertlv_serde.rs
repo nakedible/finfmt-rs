@@ -1552,8 +1552,13 @@ mod tests {
         assert_eq!(encode(&map, 3), Err(Error::BufferOverflow));
         assert_eq!(encode(&[("t59_unknown", Formatted(""))].as_slice(), 0), Ok(b"\x59\0".to_vec()));
         assert_eq!(encode(&[(Formatted("bad"), "AB")].as_slice(), 11), Err(Error::Invalid));
-        for value in ["A", "ab", "GG", "€"] {
-            assert_eq!(encode(&[("t59_unknown", Formatted(value))].as_slice(), 11), Err(Error::Invalid));
+        for (value, error) in [
+            ("A", Error::InvalidValueLength),
+            ("ab", Error::Invalid),
+            ("GG", Error::Invalid),
+            ("€", Error::InvalidValueLength),
+        ] {
+            assert_eq!(encode(&[("t59_unknown", Formatted(value))].as_slice(), 11), Err(error));
         }
         assert_eq!(
             encode_ber_tlv_serde(&mut [0; 3].as_mut_slice(), [0; 11].as_mut_slice(), &map),

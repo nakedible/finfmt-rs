@@ -105,7 +105,8 @@ pub fn decode_ber_tag<'a>(input: &mut &'a [u8]) -> Result<&'a [u8], Error> {
 ///
 /// Errors:
 /// - `Error::BufferOverflow` if `output` does not have enough space.
-/// - `Error::Invalid` if `input` requires more than 2 length octets.
+/// - `Error::InvalidValueLength` if `input` requires more than 2 length octets:
+///   the value is too long to encode.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn encode_ber_length<'a>(output: &mut &'a mut [u8], input: usize) -> Result<&'a mut [u8], Error> {
@@ -115,7 +116,7 @@ pub fn encode_ber_length<'a>(output: &mut &'a mut [u8], input: usize) -> Result<
         0x0100..=MAX_BER_VALUE_LEN => copy_bytes(output, &[0x82, (input >> 8) as u8, input as u8]),
         _ => {
             cold_path();
-            Err(Error::Invalid)
+            Err(Error::InvalidValueLength)
         }
     }
 }
@@ -151,7 +152,7 @@ pub fn ber_length_width(len: usize) -> Result<usize, Error> {
         0x0100..=MAX_BER_VALUE_LEN => Ok(3),
         _ => {
             cold_path();
-            Err(Error::Invalid)
+            Err(Error::InvalidValueLength)
         }
     }
 }
@@ -353,7 +354,7 @@ mod tests {
         }
         assert_eq!(
             encode_ber_tlv_head(&mut &mut [0; 8][..], b"\x5A", MAX_BER_VALUE_LEN + 1),
-            Err(Error::Invalid)
+            Err(Error::InvalidValueLength)
         );
     }
 
@@ -431,7 +432,7 @@ mod tests {
         assert_eq!(enc_len(0x100, 4), Ok(vec![0x82, 0x01, 0x00]));
         assert_eq!(enc_len(0xFFFF, 4), Ok(vec![0x82, 0xFF, 0xFF]));
         // Invalid: too large
-        assert_eq!(enc_len(0x1_0000, 4), Err(Error::Invalid));
+        assert_eq!(enc_len(0x1_0000, 4), Err(Error::InvalidValueLength));
         // Buffer overflow
         assert_eq!(enc_len(0x7F, 0), Err(Error::BufferOverflow));
         assert_eq!(enc_len(0x80, 1), Err(Error::BufferOverflow));
@@ -595,7 +596,7 @@ mod proptests {
         fn berlen_encode_rejects_large(len in 0x1_0000usize..=0xFF_FFFF) {
             let mut buf = [0u8; 8];
             let mut out = &mut buf[..];
-            prop_assert_eq!(encode_ber_length(&mut out, len), Err(Error::Invalid));
+            prop_assert_eq!(encode_ber_length(&mut out, len), Err(Error::InvalidValueLength));
         }
 
         #[test]

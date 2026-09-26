@@ -128,6 +128,11 @@ pub(super) fn encode_unknown_tlv_from_key(output: &mut &mut [u8], key: &str, val
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub(super) fn encode_unknown_tlv_from_tag(output: &mut &mut [u8], tag: &[u8], value: &str) -> Result<(), Error> {
+    // Hex text of odd length is fixed by adding or removing a digit.
+    if !value.len().is_multiple_of(2) {
+        cold_path();
+        return Err(Error::InvalidValueLength);
+    }
     encode_ber_tlv_head(output, tag, value.len() / 2)?;
     pack_nibbles_checked::<UpperHexDigits>(output, value.as_bytes())?;
     Ok(())
@@ -199,7 +204,7 @@ mod tests {
         ] {
             assert_eq!(encode_unknown_tlv_from_key(&mut &mut output[..], key, "", &[]), Err(Error::Invalid));
         }
-        for (value, error) in [("aB", Error::Invalid), ("GG", Error::Invalid), ("A", Error::Invalid)] {
+        for (value, error) in [("aB", Error::Invalid), ("GG", Error::Invalid), ("A", Error::InvalidValueLength)] {
             assert_eq!(
                 encode_unknown_tlv_from_key(&mut &mut output[..], "t5A_unknown", value, &[]),
                 Err(error)
@@ -207,7 +212,7 @@ mod tests {
         }
         assert_eq!(
             encode_unknown_tlv_from_key(&mut &mut [][..], "t5A_unknown", &"00".repeat(MAX_BER_VALUE_LEN + 1), &[]),
-            Err(Error::Invalid)
+            Err(Error::InvalidValueLength)
         );
     }
 
