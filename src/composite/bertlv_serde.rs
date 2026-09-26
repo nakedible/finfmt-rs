@@ -322,7 +322,7 @@ struct BerTlvTextDeserializer<'a> {
     text: &'a str,
 }
 
-impl<'de> serde::Deserializer<'de> for BerTlvTextDeserializer<'de> {
+impl<'de> serde::Deserializer<'de> for BerTlvTextDeserializer<'_> {
     type Error = Error;
 
     #[inline(always)]
@@ -614,7 +614,7 @@ struct BerTlvPairAccess<'a> {
     index: u8,
 }
 
-impl<'de> SeqAccess<'de> for BerTlvPairAccess<'de> {
+impl<'de> SeqAccess<'de> for BerTlvPairAccess<'_> {
     type Error = Error;
 
     #[inline(always)]
@@ -653,7 +653,7 @@ struct BerTlvPairDeserializer<'a> {
     value: &'a str,
 }
 
-impl<'de> serde::Deserializer<'de> for BerTlvPairDeserializer<'de> {
+impl<'de> serde::Deserializer<'de> for BerTlvPairDeserializer<'_> {
     type Error = Error;
 
     #[inline(always)]
@@ -741,8 +741,10 @@ impl<'de, const ALLOW_ZERO_PADDING: bool> SeqAccess<'de> for BerTlvSeqDeserializ
         let Some(entry) = decode_ber_tlv_collection_entry::<ALLOW_ZERO_PADDING>(self.input)? else {
             return Ok(None);
         };
-        let key = encode_unknown_tag_key(self.scratch, entry.tag)?;
-        let value = encode_hex_upper(self.scratch, entry.value)?;
+        // The text is copied into owned values, so each entry reuses the same scratch.
+        let mut workspace = &mut **self.scratch;
+        let key = encode_unknown_tag_key(&mut workspace, entry.tag)?;
+        let value = encode_hex_upper(&mut workspace, entry.value)?;
         seed.deserialize(BerTlvPairDeserializer { key, value }).map(Some)
     }
 }
@@ -765,7 +767,8 @@ impl<'de, const ALLOW_ZERO_PADDING: bool> MapAccess<'de> for BerTlvMapDeserializ
             return Ok(None);
         };
         self.pending = Some(entry);
-        let key = encode_unknown_tag_key(self.scratch, entry.tag)?;
+        // The text is copied into owned values, so each entry reuses the same scratch.
+        let key = encode_unknown_tag_key(&mut &mut **self.scratch, entry.tag)?;
         seed.deserialize(BerTlvTextDeserializer { text: key }).map(Some)
     }
 
@@ -778,7 +781,7 @@ impl<'de, const ALLOW_ZERO_PADDING: bool> MapAccess<'de> for BerTlvMapDeserializ
             cold_path();
             Error::Internal
         })?;
-        let value = encode_hex_upper(self.scratch, entry.value)?;
+        let value = encode_hex_upper(&mut &mut **self.scratch, entry.value)?;
         seed.deserialize(BerTlvTextDeserializer { text: value })
     }
 }

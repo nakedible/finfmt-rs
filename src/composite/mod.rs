@@ -2352,6 +2352,21 @@ mod tests {
     }
 
     #[test]
+    fn ber_tlv_text_reuses_decode_scratch_per_entry() {
+        // Ten entries need 210 bytes of key and hex text in total, but each is
+        // parsed into an owned value before the next, so one entry's worth is enough.
+        let wire: Vec<u8> = (0..10u8).flat_map(|i| [0x9F, i + 1, 0x04, 0xDE, 0xAD, 0xBE, 0xEF]).collect();
+        let mut scratch = [0u8; 21];
+        let list = BerTlvList::<Vec<(String, String)>>::decode(&mut wire.as_slice(), &mut &mut scratch[..]).unwrap();
+        assert_eq!(list.len(), 10);
+        let map = BerTlvList::<BTreeMap<String, String>>::decode(&mut wire.as_slice(), &mut &mut scratch[..]).unwrap();
+        assert_eq!(map.len(), 10);
+        let with_known = [&b"\x59\x04ABCD"[..], &wire].concat();
+        let extras = TlvWithExtrasFmt::decode(&mut with_known.as_slice(), &mut &mut scratch[..]).unwrap();
+        assert_eq!(extras.extras.len(), 10);
+    }
+
+    #[test]
     fn test_ber_tlv_list_supports_map_and_newtype_wrappers() {
         #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
         #[serde(transparent)]

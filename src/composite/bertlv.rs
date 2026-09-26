@@ -15,12 +15,13 @@ where
     K: FromStr,
     V: FromStr,
 {
-    let key = encode_unknown_tag_key(scratch, tag)?;
+    // Both are parsed into owned values, so they reuse the same scratch.
+    let key = encode_unknown_tag_key(&mut &mut **scratch, tag)?;
     let key = key.parse::<K>().map_err(|_| {
         crate::utils::cold_path();
         Error::Invalid
     })?;
-    let value = encode_hex_upper(scratch, value)?;
+    let value = encode_hex_upper(&mut &mut **scratch, value)?;
     let value = value.parse::<V>().map_err(|_| {
         crate::utils::cold_path();
         Error::Invalid
