@@ -113,7 +113,8 @@ where
             crate::utils::cold_path();
             return Err(Error::Invalid.into());
         }
-        let mut values = Vec::with_capacity(expected.unwrap_or(0));
+        // A declared count is untrusted input: reserve no more items than bytes remain.
+        let mut values = Vec::with_capacity(expected.unwrap_or(0).min(input.len()));
 
         match (expected, Sep::BYTE) {
             (Some(count), Some(separator)) => {
@@ -484,6 +485,8 @@ mod tests {
         type Huge = BoundedList<String, crate::Length<crate::FixedBinaryBe<8>>, One, (), { usize::MAX - 1 }>;
         let count = (usize::MAX as u64).to_be_bytes();
         assert_eq!(decode::<Huge>(&count), Err(Error::Invalid));
+        let within_max = ((usize::MAX - 2) as u64).to_be_bytes();
+        assert_eq!(decode::<Huge>(&within_max), Err(Error::UnexpectedEof));
 
         type Small = BoundedList<String, crate::Length<crate::FixedBinaryBe<8>>, One, (), 3>;
         assert_eq!(decode::<Small>(&count), Err(Error::Invalid));
