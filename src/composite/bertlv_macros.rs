@@ -412,6 +412,11 @@ macro_rules! __finfmt_ber_tlv_assert_tags {
 /// accept `00` bytes between entries and at either end. Each nested format has
 /// its own setting. Encoding never adds padding; value bytes are not trimmed.
 ///
+/// Encoding writes the declared fields in declaration order, then the extras in
+/// their collection's iteration order; it does not reproduce the entry order of
+/// a decoded message. A `HashMap` makes that order vary between runs: use a
+/// `BTreeMap`, or an order-preserving map to keep decoded order.
+///
 /// Encoding stages each value in scratch before writing its tag and length, so
 /// scratch must hold the largest value. The unwritten output is the value's own
 /// workspace, as for `Frame`: with an output sized exactly to the message, a
