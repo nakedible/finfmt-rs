@@ -110,19 +110,24 @@ pub struct Empty<T>(PhantomData<T>);
 /// bytes before, between and after entries. Values are never trimmed, and
 /// encoding never emits padding.
 pub struct BerTlvList<T, const ALLOW_ZERO_PADDING: bool = false>(PhantomData<T>);
-/// A list with an optional count and optional byte separators, bounded by `MAX` items.
+/// A list of `MIN` to `MAX` items, framed like a field by `L`:
+/// - a counting prefix, such as [`crate::AsciiLength`], or [`crate::Fixed`] states
+///   the item count;
+/// - a wire-length prefix, such as [`crate::AsciiWireLength`], states the items'
+///   byte length;
+/// - [`crate::Rest`] takes the rest of the input.
 ///
-/// Use `()` for no count, [`FixedCount`] for a fixed count, or a numeric
-/// [`crate::LengthSpec`] prefix for a variable count. [`crate::Rest`] measures
-/// remaining bytes and does not carry an item count.
+/// `Sep` is `()` or a [`Separator`] between items. Encoding a list outside
+/// `MIN..=MAX` items is `InvalidValueLength`.
 ///
-/// Without separators, items must provide their own boundaries; uncounted items
-/// must consume at least one byte. With separators, the input must be bounded
-/// externally: the last item consumes the remainder. Only the final counted
-/// item may contain the separator. An uncounted empty input means an empty
-/// list, so a singleton item that encodes to no bytes is rejected.
-pub struct BoundedList<T, Count, Item, Sep, const MAX: usize>(PhantomData<(T, Count, Item, Sep)>);
-pub struct FixedCount<const COUNT: usize>;
+/// Without separators, items must provide their own boundaries, and items of a
+/// list without a count must consume at least one byte. With separators, a
+/// counted list's last item consumes the remaining input, so that input must be
+/// bounded externally, and only that item may contain the separator. An empty
+/// byte extent is an empty list, so a single item that encodes to no bytes is
+/// ambiguous. Item checks must keep separators out of values; debug builds
+/// assert it.
+pub struct BoundedList<T, L, Item, Sep, const MIN: usize, const MAX: usize>(PhantomData<(T, L, Item, Sep)>);
 /// Encode `None` as an explicit absent byte encoding and decode matching bytes
 /// back to `None`. Both encodings are exactly `N` bytes, and `N` must be nonzero:
 ///
@@ -134,16 +139,15 @@ pub struct FixedCount<const COUNT: usize>;
 pub struct OptionalAbsent<T, Inner, Absent, const N: usize>(PhantomData<(T, Inner, Absent)>);
 /// Fill the provided absent area with one byte.
 pub struct ByteFill<const BYTE: u8 = b' '>;
-/// A fixed physical area of `MAX` slots with a separately declared used byte length.
+/// A fixed physical area of `MAX` slots with a separately declared used extent.
 ///
-/// `Len` must describe the used extent independently of the physical area, for
-/// example with a numeric length prefix. [`crate::Rest`] cannot recover it.
+/// `Len` states the extent like a field's length: a counting prefix counts the
+/// used slots, and a wire-length prefix counts their bytes. [`crate::Rest`]
+/// cannot recover it.
 /// Slots inside that extent decode as present values. Remaining slots encode
 /// canonically and decode through their [`AbsentFmt::is_absent`] matcher.
 pub struct FixedAreaList<T, Len, Slot, const MAX: usize>(PhantomData<(T, Len, Slot)>);
 pub struct Separator<const BYTE: u8>;
-
-pub type FixedCountList<T, Item, const COUNT: usize> = BoundedList<T, FixedCount<COUNT>, Item, (), COUNT>;
 
 mod bertlv;
 #[doc(hidden)]
@@ -918,10 +922,10 @@ mod tests {
     type A5Padded = Field<Ascii<0, 5>, crate::Fixed<5>, crate::chain!(crate::PadRight<5, b' '>)>;
     type CountN2 = Field<Numeric<1, 2>, Fixed<2>, PadLeft<2, b'0', 1>>;
     type CountedAsciiListFmt =
-        Frame<Field<Binary<7, 19>, AsciiLength<2>>, BoundedList<String, AsciiLength<2>, DirectScalar<A5Padded>, Separator<b'/'>, 3>>;
+        Frame<Field<Binary<7, 19>, AsciiLength<2>>, BoundedList<String, AsciiLength<2>, DirectScalar<A5Padded>, Separator<b'/'>, 0, 3>>;
     type ScalarCountedAsciiListFmt =
-        Frame<Field<Binary<7, 19>, AsciiLength<2>>, BoundedList<String, Length<CountN2>, DirectScalar<A5Padded>, Separator<b'/'>, 3>>;
-    type FixedAsciiListFmt = FixedCountList<String, DirectScalar<A5Padded>, 3>;
+        Frame<Field<Binary<7, 19>, AsciiLength<2>>, BoundedList<String, Length<CountN2>, DirectScalar<A5Padded>, Separator<b'/'>, 0, 3>>;
+    type FixedAsciiListFmt = BoundedList<String, Fixed<3>, DirectScalar<A5Padded>, (), 3, 3>;
 
     #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(transparent)]
@@ -1218,7 +1222,7 @@ mod tests {
             RepeatedNoDefaultByteFillFmt::encode(&mut out, scratch.as_mut_slice(), &values).unwrap();
             total - out.len()
         };
-        assert_eq!(&output[..repeated_fill_used], b"\xF4ABCD    ");
+        assert_eq!(&output[..repeated_fill_used], b"\xF1ABCD    ");
         let mut input = &output[..repeated_fill_used];
         assert_eq!(
             RepeatedNoDefaultByteFillFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap(),
@@ -1232,7 +1236,7 @@ mod tests {
             RepeatedNoDefaultAbsentFmt::encode(&mut out, scratch.as_mut_slice(), &values).unwrap();
             total - out.len()
         };
-        assert_eq!(&output[..repeated_absent_used], b"\xF4ABCDNONE");
+        assert_eq!(&output[..repeated_absent_used], b"\xF1ABCDNONE");
         let mut input = &output[..repeated_absent_used];
         assert_eq!(
             RepeatedNoDefaultAbsentFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap(),
@@ -2561,15 +2565,6 @@ mod wrappers;
 pub use scalar_serde::SerdeScalar;
 #[doc(hidden)]
 pub use scalar_serde::{decode_serde_scalar, encode_serde_scalar};
-
-pub trait ListCountPolicy {
-    /// Whether decoding supplies a count, either from a prefix or statically.
-    /// `decode_count` must return `Some` exactly when this is true.
-    const HAS_COUNT: bool;
-
-    fn encode_count(output: &mut &mut [u8], scratch: &mut [u8], len: usize) -> Result<(), Error>;
-    fn decode_count<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Option<usize>, Error>;
-}
 
 pub trait ListSeparatorPolicy {
     const BYTE: Option<u8>;

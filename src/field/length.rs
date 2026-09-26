@@ -38,7 +38,24 @@ pub struct DecodePlan {
 /// units, the units the step chain starts from, including width padding;
 /// `wire_len` is the step chain's output in bytes. Each spec frames with one
 /// of them.
+/// What a length spec states about the value it frames.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Framing {
+    /// A count of value units, known before the value: `Fixed` and the counting
+    /// prefixes. A list's value units are its items.
+    Count,
+    /// The value's length in bytes, written before the value: the wire-length
+    /// prefixes.
+    Bytes,
+    /// Everything the enclosing format supplies: `Rest`.
+    Rest,
+}
+
 pub trait LengthSpec<S: Step> {
+    /// What the framing states, so a list knows whether it must measure its
+    /// items before writing the prefix.
+    const FRAMING: Framing;
+
     /// Encoded prefix size, excluding the payload, after checking length limits.
     fn encoded_len(count: usize, wire_len: usize) -> Result<usize, Error>;
     /// Write the prefix, if any.
@@ -54,6 +71,8 @@ pub trait LengthSpec<S: Step> {
 pub struct Fixed<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for Fixed<N> {
+    const FRAMING: Framing = Framing::Count;
+
     #[inline(always)]
     fn encoded_len(count: usize, wire_len: usize) -> Result<usize, Error> {
         debug_assert_eq!(count, N, "value does not fill the fixed width");
@@ -79,6 +98,8 @@ impl<const N: usize, S: Step> LengthSpec<S> for Fixed<N> {
 pub struct Length<F>(PhantomData<F>);
 
 impl<F: ScalarFmt, S: Step> LengthSpec<S> for Length<F> {
+    const FRAMING: Framing = Framing::Count;
+
     #[inline(always)]
     fn encoded_len(count: usize, _wire_len: usize) -> Result<usize, Error> {
         F::encoded_len_usize(count)
@@ -104,6 +125,8 @@ impl<F: ScalarFmt, S: Step> LengthSpec<S> for Length<F> {
 pub struct WireLength<F>(PhantomData<F>);
 
 impl<F: ScalarFmt, S: Step> LengthSpec<S> for WireLength<F> {
+    const FRAMING: Framing = Framing::Bytes;
+
     #[inline(always)]
     fn encoded_len(_count: usize, wire_len: usize) -> Result<usize, Error> {
         F::encoded_len_usize(wire_len)
@@ -126,6 +149,8 @@ impl<F: ScalarFmt, S: Step> LengthSpec<S> for WireLength<F> {
 pub struct AsciiLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for AsciiLength<N> {
+    const FRAMING: Framing = Framing::Count;
+
     #[inline(always)]
     fn encoded_len(count: usize, _wire_len: usize) -> Result<usize, Error> {
         decimal_prefix_len(count, N)
@@ -151,6 +176,8 @@ impl<const N: usize, S: Step> LengthSpec<S> for AsciiLength<N> {
 pub struct AsciiWireLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for AsciiWireLength<N> {
+    const FRAMING: Framing = Framing::Bytes;
+
     #[inline(always)]
     fn encoded_len(_count: usize, wire_len: usize) -> Result<usize, Error> {
         decimal_prefix_len(wire_len, N)
@@ -173,6 +200,8 @@ impl<const N: usize, S: Step> LengthSpec<S> for AsciiWireLength<N> {
 pub struct EbcdicLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for EbcdicLength<N> {
+    const FRAMING: Framing = Framing::Count;
+
     #[inline(always)]
     fn encoded_len(count: usize, _wire_len: usize) -> Result<usize, Error> {
         decimal_prefix_len(count, N)
@@ -199,6 +228,8 @@ impl<const N: usize, S: Step> LengthSpec<S> for EbcdicLength<N> {
 pub struct BlankableEbcdicLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for BlankableEbcdicLength<N> {
+    const FRAMING: Framing = Framing::Count;
+
     #[inline(always)]
     fn encoded_len(count: usize, _wire_len: usize) -> Result<usize, Error> {
         decimal_prefix_len(count, N)
@@ -224,6 +255,8 @@ impl<const N: usize, S: Step> LengthSpec<S> for BlankableEbcdicLength<N> {
 pub struct EbcdicWireLength<const N: usize>;
 
 impl<const N: usize, S: Step> LengthSpec<S> for EbcdicWireLength<N> {
+    const FRAMING: Framing = Framing::Bytes;
+
     #[inline(always)]
     fn encoded_len(_count: usize, wire_len: usize) -> Result<usize, Error> {
         decimal_prefix_len(wire_len, N)
@@ -266,6 +299,8 @@ fn remove_offset<const K: usize>(len: usize) -> Result<usize, Error> {
 }
 
 impl<L: LengthSpec<Identity>, const K: usize> LengthSpec<Identity> for Offset<L, K> {
+    const FRAMING: Framing = L::FRAMING;
+
     #[inline(always)]
     fn encoded_len(count: usize, wire_len: usize) -> Result<usize, Error> {
         L::encoded_len(add_offset::<K>(count)?, add_offset::<K>(wire_len)?)
@@ -291,6 +326,8 @@ impl<L: LengthSpec<Identity>, const K: usize> LengthSpec<Identity> for Offset<L,
 pub struct Rest;
 
 impl<S: Step> LengthSpec<S> for Rest {
+    const FRAMING: Framing = Framing::Rest;
+
     #[inline(always)]
     fn encoded_len(_count: usize, _wire_len: usize) -> Result<usize, Error> {
         Ok(0)

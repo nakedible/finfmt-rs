@@ -1,53 +1,6 @@
 use super::*;
-use crate::field::{Identity, LengthSpec};
-use crate::primitive::bytes::{take_bytes, take_delimited};
-
-impl ListCountPolicy for () {
-    const HAS_COUNT: bool = false;
-
-    #[inline(always)]
-    fn encode_count(_output: &mut &mut [u8], _scratch: &mut [u8], _len: usize) -> Result<(), Error> {
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn decode_count<'a>(_input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<Option<usize>, Error> {
-        Ok(None)
-    }
-}
-
-impl<F: LengthSpec<Identity>> ListCountPolicy for F {
-    const HAS_COUNT: bool = true;
-
-    #[inline(always)]
-    fn encode_count(output: &mut &mut [u8], scratch: &mut [u8], len: usize) -> Result<(), Error> {
-        F::encode(output, scratch, len, len)
-    }
-
-    #[inline(always)]
-    fn decode_count<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Option<usize>, Error> {
-        let plan = F::decode_plan(input, scratch)?;
-        Ok(Some(plan.count.unwrap_or(plan.wire_len)))
-    }
-}
-
-impl<const COUNT: usize> ListCountPolicy for FixedCount<COUNT> {
-    const HAS_COUNT: bool = true;
-
-    #[inline(always)]
-    fn encode_count(_output: &mut &mut [u8], _scratch: &mut [u8], len: usize) -> Result<(), Error> {
-        if len != COUNT {
-            crate::utils::cold_path();
-            return Err(Error::InvalidValueLength);
-        }
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn decode_count<'a>(_input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<Option<usize>, Error> {
-        Ok(Some(COUNT))
-    }
-}
+use crate::field::{Framing, Identity, LengthSpec};
+use crate::primitive::bytes::{copy_bytes, take_bytes, take_delimited};
 
 impl ListSeparatorPolicy for () {
     const BYTE: Option<u8> = None;
@@ -76,9 +29,38 @@ fn encode_list_separator<S: ListSeparatorPolicy>(output: &mut &mut [u8]) -> Resu
     Ok(())
 }
 
-impl<T, Count, Item, Sep, const MAX: usize> CompositeFmt<Vec<T>> for BoundedList<T, Count, Item, Sep, MAX>
+/// Encode the items with their separators. `counted` says whether decoding
+/// knows the item count, which decides what keeps the wire unambiguous.
+#[inline(always)]
+fn encode_items<T, Item: CompositeFmt<T>, Sep: ListSeparatorPolicy>(
+    output: &mut &mut [u8],
+    scratch: &mut [u8],
+    value: &[T],
+    counted: bool,
+) -> Result<(), CompositeError> {
+    for (index, item) in value.iter().enumerate() {
+        if index != 0 {
+            encode_list_separator::<Sep>(output)?;
+        }
+        // The item's format must keep the wire unambiguous; debug builds check it.
+        let encode = |out: &mut &mut [u8], scratch: &mut [u8]| Item::encode(out, scratch, item).map_err(|error| error.with_index(index));
+        encode_debug_checked(output, scratch, encode, |encoded| {
+            debug_assert!(
+                Sep::BYTE.is_none_or(|separator| counted && index + 1 == value.len() || !encoded.contains(&separator)),
+                "a list item encoded the separator; its check must exclude it"
+            );
+            debug_assert!(
+                counted || !encoded.is_empty() || Sep::BYTE.is_some() && value.len() != 1,
+                "an uncounted list item encoded to nothing, which decodes differently"
+            );
+        })?;
+    }
+    Ok(())
+}
+
+impl<T, L, Item, Sep, const MIN: usize, const MAX: usize> CompositeFmt<Vec<T>> for BoundedList<T, L, Item, Sep, MIN, MAX>
 where
-    Count: ListCountPolicy,
+    L: LengthSpec<Identity>,
     Item: CompositeFmt<T>,
     Sep: ListSeparatorPolicy,
 {
@@ -86,97 +68,111 @@ where
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &Vec<T>) -> Result<(), CompositeError> {
-        if value.len() > MAX {
+        const { assert!(MIN <= MAX, "a list's MIN must not exceed its MAX") };
+        if value.len() < MIN || value.len() > MAX {
             crate::utils::cold_path();
             return Err(Error::InvalidValueLength.into());
         }
-
-        framed(Count::encode_count(output, scratch, value.len()))?;
-        for (index, item) in value.iter().enumerate() {
-            if index != 0 {
-                encode_list_separator::<Sep>(output)?;
-            }
-            // The item's format must keep the wire unambiguous; debug builds check it.
-            let encode =
-                |out: &mut &mut [u8], scratch: &mut [u8]| Item::encode(out, scratch, item).map_err(|error| error.with_index(index));
-            encode_debug_checked(output, scratch, encode, |encoded| {
-                debug_assert!(
-                    Sep::BYTE.is_none_or(|separator| Count::HAS_COUNT && index + 1 == value.len() || !encoded.contains(&separator)),
-                    "a list item encoded the separator; its check must exclude it"
-                );
-                debug_assert!(
-                    Count::HAS_COUNT || !encoded.is_empty() || Sep::BYTE.is_some() && value.len() != 1,
-                    "an uncounted list item encoded to nothing, which decodes differently"
-                );
-            })?;
+        if L::FRAMING == Framing::Bytes {
+            // The prefix needs the items' byte length: stage them in scratch,
+            // using the unwritten output as their workspace.
+            let used = {
+                let mut staged = &mut *scratch;
+                let available = staged.len();
+                encode_items::<T, Item, Sep>(&mut staged, output, value, false)?;
+                available - staged.len()
+            };
+            let (items, scratch) = split_scratch(scratch, used)?;
+            framed(L::encode(output, scratch, value.len(), used))?;
+            copy_bytes(output, items)?;
+            return Ok(());
         }
-        Ok(())
+        framed(L::encode(output, scratch, value.len(), value.len()))?;
+        encode_items::<T, Item, Sep>(output, scratch, value, L::FRAMING == Framing::Count)
     }
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
-        let expected = Count::decode_count(input, scratch)?;
-        debug_assert_eq!(expected.is_some(), Count::HAS_COUNT);
-        if expected.is_some_and(|count| count > MAX) {
-            crate::utils::cold_path();
-            return Err(Error::Invalid.into());
-        }
-        // A declared count is untrusted input: reserve no more items than bytes remain.
-        let mut values = Vec::with_capacity(expected.unwrap_or(0).min(input.len()));
-
-        match (expected, Sep::BYTE) {
-            (Some(count), Some(separator)) => {
-                for index in 0..count {
-                    let mut segment = decode_delimited_field(input, separator, index + 1 != count)?;
-                    let value = Item::decode(&mut segment, scratch).map_err(|error| error.with_index(index))?;
-                    if !segment.is_empty() {
-                        crate::utils::cold_path();
-                        return Err(Error::Invalid.into());
-                    }
-                    values.push(value);
+        let plan = L::decode_plan(input, scratch)?;
+        let values = match plan.count {
+            Some(count) => {
+                if count < MIN || count > MAX {
+                    crate::utils::cold_path();
+                    return Err(Error::Invalid.into());
                 }
-            }
-            (None, Some(separator)) => {
-                let mut more = !input.is_empty();
-                while more {
-                    if values.len() == MAX {
-                        crate::utils::cold_path();
-                        return Err(Error::Invalid.into());
+                // A declared count is untrusted input: reserve no more items than bytes remain.
+                let mut values = Vec::with_capacity(count.min(input.len()));
+                if let Some(separator) = Sep::BYTE {
+                    for index in 0..count {
+                        let mut segment = decode_delimited_field(input, separator, index + 1 != count)?;
+                        let value = Item::decode(&mut segment, scratch).map_err(|error| error.with_index(index))?;
+                        if !segment.is_empty() {
+                            crate::utils::cold_path();
+                            return Err(Error::Invalid.into());
+                        }
+                        values.push(value);
                     }
-                    let (mut segment, terminated) = take_delimited(input, separator);
-                    more = terminated;
-                    let value = Item::decode(&mut segment, scratch).map_err(|error| error.with_index(values.len()))?;
-                    if !segment.is_empty() {
-                        crate::utils::cold_path();
-                        return Err(Error::Invalid.into());
+                } else {
+                    for index in 0..count {
+                        values.push(Item::decode(input, scratch).map_err(|error| error.with_index(index))?);
                     }
-                    values.push(value);
                 }
+                values
             }
-            (Some(count), None) => {
-                for index in 0..count {
-                    values.push(Item::decode(input, scratch).map_err(|error| error.with_index(index))?);
+            None => {
+                let mut extent = take_bytes(input, plan.wire_len)?;
+                let values = decode_uncounted::<T, Item, Sep, MAX>(&mut extent, scratch)?;
+                if values.len() < MIN {
+                    crate::utils::cold_path();
+                    return Err(Error::Invalid.into());
                 }
+                values
             }
-            (None, None) => {
-                while !input.is_empty() {
-                    if values.len() == MAX {
-                        crate::utils::cold_path();
-                        return Err(Error::Invalid.into());
-                    }
-                    let before = input.len();
-                    let value = Item::decode(input, scratch).map_err(|error| error.with_index(values.len()))?;
-                    if input.len() == before {
-                        crate::utils::cold_path();
-                        return Err(Error::Internal.into());
-                    }
-                    values.push(value);
-                }
-            }
-        }
-
+        };
         Ok(values)
     }
+}
+
+/// Decode items until `input` is used up, at most `MAX` of them.
+#[inline(always)]
+fn decode_uncounted<'a, T, Item: CompositeFmt<T>, Sep: ListSeparatorPolicy, const MAX: usize>(
+    input: &mut &'a [u8],
+    scratch: &mut &'a mut [u8],
+) -> Result<Vec<Item::Decoded<'a>>, CompositeError> {
+    let mut values = Vec::new();
+    if let Some(separator) = Sep::BYTE {
+        let mut more = !input.is_empty();
+        while more {
+            if values.len() == MAX {
+                crate::utils::cold_path();
+                return Err(Error::Invalid.into());
+            }
+            let (mut segment, terminated) = take_delimited(input, separator);
+            more = terminated;
+            let value = Item::decode(&mut segment, scratch).map_err(|error| error.with_index(values.len()))?;
+            if !segment.is_empty() {
+                crate::utils::cold_path();
+                return Err(Error::Invalid.into());
+            }
+            values.push(value);
+        }
+    } else {
+        while !input.is_empty() {
+            if values.len() == MAX {
+                crate::utils::cold_path();
+                return Err(Error::Invalid.into());
+            }
+            let before = input.len();
+            let value = Item::decode(input, scratch).map_err(|error| error.with_index(values.len()))?;
+            // An item that consumes nothing would loop forever.
+            if input.len() == before {
+                crate::utils::cold_path();
+                return Err(Error::Internal.into());
+            }
+            values.push(value);
+        }
+    }
+    Ok(values)
 }
 
 mod sealed {
@@ -276,11 +272,13 @@ where
             return Err(Error::InvalidValueLength.into());
         }
 
-        let logical_len = value.len().checked_mul(Slot::WIRE_LEN).ok_or_else(|| {
+        const { assert!(!matches!(Len::FRAMING, Framing::Rest), "a fixed area needs a declared used extent") };
+        let used_len = value.len().checked_mul(Slot::WIRE_LEN).ok_or_else(|| {
             crate::utils::cold_path();
             CompositeError::from(Error::BufferOverflow)
         })?;
-        framed(Len::encode(output, scratch, logical_len, logical_len))?;
+        // A counting prefix counts used slots; a wire-length prefix counts their bytes.
+        framed(Len::encode(output, scratch, value.len(), used_len))?;
 
         // Write each slot in turn, so nothing is reserved and filled later.
         for (index, item) in value.iter().enumerate() {
@@ -293,16 +291,22 @@ where
     #[inline(always)]
     fn decode<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError> {
         const { assert!(Slot::WIRE_LEN != 0, "fixed-area slots must be at least one byte wide") };
+        const { assert!(!matches!(Len::FRAMING, Framing::Rest), "a fixed area needs a declared used extent") };
         let plan = Len::decode_plan(input, scratch)?;
-        let logical_len = plan.count.unwrap_or(plan.wire_len);
-        let area_len = fixed_area_lens(Slot::WIRE_LEN, MAX)?;
-        if logical_len > area_len || !logical_len.is_multiple_of(Slot::WIRE_LEN) {
+        let count = match plan.count {
+            Some(count) => count,
+            None if plan.wire_len.is_multiple_of(Slot::WIRE_LEN) => plan.wire_len / Slot::WIRE_LEN,
+            None => {
+                crate::utils::cold_path();
+                return Err(Error::Invalid.into());
+            }
+        };
+        if count > MAX {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());
         }
-
+        let area_len = fixed_area_lens(Slot::WIRE_LEN, MAX)?;
         let area = take_bytes(input, area_len)?;
-        let count = logical_len / Slot::WIRE_LEN;
         let mut values = Vec::with_capacity(count);
         let mut slots = area;
         for index in 0..count {
@@ -324,8 +328,8 @@ mod tests {
 
     type Text = DirectScalar<Field<Ascii<0, 64>, Rest>>;
     type One = DirectScalar<Field<Ascii<1, 1>, Fixed<1>>>;
-    pub(super) type Delimited = BoundedList<String, (), Text, Separator<b'|'>, 4>;
-    pub(super) type Counted = BoundedList<String, AsciiLength<1>, Text, Separator<b'|'>, 4>;
+    pub(super) type Delimited = BoundedList<String, Rest, Text, Separator<b'|'>, 0, 4>;
+    pub(super) type Counted = BoundedList<String, AsciiLength<1>, Text, Separator<b'|'>, 0, 4>;
 
     pub(super) fn encode<F: CompositeFmt<Vec<String>>>(texts: &[&str]) -> Result<Vec<u8>, Error> {
         let values = texts.iter().map(|s| (*s).to_owned()).collect();
@@ -366,7 +370,7 @@ mod tests {
     fn item_errors_carry_their_index() {
         let error = |result: Result<Vec<String>, CompositeError>| result.unwrap_err().to_string();
         let mut input = &b"3A||B"[..];
-        type Counted2 = BoundedList<String, AsciiLength<1>, One, Separator<b'|'>, 4>;
+        type Counted2 = BoundedList<String, AsciiLength<1>, One, Separator<b'|'>, 0, 4>;
         assert_eq!(
             error(Counted2::decode(&mut input, &mut &mut [0; 8][..])),
             "[1]: unexpected end of input"
@@ -381,7 +385,7 @@ mod tests {
         type Two = DirectScalar<Field<Ascii<2, 2>, Fixed<2>>>;
         type Area = FixedAreaList<String, AsciiLength<1>, OptionalAbsent<String, Two, ByteFill, 2>, 3>;
         assert_eq!(
-            error(Area::decode(&mut &b"4AB\xff\xff  "[..], &mut &mut [][..])),
+            error(Area::decode(&mut &b"2AB\xff\xff  "[..], &mut &mut [][..])),
             "[1]: invalid data"
         );
     }
@@ -418,7 +422,7 @@ mod tests {
         for wire in [b"2AB".as_slice(), b"3A|B"] {
             assert_eq!(decode::<Counted>(wire), Err(Error::Invalid));
         }
-        type Encoded = BoundedList<String, AsciiLength<1>, DirectScalar<Field<Ascii<1, 1>, Fixed<1>, Ebcdic037>>, Separator<0xC1>, 4>;
+        type Encoded = BoundedList<String, AsciiLength<1>, DirectScalar<Field<Ascii<1, 1>, Fixed<1>, Ebcdic037>>, Separator<0xC1>, 0, 4>;
         assert!(rejected_in_debug::<Encoded>(&["A", "B"]));
         roundtrip::<Encoded>(&["B", "A"], b"2\xC2\xC1\xC1");
         let mut output = [0; 4];
@@ -428,30 +432,30 @@ mod tests {
 
     #[test]
     fn zero_width_items_require_count_or_separators() {
-        type Plain = BoundedList<String, (), Text, (), 4>;
+        type Plain = BoundedList<String, Rest, Text, (), 0, 4>;
         for texts in [&[""][..], &["A", ""], &["", "A"]] {
             assert!(rejected_in_debug::<Plain>(texts));
         }
-        type Zero = FixedCountList<(), Empty<()>, 2>;
+        type Zero = BoundedList<(), Fixed<2>, Empty<()>, (), 2, 2>;
         let mut input = &b"TAIL"[..];
         Zero::encode(&mut &mut [][..], &mut [], &vec![(), ()]).unwrap();
         assert_eq!(Zero::decode(&mut input, &mut &mut [][..]).unwrap(), [(), ()]);
         assert_eq!(input, b"TAIL");
-        type CountedZero = BoundedList<(), AsciiLength<1>, Empty<()>, (), 4>;
+        type CountedZero = BoundedList<(), AsciiLength<1>, Empty<()>, (), 0, 4>;
         let mut output = [0; 1];
         CountedZero::encode(&mut output.as_mut_slice(), &mut [], &vec![(), ()]).unwrap();
         assert_eq!(output, *b"2");
         let mut input = &b"2TAIL"[..];
         assert_eq!(CountedZero::decode(&mut input, &mut &mut [][..]).unwrap(), [(), ()]);
         assert_eq!(input, b"TAIL");
-        type UncountedZero = BoundedList<(), (), Empty<()>, (), 4>;
+        type UncountedZero = BoundedList<(), Rest, Empty<()>, (), 0, 4>;
         assert_eq!(
             UncountedZero::decode(&mut input, &mut &mut [][..]).unwrap_err().kind,
             Error::Internal
         );
 
-        type PlainOne = BoundedList<String, (), One, (), 4>;
-        type CountedOne = BoundedList<String, AsciiLength<1>, One, (), 4>;
+        type PlainOne = BoundedList<String, Rest, One, (), 0, 4>;
+        type CountedOne = BoundedList<String, AsciiLength<1>, One, (), 0, 4>;
         roundtrip::<PlainOne>(&["A", "|"], b"A|");
         roundtrip::<CountedOne>(&["A", "|"], b"2A|");
         assert_eq!(decode::<CountedOne>(b"2ABTAIL").unwrap().1, b"TAIL");
@@ -460,9 +464,30 @@ mod tests {
     }
 
     #[test]
+    fn lists_are_framed_like_fields() {
+        // A wire-length prefix states the items' byte length.
+        type Extent = BoundedList<String, crate::AsciiWireLength<2>, Text, Separator<b'|'>, 0, 4>;
+        roundtrip::<Extent>(&["AB", "C"], b"04AB|C");
+        roundtrip::<Extent>(&[], b"00");
+        assert_eq!(
+            decode::<Extent>(b"04AB|CTAIL").unwrap(),
+            (vec!["AB".into(), "C".into()], b"TAIL".to_vec())
+        );
+        assert_eq!(decode::<Extent>(b"09AB|C"), Err(Error::UnexpectedEof));
+        // MIN bounds the list's length like a field check's minimum.
+        type AtLeastTwo = BoundedList<String, AsciiLength<1>, One, (), 2, 4>;
+        assert_eq!(encode::<AtLeastTwo>(&["A"]), Err(Error::InvalidValueLength));
+        assert_eq!(decode::<AtLeastTwo>(b"1A"), Err(Error::Invalid));
+        roundtrip::<AtLeastTwo>(&["A", "B"], b"2AB");
+        type RestAtLeastOne = BoundedList<String, Rest, One, (), 1, 4>;
+        assert_eq!(decode::<RestAtLeastOne>(b""), Err(Error::Invalid));
+        assert_eq!(decode::<Extent>(b"05ABCDE").unwrap().0, ["ABCDE"]);
+    }
+
+    #[test]
     fn list_items_can_borrow_disjoint_scratch() {
         type Borrowed = DirectScalar<Field<Ascii<1, 1>, Fixed<1>, Ebcdic037>, &'static str>;
-        type List = BoundedList<&'static str, AsciiLength<1>, Borrowed, Separator<b'|'>, 4>;
+        type List = BoundedList<&'static str, AsciiLength<1>, Borrowed, Separator<b'|'>, 0, 4>;
         let mut input = &b"2\xC1|\xC2"[..];
         let mut scratch = [0; 2];
         let start = scratch.as_ptr();
@@ -477,16 +502,16 @@ mod tests {
 
     #[test]
     fn count_limits_are_checked_before_reservation() {
-        type Huge = BoundedList<String, crate::Length<crate::FixedBinaryBe<8>>, One, (), { usize::MAX - 1 }>;
+        type Huge = BoundedList<String, crate::Length<crate::FixedBinaryBe<8>>, One, (), 0, { usize::MAX - 1 }>;
         let count = (usize::MAX as u64).to_be_bytes();
         assert_eq!(decode::<Huge>(&count), Err(Error::Invalid));
         let within_max = ((usize::MAX - 2) as u64).to_be_bytes();
         assert_eq!(decode::<Huge>(&within_max), Err(Error::UnexpectedEof));
 
-        type Small = BoundedList<String, crate::Length<crate::FixedBinaryBe<8>>, One, (), 3>;
+        type Small = BoundedList<String, crate::Length<crate::FixedBinaryBe<8>>, One, (), 0, 3>;
         assert_eq!(decode::<Small>(&count), Err(Error::Invalid));
-        type Plain = BoundedList<String, AsciiLength<1>, One, (), 4>;
-        type NoItems = BoundedList<String, AsciiLength<1>, One, (), 0>;
+        type Plain = BoundedList<String, AsciiLength<1>, One, (), 0, 4>;
+        type NoItems = BoundedList<String, AsciiLength<1>, One, (), 0, 0>;
         assert_eq!(decode::<Counted>(b"5"), Err(Error::Invalid));
         assert_eq!(decode::<Plain>(b"5"), Err(Error::Invalid));
         assert_eq!(decode::<NoItems>(b"1"), Err(Error::Invalid));
@@ -496,11 +521,11 @@ mod tests {
         // The item count is the list value's own length.
         assert_eq!(encode::<Plain>(&["A"; 5]), Err(Error::InvalidValueLength));
         assert_eq!(
-            encode::<FixedCountList<String, One, 3>>(&["A", "B"]),
+            encode::<BoundedList<String, Fixed<3>, One, (), 3, 3>>(&["A", "B"]),
             Err(Error::InvalidValueLength)
         );
         // A MAX the count prefix cannot hold is a miswritten list.
-        type TooWide = BoundedList<String, AsciiLength<1>, One, (), 12>;
+        type TooWide = BoundedList<String, AsciiLength<1>, One, (), 0, 12>;
         assert!(std::panic::catch_unwind(|| encode::<TooWide>(&["A"; 10])).is_err() == cfg!(debug_assertions));
     }
 
@@ -523,30 +548,35 @@ mod tests {
         type Optional = OptionalAbsent<String, Two, SpacesOrZeros, 2>;
         type Area = FixedAreaList<String, AsciiLength<1>, Optional, 3>;
         assert_eq!(Optional::decode(&mut &b"00"[..], &mut &mut [][..]), Ok(None));
+        // The counting prefix counts used slots.
         for (wire, expected) in [
             (&b"0  00  "[..], &[][..]),
-            (b"2AB00  ", &["AB"]),
-            (b"2  0000", &["  "]),
-            (b"400AB00", &["00", "AB"]),
-            (b"6AB00  ", &["AB", "00", "  "]),
+            (b"1AB00  ", &["AB"]),
+            (b"1  0000", &["  "]),
+            (b"200AB00", &["00", "AB"]),
+            (b"3AB00  ", &["AB", "00", "  "]),
         ] {
             let (values, rest) = decode::<Area>(wire).unwrap();
             assert_eq!(values, expected);
             assert!(rest.is_empty());
         }
-        assert_eq!(decode::<Area>(b"2AB0000TAIL").unwrap().1, b"TAIL");
+        assert_eq!(decode::<Area>(b"1AB0000TAIL").unwrap().1, b"TAIL");
         for (wire, error) in [
-            (&b"1AB    "[..], Error::Invalid),
+            (&b"4AB    "[..], Error::Invalid),
             (b"8AB    ", Error::Invalid),
             (b"0AB    ", Error::Invalid),
             (b"0 0    ", Error::Invalid),
-            (b"2AB   ", Error::UnexpectedEof),
+            (b"1AB   ", Error::UnexpectedEof),
         ] {
             assert_eq!(decode::<Area>(wire), Err(error));
         }
         roundtrip::<Area>(&[], b"0      ");
-        roundtrip::<Area>(&["AB"], b"2AB    ");
-        roundtrip::<Area>(&["AB", "00", "  "], b"6AB00  ");
+        roundtrip::<Area>(&["AB"], b"1AB    ");
+        roundtrip::<Area>(&["AB", "00", "  "], b"3AB00  ");
+        // A wire-length prefix counts the used slots' bytes.
+        type ByteArea = FixedAreaList<String, crate::AsciiWireLength<1>, Optional, 3>;
+        roundtrip::<ByteArea>(&["AB"], b"2AB    ");
+        assert_eq!(decode::<ByteArea>(b"1AB    "), Err(Error::Invalid));
     }
 
     #[test]

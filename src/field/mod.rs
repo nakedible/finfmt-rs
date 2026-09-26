@@ -27,8 +27,8 @@ pub use check::{
 pub use ebcdic::{Ebcdic037, Ebcdic1142};
 pub use format::{Field, PaddedField};
 pub use length::{
-    AsciiLength, AsciiWireLength, BlankableEbcdicLength, DecodePlan, EbcdicLength, EbcdicWireLength, Fixed, Length, LengthSpec, Offset,
-    Rest, WireLength,
+    AsciiLength, AsciiWireLength, BlankableEbcdicLength, DecodePlan, EbcdicLength, EbcdicWireLength, Fixed, Framing, Length, LengthSpec,
+    Offset, Rest, WireLength,
 };
 pub use nibble::{PackNibbles, PackNibblesLeft, PackNibblesRight, UnpackNibbles};
 pub use numeric::{
