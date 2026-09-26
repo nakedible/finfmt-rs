@@ -38,7 +38,7 @@ impl<const COUNT: usize> ListCountPolicy for FixedCount<COUNT> {
     fn encode_count(_output: &mut &mut [u8], _scratch: &mut [u8], len: usize) -> Result<(), Error> {
         if len != COUNT {
             crate::utils::cold_path();
-            return Err(Error::Invalid);
+            return Err(Error::InvalidValueLength);
         }
         Ok(())
     }
@@ -55,6 +55,17 @@ impl ListSeparatorPolicy for () {
 
 impl<const BYTE: u8> ListSeparatorPolicy for Separator<BYTE> {
     const BYTE: Option<u8> = Some(BYTE);
+}
+
+/// `MAX` bounds the list's length, so a prefix that cannot hold it means the
+/// list is written wrong. Debug builds catch it; release passes the error through.
+#[inline(always)]
+fn framed(result: Result<(), Error>) -> Result<(), Error> {
+    debug_assert!(
+        !matches!(result, Err(Error::Invalid)),
+        "the list's MAX exceeds what its length prefix can hold"
+    );
+    result
 }
 
 #[inline]
@@ -77,10 +88,10 @@ where
     fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &Vec<T>) -> Result<(), CompositeError> {
         if value.len() > MAX {
             crate::utils::cold_path();
-            return Err(Error::Invalid.into());
+            return Err(Error::InvalidValueLength.into());
         }
 
-        Count::encode_count(output, scratch, value.len())?;
+        framed(Count::encode_count(output, scratch, value.len()))?;
         for (index, item) in value.iter().enumerate() {
             if index != 0 {
                 encode_list_separator::<Sep>(output)?;
@@ -262,14 +273,14 @@ where
     fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &Vec<T>) -> Result<(), CompositeError> {
         if value.len() > MAX {
             crate::utils::cold_path();
-            return Err(Error::Invalid.into());
+            return Err(Error::InvalidValueLength.into());
         }
 
         let logical_len = value.len().checked_mul(Slot::WIRE_LEN).ok_or_else(|| {
             crate::utils::cold_path();
             CompositeError::from(Error::BufferOverflow)
         })?;
-        Len::encode(output, scratch, logical_len, logical_len)?;
+        framed(Len::encode(output, scratch, logical_len, logical_len))?;
 
         // Write each slot in turn, so nothing is reserved and filled later.
         for (index, item) in value.iter().enumerate() {
@@ -482,6 +493,15 @@ mod tests {
         assert_eq!(decode::<NoItems>(b"0TAIL"), Ok((vec![], b"TAIL".to_vec())));
         roundtrip::<Plain>(&["A", "B", "C", "D"], b"4ABCD");
         assert_eq!(decode::<Plain>(b"4A"), Err(Error::UnexpectedEof));
+        // The item count is the list value's own length.
+        assert_eq!(encode::<Plain>(&["A"; 5]), Err(Error::InvalidValueLength));
+        assert_eq!(
+            encode::<FixedCountList<String, One, 3>>(&["A", "B"]),
+            Err(Error::InvalidValueLength)
+        );
+        // A MAX the count prefix cannot hold is a miswritten list.
+        type TooWide = BoundedList<String, AsciiLength<1>, One, (), 12>;
+        assert!(std::panic::catch_unwind(|| encode::<TooWide>(&["A"; 10])).is_err() == cfg!(debug_assertions));
     }
 
     struct SpacesOrZeros;

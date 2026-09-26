@@ -1024,12 +1024,12 @@ mod tests {
         let mut out = output.as_mut_slice();
         assert_eq!(
             error_kind(CountedAsciiListFmt::encode(&mut out, scratch.as_mut_slice(), &too_many)),
-            Err(Error::Invalid)
+            Err(Error::InvalidValueLength)
         );
         let mut out = output.as_mut_slice();
         assert_eq!(
             error_kind(FixedAsciiListFmt::encode(&mut out, scratch.as_mut_slice(), &too_many)),
-            Err(Error::Invalid)
+            Err(Error::InvalidValueLength)
         );
 
         let mut invalid = b"1903ABC  XDEF  XGHI  ".as_slice();
