@@ -73,7 +73,8 @@ pub trait ContextFmt<T, C: ?Sized> {
 /// Formats using this for `Option<T>` should choose a present-side format that
 /// cannot encode the absent bytes unless that lossy mapping is intentional.
 pub trait AbsentFmt {
-    fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error>;
+    /// Write the absent encoding of a `len`-byte area, advancing `output`.
+    fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8], len: usize) -> Result<(), Error>;
 
     /// Match the canonical absent bytes, or override to accept additional encodings.
     #[inline(always)]
@@ -81,12 +82,10 @@ pub trait AbsentFmt {
         let mut workspace = &mut **scratch;
         let absent = reserve_bytes(&mut workspace, input.len())?;
         let mut absent_out = &mut absent[..];
-        Self::encode_absent(&mut absent_out, workspace)?;
-        if !absent_out.is_empty() {
-            crate::utils::cold_path();
-            return Err(Error::Internal);
-        }
-        Ok(input == absent)
+        Self::encode_absent(&mut absent_out, workspace, input.len())?;
+        let written = input.len() - absent_out.len();
+        debug_assert_eq!(written, input.len(), "the absent encoding is not as wide as its area");
+        Ok(absent.get(..written) == Some(input))
     }
 }
 
@@ -125,7 +124,13 @@ pub struct BerTlvList<T, const ALLOW_ZERO_PADDING: bool = false>(PhantomData<T>)
 pub struct BoundedList<T, Count, Item, Sep, const MAX: usize>(PhantomData<(T, Count, Item, Sep)>);
 pub struct FixedCount<const COUNT: usize>;
 /// Encode `None` as an explicit absent byte encoding and decode matching bytes
-/// back to `None`.
+/// back to `None`. Both encodings are exactly `N` bytes, and `N` must be nonzero:
+///
+/// ```compile_fail
+/// # use finfmt::composite::{ByteFill, CompositeFmt, Empty, OptionalAbsent};
+/// type ZeroWidth = OptionalAbsent<(), Empty<()>, ByteFill, 0>;
+/// let _ = ZeroWidth::decode(&mut &b""[..], &mut &mut [][..]);
+/// ```
 pub struct OptionalAbsent<T, Inner, Absent, const N: usize>(PhantomData<(T, Inner, Absent)>);
 /// Fill the provided absent area with one byte.
 pub struct ByteFill<const BYTE: u8 = b' '>;

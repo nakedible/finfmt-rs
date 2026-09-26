@@ -90,8 +90,10 @@ macro_rules! absent_format {
 
         impl $crate::composite::AbsentFmt for $name {
             #[inline(always)]
-            fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), $crate::Error> {
+            fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8], len: usize) -> Result<(), $crate::Error> {
+                let available = output.len();
                 $crate::absent_format!(@encode output, scratch; $($fields)*);
+                debug_assert_eq!(available - output.len(), len, "the absent pattern is not as wide as its area");
                 Ok(())
             }
         }

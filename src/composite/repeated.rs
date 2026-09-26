@@ -1,6 +1,6 @@
 use super::*;
 use crate::field::{Identity, LengthSpec};
-use crate::primitive::bytes::{fill_repeated, reserve_bytes, take_bytes, take_delimited};
+use crate::primitive::bytes::{take_bytes, take_delimited};
 
 impl ListCountPolicy for () {
     const HAS_COUNT: bool = false;
@@ -178,9 +178,9 @@ pub trait FixedAreaSlot<T>: sealed::FixedAreaSlotSealed {
 
     const WIRE_LEN: usize;
 
-    fn encode_present(output: &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError>;
+    fn encode_present(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError>;
     fn decode_present<'de>(input: &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError>;
-    fn encode_absent_slots(output: &mut [u8], scratch: &mut [u8]) -> Result<(), CompositeError>;
+    fn encode_absent_slots(output: &mut &mut [u8], scratch: &mut [u8], count: usize) -> Result<(), CompositeError>;
     fn validate_absent_slots(input: &[u8], scratch: &mut &mut [u8]) -> Result<(), CompositeError>;
 }
 
@@ -201,13 +201,11 @@ where
     const WIRE_LEN: usize = N;
 
     #[inline(always)]
-    fn encode_present(output: &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
-        let mut slot_out = output;
-        Inner::encode(&mut slot_out, scratch, value)?;
-        if !slot_out.is_empty() {
-            crate::utils::cold_path();
-            return Err(Error::Internal.into());
-        }
+    fn encode_present(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
+        const { assert!(N != 0, "an OptionalAbsent area must be at least one byte wide") };
+        let available = output.len();
+        Inner::encode(output, scratch, value)?;
+        debug_assert_eq!(available - output.len(), N, "the value is not as wide as its slot");
         Ok(())
     }
 
@@ -223,18 +221,10 @@ where
     }
 
     #[inline(always)]
-    fn encode_absent_slots(output: &mut [u8], scratch: &mut [u8]) -> Result<(), CompositeError> {
-        if output.is_empty() {
-            return Ok(());
+    fn encode_absent_slots(output: &mut &mut [u8], scratch: &mut [u8], count: usize) -> Result<(), CompositeError> {
+        for _ in 0..count {
+            Absent::encode_absent(output, scratch, N)?;
         }
-        let (absent, scratch) = split_scratch(scratch, Self::WIRE_LEN)?;
-        let mut slot_out = &mut absent[..];
-        Absent::encode_absent(&mut slot_out, scratch)?;
-        if !slot_out.is_empty() {
-            crate::utils::cold_path();
-            return Err(Error::Internal.into());
-        }
-        fill_repeated(output, absent)?;
         Ok(())
     }
 
@@ -255,10 +245,6 @@ where
 
 #[inline(always)]
 fn fixed_area_lens(slot_len: usize, max: usize) -> Result<usize, Error> {
-    if slot_len == 0 {
-        crate::utils::cold_path();
-        return Err(Error::Internal);
-    }
     slot_len.checked_mul(max).ok_or_else(|| {
         crate::utils::cold_path();
         Error::BufferOverflow
@@ -279,28 +265,23 @@ where
             return Err(Error::Invalid.into());
         }
 
-        let area_len = fixed_area_lens(Slot::WIRE_LEN, MAX)?;
         let logical_len = value.len().checked_mul(Slot::WIRE_LEN).ok_or_else(|| {
             crate::utils::cold_path();
             CompositeError::from(Error::BufferOverflow)
         })?;
         Len::encode(output, scratch, logical_len, logical_len)?;
 
-        let area = reserve_bytes(output, area_len)?;
-        let mut area_out = area;
+        // Write each slot in turn, so nothing is reserved and filled later.
         for (index, item) in value.iter().enumerate() {
-            let slot = area_out.split_off_mut(..Slot::WIRE_LEN).ok_or_else(|| {
-                crate::utils::cold_path();
-                CompositeError::from(Error::Internal)
-            })?;
-            Slot::encode_present(slot, scratch, item).map_err(|error| error.with_index(index))?;
+            Slot::encode_present(output, scratch, item).map_err(|error| error.with_index(index))?;
         }
-        Slot::encode_absent_slots(area_out, scratch)?;
+        Slot::encode_absent_slots(output, scratch, MAX - value.len())?;
         Ok(())
     }
 
     #[inline(always)]
     fn decode<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError> {
+        const { assert!(Slot::WIRE_LEN != 0, "fixed-area slots must be at least one byte wide") };
         let plan = Len::decode_plan(input, scratch)?;
         let logical_len = plan.count.unwrap_or(plan.wire_len);
         let area_len = fixed_area_lens(Slot::WIRE_LEN, MAX)?;
@@ -506,8 +487,8 @@ mod tests {
     struct SpacesOrZeros;
 
     impl AbsentFmt for SpacesOrZeros {
-        fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
-            ByteFill::<b' '>::encode_absent(output, scratch)
+        fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8], len: usize) -> Result<(), Error> {
+            ByteFill::<b' '>::encode_absent(output, scratch, len)
         }
 
         fn is_absent(input: &[u8], _scratch: &mut &mut [u8]) -> Result<bool, Error> {
@@ -546,19 +527,14 @@ mod tests {
         roundtrip::<Area>(&[], b"0      ");
         roundtrip::<Area>(&["AB"], b"2AB    ");
         roundtrip::<Area>(&["AB", "00", "  "], b"6AB00  ");
-        type ZeroWidth = FixedAreaList<(), AsciiLength<1>, OptionalAbsent<(), Empty<()>, ByteFill, 0>, 3>;
-        assert_eq!(
-            ZeroWidth::decode(&mut &b"0"[..], &mut &mut [][..]).unwrap_err().kind,
-            Error::Internal
-        );
     }
 
     #[test]
     fn unused_slot_checks_preserve_borrowed_values_and_workspace() {
         struct Canonical;
         impl AbsentFmt for Canonical {
-            fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
-                ByteFill::<b'_'>::encode_absent(output, scratch)
+            fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8], len: usize) -> Result<(), Error> {
+                ByteFill::<b'_'>::encode_absent(output, scratch, len)
             }
         }
         type Borrowed = DirectScalar<Field<Ascii<1, 1>, Fixed<1>, Ebcdic037>, &'static str>;

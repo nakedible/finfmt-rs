@@ -1,5 +1,5 @@
 use super::*;
-use crate::primitive::bytes::{copy_bytes, is_filled, reserve_bytes, reserve_filled, take_bytes};
+use crate::primitive::bytes::{copy_bytes, is_filled, reserve_filled, take_bytes};
 
 impl<T, F: ScalarFmt, S: CompositeFmt<T>> CompositeFmt<T> for Frame<F, S> {
     type Decoded<'de> = S::Decoded<'de>;
@@ -72,10 +72,8 @@ where
 
     #[inline(always)]
     fn is_absent(input: &[u8], scratch: &mut &mut [u8]) -> Result<bool, Error> {
-        if input.len() != Self::WIRE_LEN || Self::WIRE_LEN == 0 {
-            crate::utils::cold_path();
-            return Err(Error::Internal);
-        }
+        const { assert!(N != 0, "an OptionalAbsent area must be at least one byte wide") };
+        debug_assert_eq!(input.len(), N, "a trailing field was given a different width");
         Absent::is_absent(input, scratch)
     }
 }
@@ -87,10 +85,7 @@ impl TrailingTails for NoTrailingFields {
 
     #[inline(always)]
     fn trim_len(input: &[u8], _scratch: &mut &mut [u8]) -> Result<usize, Error> {
-        if !input.is_empty() {
-            crate::utils::cold_path();
-            return Err(Error::Internal);
-        }
+        debug_assert!(input.is_empty(), "bytes left after the last trailing field");
         Ok(0)
     }
 
@@ -101,11 +96,8 @@ impl TrailingTails for NoTrailingFields {
 
     #[inline(always)]
     fn validate_omitted(input: &[u8], included_len: usize, _scratch: &mut &mut [u8]) -> Result<(), Error> {
-        if input.is_empty() && included_len == 0 {
-            return Ok(());
-        }
-        crate::utils::cold_path();
-        Err(Error::Internal)
+        debug_assert!(input.is_empty() && included_len == 0, "bytes left after the last trailing field");
+        Ok(())
     }
 }
 
@@ -125,18 +117,8 @@ where
 
     #[inline(always)]
     fn trim_len(input: &[u8], scratch: &mut &mut [u8]) -> Result<usize, Error> {
-        if Field::WIRE_LEN == 0 || input.len() != Self::WIRE_LEN {
-            crate::utils::cold_path();
-            return Err(Error::Internal);
-        }
-        let head = input.get(..Field::WIRE_LEN).ok_or_else(|| {
-            crate::utils::cold_path();
-            Error::Internal
-        })?;
-        let rest = input.get(Field::WIRE_LEN..).ok_or_else(|| {
-            crate::utils::cold_path();
-            Error::Internal
-        })?;
+        debug_assert_eq!(input.len(), Self::WIRE_LEN, "trailing fields were given a different width");
+        let (head, rest) = input.split_at_checked(Field::WIRE_LEN).unwrap_or((input, &[]));
         let rest_len = Rest::trim_len(rest, scratch)?;
         if rest_len != 0 {
             return Field::WIRE_LEN.checked_add(rest_len).ok_or_else(|| {
@@ -158,18 +140,12 @@ where
 
     #[inline(always)]
     fn validate_omitted(input: &[u8], included_len: usize, scratch: &mut &mut [u8]) -> Result<(), Error> {
-        if Field::WIRE_LEN == 0 || input.len() != Self::WIRE_LEN || included_len > Self::WIRE_LEN {
-            crate::utils::cold_path();
-            return Err(Error::Internal);
-        }
-        let head = input.get(..Field::WIRE_LEN).ok_or_else(|| {
-            crate::utils::cold_path();
-            Error::Internal
-        })?;
-        let rest = input.get(Field::WIRE_LEN..).ok_or_else(|| {
-            crate::utils::cold_path();
-            Error::Internal
-        })?;
+        // Decoding checked `is_boundary` first, so the included length fits.
+        debug_assert!(
+            input.len() == Self::WIRE_LEN && included_len <= Self::WIRE_LEN,
+            "trailing fields were given a different width"
+        );
+        let (head, rest) = input.split_at_checked(Field::WIRE_LEN).unwrap_or((input, &[]));
         if included_len == 0 {
             if !Field::is_absent(head, scratch)? {
                 crate::utils::cold_path();
@@ -204,17 +180,14 @@ where
     #[inline(always)]
     fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
         let full_len = trailing_body_len::<Tails, BASE_LEN>()?;
-        let (body, scratch) = split_scratch(scratch, full_len)?;
-        let mut body_out = &mut body[..];
+        let (staging, scratch) = split_scratch(scratch, full_len)?;
+        let mut body_out = &mut staging[..];
         Body::encode(&mut body_out, scratch, value)?;
-        if !body_out.is_empty() {
-            crate::utils::cold_path();
-            return Err(Error::Internal.into());
-        }
-        let tails = body.get(BASE_LEN..).ok_or_else(|| {
-            crate::utils::cold_path();
-            CompositeError::from(Error::Internal)
-        })?;
+        // Copy only what the body wrote, so a miswritten body never ships stale scratch.
+        let written = full_len - body_out.len();
+        debug_assert_eq!(written, full_len, "the body is not as wide as its declared length");
+        let body = staging.get(..written).unwrap_or_default();
+        let tails = body.get(BASE_LEN..).unwrap_or_default();
         let tail_len = Tails::trim_len(tails, &mut &mut *scratch)?;
         let logical_len = BASE_LEN.checked_add(tail_len).ok_or_else(|| {
             crate::utils::cold_path();
@@ -241,10 +214,7 @@ where
 
         let full_len = trailing_body_len::<Tails, BASE_LEN>()?;
         let body = take_bytes(input, full_len)?;
-        let tails = body.get(BASE_LEN..).ok_or_else(|| {
-            crate::utils::cold_path();
-            CompositeError::from(Error::Internal)
-        })?;
+        let tails = body.get(BASE_LEN..).unwrap_or_default();
         Tails::validate_omitted(tails, tail_len, scratch)?;
 
         let mut body_input = body;
@@ -266,21 +236,19 @@ where
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &Option<T>) -> Result<(), CompositeError> {
-        let area = reserve_bytes(output, N)?;
-        let mut area_out = &mut area[..];
+        const { assert!(N != 0, "an OptionalAbsent area must be at least one byte wide") };
+        let available = output.len();
         match value {
-            None => Absent::encode_absent(&mut area_out, scratch)?,
-            Some(value) => Inner::encode(&mut area_out, scratch, value)?,
+            None => Absent::encode_absent(output, scratch, N)?,
+            Some(value) => Inner::encode(output, scratch, value)?,
         }
-        if !area_out.is_empty() {
-            crate::utils::cold_path();
-            return Err(Error::Internal.into());
-        }
+        debug_assert_eq!(available - output.len(), N, "the value is not as wide as its OptionalAbsent area");
         Ok(())
     }
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
+        const { assert!(N != 0, "an OptionalAbsent area must be at least one byte wide") };
         let area = take_bytes(input, N)?;
         if Absent::is_absent(area, scratch)? {
             return Ok(None);
@@ -297,8 +265,7 @@ where
 
 impl<const BYTE: u8> AbsentFmt for ByteFill<BYTE> {
     #[inline(always)]
-    fn encode_absent(output: &mut &mut [u8], _scratch: &mut [u8]) -> Result<(), Error> {
-        let len = output.len();
+    fn encode_absent(output: &mut &mut [u8], _scratch: &mut [u8], len: usize) -> Result<(), Error> {
         reserve_filled(output, len, BYTE)?;
         Ok(())
     }
@@ -332,6 +299,24 @@ mod tests {
     crate::absent_format! {
         struct Dashes {
             _: A3 = b"---",
+        }
+    }
+
+    #[test]
+    fn a_value_narrower_than_its_area_writes_only_its_own_bytes() {
+        type Short = OptionalAbsent<String, crate::SerdeScalar<Field<Ascii<1, 3>, crate::Rest>>, ByteFill, 3>;
+        let result = std::panic::catch_unwind(|| {
+            let mut output = [0xEE; 4];
+            let mut out = &mut output[..];
+            Short::encode(&mut out, &mut [0; 8], &Some("AB".into())).unwrap();
+            let left = out.len();
+            (output, left)
+        });
+        if cfg!(debug_assertions) {
+            assert!(result.is_err());
+        } else {
+            // The area is not reserved up front, so no stale byte is left inside it.
+            assert_eq!(result.unwrap(), (*b"AB\xEE\xEE", 2));
         }
     }
 
