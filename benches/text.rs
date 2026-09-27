@@ -77,6 +77,14 @@ fn bench_decode_bytes(suite: &mut Suite) {
                 ))
             })
         });
+        group.bench("decode_padded_exact_right_8_ebcdic_space", |b| {
+            b.iter(|| {
+                black_box(decode_padded_exact_right_8_ebcdic_space(
+                    black_box(b"abcd\x40\x40\x40\x40"),
+                    black_box(4),
+                ))
+            })
+        });
         group.bench("decode_padded_protected_6", |b| {
             b.iter(|| black_box(decode_padded_protected_6(black_box(b"        "))))
         });

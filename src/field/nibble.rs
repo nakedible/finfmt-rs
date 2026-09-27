@@ -21,9 +21,9 @@ impl<F: NibbleAlphabet, const ALIGN_RIGHT: bool, const PADDING: u8> Step for Pac
     }
 
     #[inline(always)]
-    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], count: Option<usize>) -> Result<&'a [u8], Error> {
-        match count {
-            Some(count) => unpack_padded_nibbles::<F>(scratch, input, count, ALIGN_RIGHT, PADDING).map(|buf| &*buf),
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], len: Option<usize>) -> Result<&'a [u8], Error> {
+        match len {
+            Some(len) => unpack_padded_nibbles::<F>(scratch, input, len, ALIGN_RIGHT, PADDING).map(|buf| &*buf),
             None => unpack_nibbles::<F>(scratch, input).map(|buf| &*buf),
         }
     }
@@ -46,7 +46,7 @@ impl<F: NibbleAlphabet> Step for UnpackNibbles<F> {
     }
 
     #[inline(always)]
-    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], _count: Option<usize>) -> Result<&'a [u8], Error> {
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], _len: Option<usize>) -> Result<&'a [u8], Error> {
         pack_nibbles_checked::<F>(scratch, input).map(|buf| &*buf)
     }
 }

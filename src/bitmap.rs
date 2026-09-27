@@ -150,7 +150,7 @@ fn encode_bitmap_word<S: Step>(output: &mut &mut [u8], scratch: &mut [u8], word:
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 fn decode_bitmap_word<S: Step>(input: &mut &[u8], scratch: &mut [u8], len: usize) -> Result<u64, Error> {
-    let wire = take_bytes(input, S::encoded_len_of_count(len)?)?;
+    let wire = take_bytes(input, S::encoded_len(len)?)?;
     let bytes = S::decode(wire, &mut &mut scratch[..], Some(len))?;
     debug_assert_eq!(bytes.len(), len, "bitmap word step decoded a different number of bytes");
     let mut word = [0u8; 8];
@@ -532,7 +532,7 @@ mod tests {
             crate::Identity::encode(output, scratch, input)
         }
 
-        fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], _count: Option<usize>) -> Result<&'a [u8], crate::Error> {
+        fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], _len: Option<usize>) -> Result<&'a [u8], crate::Error> {
             let out = crate::primitive::bytes::reserve_bytes(scratch, N)?;
             for (dst, &src) in out.iter_mut().zip(input.iter().cycle()) {
                 *dst = src;

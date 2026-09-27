@@ -8,6 +8,9 @@ use crate::utils::{cold_path, length_as_invalid, split_scratch};
 /// Encoding assumes the caller established the transform's input repertoire;
 /// decoding checks untrusted representation details before depending on them.
 /// Chained steps must agree on the units at each intermediate boundary.
+///
+/// Every step's output length must be an arithmetic function of its input
+/// length (`encoded_len`), so framing can compute lengths without transforming.
 pub trait Step {
     /// Encoding can transform the bytes in place without changing their length.
     ///
@@ -18,37 +21,51 @@ pub trait Step {
     /// encode without scratch, though callers always provide scratch.
     const ENCODE_IN_PLACE: bool = false;
 
+    /// Encoding copies the input unchanged, so a `Chain` starting with this
+    /// step skips staging its output.
+    const ENCODE_UNCHANGED: bool = false;
+
+    /// The step contains the [`Count`] marker. Only `Count` and the steps that
+    /// wrap others set it.
+    const HAS_COUNT: bool = false;
+
     /// Exact encoded byte count from logical input length. Built-in steps use
     /// bytes, except `Ebcdic1142`, which uses Unicode scalar values.
     fn encoded_len(input_len: usize) -> Result<usize, Error>;
 
-    /// The field width in value units that a length prefix counts for this
-    /// input length. Width padding counts, so `PadLeft`/`PadRight` return the
-    /// padded width; padding to complete a byte and changes of representation
-    /// do not, so every other step returns its input length.
+    /// The length a field's length counts, for this input length: the length
+    /// at the [`Count`] marker, or the output length without one.
     #[inline(always)]
     fn counted_len(input_len: usize) -> Result<usize, Error> {
-        Ok(input_len)
+        Self::encoded_len(input_len)
     }
 
-    /// Encoded byte count for a field `count` value units wide, where `count`
-    /// already includes any width padding. Width padding therefore passes the
-    /// count through; every other step converts it like `encoded_len`.
+    /// The output length for a counted length `count`: the steps after the
+    /// [`Count`] marker applied to it. Without a marker the count is the
+    /// output length.
     #[inline(always)]
-    fn encoded_len_of_count(count: usize) -> Result<usize, Error> {
-        Self::encoded_len(count)
+    fn counted_wire_len(count: usize) -> Result<usize, Error> {
+        Ok(count)
     }
 
     fn encode<'a>(output: &mut &'a mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error>;
 
-    /// Decode an already framed representation. `count`, when known, is the
-    /// field's width in value units at this step, from `Fixed<N>` or a prefix
-    /// that counts value units. Steps that complete a byte with padding use it
-    /// to know whether that padding exists; width padding ignores it and strips
-    /// down to its own minimum length.
+    /// Decode an already framed representation. `len`, when known, is the
+    /// exact length this step decodes to, which the framing fixed: the step is
+    /// after the [`Count`] marker. Steps whose padding the content cannot
+    /// identify use it to split value from padding exactly; without it they
+    /// strip padding by content.
     /// Borrow input when possible; otherwise reserve output from `scratch`,
     /// advancing it so later steps can allocate disjoint regions.
-    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], count: Option<usize>) -> Result<&'a [u8], Error>;
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], len: Option<usize>) -> Result<&'a [u8], Error>;
+
+    /// Decode a whole field's representation given its counted length, when
+    /// the framing states one: steps after the [`Count`] marker get their exact
+    /// lengths, steps before it get none. Without a marker no step gets one.
+    #[inline(always)]
+    fn decode_counted<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], _count: Option<usize>) -> Result<&'a [u8], Error> {
+        Self::decode(input, scratch, None)
+    }
 
     #[inline(always)]
     fn encode_in_place(_buf: &mut [u8]) -> Result<(), Error> {
@@ -61,13 +78,65 @@ pub trait Step {
 /// Intermediate boundaries use compatible byte units. `A::encoded_len` applied
 /// to the input byte count must bound its encoded size; this may reserve extra
 /// scratch for UTF-8 input to `Ebcdic1142` without rescanning its characters.
+/// At most one of the two may contain the [`Count`] marker.
 pub struct Chain<A, B>(PhantomData<(A, B)>);
 /// Validate encoded bytes before decoding with `S`; encoding passes through.
 /// Semantic-length errors from the reused check become invalid wire data.
 pub struct DecodeCheck<S, C>(PhantomData<(S, C)>);
 
+/// Marks where in a step chain a field's length is counted. Steps before it
+/// are counted, steps after it are not: `chain!(PadRight<8>, Count,
+/// PackNibbles<…>)` counts padded digits, and `chain!(Count, PadRight<4>)`
+/// counts the value without its padding. A chain without the marker counts its
+/// output, the wire bytes. A chain has at most one marker.
+///
+/// Decoding gives the steps after the marker their exact lengths, derived from
+/// the count, so padding after the marker is split off exactly.
+pub struct Count;
+
+impl Step for Count {
+    const ENCODE_IN_PLACE: bool = true;
+    const ENCODE_UNCHANGED: bool = true;
+    const HAS_COUNT: bool = true;
+
+    #[inline(always)]
+    fn encoded_len(input_len: usize) -> Result<usize, Error> {
+        Ok(input_len)
+    }
+
+    #[inline(always)]
+    fn counted_len(input_len: usize) -> Result<usize, Error> {
+        Ok(input_len)
+    }
+
+    #[inline(always)]
+    fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+        crate::primitive::bytes::copy_bytes(output, input)
+    }
+
+    #[inline(always)]
+    fn decode<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], _len: Option<usize>) -> Result<&'a [u8], Error> {
+        Ok(input)
+    }
+
+    #[inline(always)]
+    fn decode_counted<'a>(input: &'a [u8], _scratch: &mut &'a mut [u8], _count: Option<usize>) -> Result<&'a [u8], Error> {
+        Ok(input)
+    }
+
+    #[inline(always)]
+    fn encode_in_place(_buf: &mut [u8]) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
 impl<First: Step, Rest: Step> Step for Chain<First, Rest> {
     const ENCODE_IN_PLACE: bool = First::ENCODE_IN_PLACE && Rest::ENCODE_IN_PLACE;
+    const ENCODE_UNCHANGED: bool = First::ENCODE_UNCHANGED && Rest::ENCODE_UNCHANGED;
+    const HAS_COUNT: bool = {
+        assert!(!(First::HAS_COUNT && Rest::HAS_COUNT), "a step chain has at most one Count marker");
+        First::HAS_COUNT || Rest::HAS_COUNT
+    };
 
     #[inline(always)]
     fn encoded_len(input_len: usize) -> Result<usize, Error> {
@@ -76,16 +145,27 @@ impl<First: Step, Rest: Step> Step for Chain<First, Rest> {
 
     #[inline(always)]
     fn counted_len(input_len: usize) -> Result<usize, Error> {
-        Rest::counted_len(First::counted_len(input_len)?)
+        if First::HAS_COUNT {
+            First::counted_len(input_len)
+        } else {
+            Rest::counted_len(First::encoded_len(input_len)?)
+        }
     }
 
     #[inline(always)]
-    fn encoded_len_of_count(count: usize) -> Result<usize, Error> {
-        Rest::encoded_len_of_count(First::encoded_len_of_count(count)?)
+    fn counted_wire_len(count: usize) -> Result<usize, Error> {
+        if First::HAS_COUNT {
+            Rest::encoded_len(First::counted_wire_len(count)?)
+        } else {
+            Rest::counted_wire_len(count)
+        }
     }
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
+        if First::ENCODE_UNCHANGED {
+            return Rest::encode(output, scratch, input);
+        }
         if Rest::ENCODE_IN_PLACE {
             let buf = First::encode(output, scratch, input)?;
             Rest::encode_in_place(buf)?;
@@ -98,13 +178,28 @@ impl<First: Step, Rest: Step> Step for Chain<First, Rest> {
     }
 
     #[inline(always)]
-    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], count: Option<usize>) -> Result<&'a [u8], Error> {
-        let rest_count = match count {
-            Some(count) => Some(First::encoded_len_of_count(count)?),
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], len: Option<usize>) -> Result<&'a [u8], Error> {
+        let mid_len = match len {
+            Some(len) => Some(First::encoded_len(len)?),
             None => None,
         };
-        let mid = Rest::decode(input, scratch, rest_count)?;
-        First::decode(mid, scratch, count)
+        let mid = Rest::decode(input, scratch, mid_len)?;
+        First::decode(mid, scratch, len)
+    }
+
+    #[inline(always)]
+    fn decode_counted<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], count: Option<usize>) -> Result<&'a [u8], Error> {
+        if First::HAS_COUNT {
+            let mid_len = match count {
+                Some(count) => Some(First::counted_wire_len(count)?),
+                None => None,
+            };
+            let mid = Rest::decode(input, scratch, mid_len)?;
+            First::decode_counted(mid, scratch, count)
+        } else {
+            let mid = Rest::decode_counted(input, scratch, count)?;
+            First::decode(mid, scratch, None)
+        }
     }
 
     #[inline(always)]
@@ -116,6 +211,8 @@ impl<First: Step, Rest: Step> Step for Chain<First, Rest> {
 
 impl<S: Step, C: Check> Step for DecodeCheck<S, C> {
     const ENCODE_IN_PLACE: bool = S::ENCODE_IN_PLACE;
+    const ENCODE_UNCHANGED: bool = S::ENCODE_UNCHANGED;
+    const HAS_COUNT: bool = S::HAS_COUNT;
 
     #[inline(always)]
     fn encoded_len(input_len: usize) -> Result<usize, Error> {
@@ -128,8 +225,8 @@ impl<S: Step, C: Check> Step for DecodeCheck<S, C> {
     }
 
     #[inline(always)]
-    fn encoded_len_of_count(count: usize) -> Result<usize, Error> {
-        S::encoded_len_of_count(count)
+    fn counted_wire_len(count: usize) -> Result<usize, Error> {
+        S::counted_wire_len(count)
     }
 
     #[inline(always)]
@@ -138,9 +235,15 @@ impl<S: Step, C: Check> Step for DecodeCheck<S, C> {
     }
 
     #[inline(always)]
-    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], count: Option<usize>) -> Result<&'a [u8], Error> {
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], len: Option<usize>) -> Result<&'a [u8], Error> {
         C::validate(input).map_err(length_as_invalid)?;
-        S::decode(input, scratch, count)
+        S::decode(input, scratch, len)
+    }
+
+    #[inline(always)]
+    fn decode_counted<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], count: Option<usize>) -> Result<&'a [u8], Error> {
+        C::validate(input).map_err(length_as_invalid)?;
+        S::decode_counted(input, scratch, count)
     }
 
     #[inline(always)]
@@ -171,7 +274,6 @@ mod tests {
             b"ABC",
             &[0xC1, 0xC2, 0xC3, 0x40, 0x40, 0x40, 0x40, 0x40],
         );
-        encode_without_scratch::<PaddedField<Ascii<3, 3>, Fixed<3>, Ebcdic037, 5, b' '>>(b"ABC", &[0xC1, 0xC2, 0xC3, b' ', b' ']);
     }
 
     #[test]

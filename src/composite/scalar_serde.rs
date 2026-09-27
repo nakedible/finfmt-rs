@@ -661,7 +661,7 @@ mod tests {
     use core::fmt;
 
     use super::*;
-    use crate::{Ascii, Binary, Ebcdic037, Field, Fixed, Identity, PadRight, Rest, Truncate};
+    use crate::{Ascii, Binary, Ebcdic037, Field, Fixed, PadRight, Rest, Truncate};
 
     type A4 = Field<Ascii<4, 4>, Fixed<4>>;
     type Text = Field<Binary<0, 64>, Rest>;
@@ -703,8 +703,8 @@ mod tests {
         assert_eq!(encode_display::<A4>(&"éé", 4, 4), Err(Error::Invalid));
         type E4 = Field<Ascii<4, 4>, Fixed<4>, Ebcdic037>;
         assert_eq!(encode_display::<E4>(&value, 4, 4), Ok(vec![0xC1, 0xC2, 0xC3, 0xC4]));
-        type Temp4 = Field<Ascii<4, 4>, Fixed<4>, crate::chain!(Identity, PadRight<4>)>;
-        assert_eq!(encode_display::<Temp4>(&value, 4, 8), Ok(b"ABCD".to_vec()));
+        type Temp4 = Field<Ascii<4, 4>, Fixed<4>, crate::chain!(PadRight<4>, crate::Ebcdic1142)>;
+        assert_eq!(encode_display::<Temp4>(&value, 4, 8), Ok(vec![0xC1, 0xC2, 0xC3, 0xC4]));
         assert_eq!(encode_display::<Temp4>(&value, 4, 7), Err(Error::BufferOverflow));
         type Cut = Truncate<Field<Binary<1, 1>, Fixed<1>>, 1>;
         assert_eq!(encode_display::<Cut>(&"é", 1, 2), Err(Error::InvalidValueLength));

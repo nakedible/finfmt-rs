@@ -41,23 +41,6 @@ pub fn reserve_filled<'a>(output: &mut &'a mut [u8], len: usize, fill: u8) -> Re
     Ok(area)
 }
 
-/// Take `total_len` bytes, check that everything after `used_len` is `fill`,
-/// and return the used prefix. Fill bytes inside the used prefix are kept.
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn take_padded<'a>(input: &mut &'a [u8], total_len: usize, used_len: usize, fill: u8) -> Result<&'a [u8], Error> {
-    if used_len > total_len {
-        cold_path();
-        return Err(Error::Invalid);
-    }
-    let (used, padding) = take_bytes(input, total_len)?.split_at(used_len);
-    if !is_filled(padding, fill) {
-        cold_path();
-        return Err(Error::Invalid);
-    }
-    Ok(used)
-}
-
 /// Whether every byte of `input` equals `fill`; true for empty input.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
@@ -96,7 +79,7 @@ pub fn take_delimited<'a>(input: &mut &'a [u8], separator: u8) -> (&'a [u8], boo
 
 #[cfg(test)]
 mod tests {
-    use super::{copy_bytes, fill_repeated, is_filled, reserve_bytes, reserve_filled, take_bytes, take_delimited, take_padded};
+    use super::{copy_bytes, fill_repeated, is_filled, reserve_bytes, reserve_filled, take_bytes, take_delimited};
     use crate::Error;
 
     #[test]
@@ -120,18 +103,8 @@ mod tests {
         assert_eq!(storage, [0x12, 0x34, 0x40, 0x40]);
     }
 
-    fn padded(input: &[u8], total_len: usize, used_len: usize, fill: u8) -> Result<Vec<u8>, Error> {
-        let mut input = input;
-        Ok(take_padded(&mut input, total_len, used_len, fill)?.to_vec())
-    }
-
     #[test]
-    fn test_padding_helpers() {
-        assert_eq!(padded(b"\x12\x34\x40\x40", 4, 2, 0x40), Ok(vec![0x12, 0x34]));
-        assert_eq!(padded(b"A   ", 4, 2, b' '), Ok(b"A ".to_vec()));
-        assert_eq!(padded(b"\x12\x34\x40\x41", 4, 2, 0x40), Err(Error::Invalid));
-        assert_eq!(padded(b"\x12\x34", 4, 2, 0x40), Err(Error::UnexpectedEof));
-        assert_eq!(padded(b"\x12\x34", 2, 3, 0x40), Err(Error::Invalid));
+    fn test_fill_helpers() {
         assert!(is_filled(b"", 0x40));
         assert!(is_filled(b"\x40\x40", 0x40));
         assert!(!is_filled(b"\x40\x41", 0x40));

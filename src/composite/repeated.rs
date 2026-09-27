@@ -1,6 +1,6 @@
 use super::*;
-use crate::field::{Framing, Identity, LengthSpec};
-use crate::primitive::bytes::{copy_bytes, take_bytes, take_delimited};
+use crate::field::LengthSpec;
+use crate::primitive::bytes::{take_bytes, take_delimited};
 
 impl ListSeparatorPolicy for () {
     const BYTE: Option<u8> = None;
@@ -60,7 +60,7 @@ fn encode_items<T, Item: CompositeFmt<T>, Sep: ListSeparatorPolicy>(
 
 impl<T, L, Item, Sep, const MIN: usize, const MAX: usize> CompositeFmt<Vec<T>> for BoundedList<T, L, Item, Sep, MIN, MAX>
 where
-    L: LengthSpec<Identity>,
+    L: LengthSpec,
     Item: CompositeFmt<T>,
     Sep: ListSeparatorPolicy,
 {
@@ -73,28 +73,13 @@ where
             crate::utils::cold_path();
             return Err(Error::InvalidValueLength.into());
         }
-        if L::FRAMING == Framing::Bytes {
-            // The prefix needs the items' byte length: stage them in scratch,
-            // using the unwritten output as their workspace.
-            let used = {
-                let mut staged = &mut *scratch;
-                let available = staged.len();
-                encode_items::<T, Item, Sep>(&mut staged, output, value, false)?;
-                available - staged.len()
-            };
-            let (items, scratch) = split_scratch(scratch, used)?;
-            framed(L::encode(output, scratch, value.len(), used))?;
-            copy_bytes(output, items)?;
-            return Ok(());
-        }
-        framed(L::encode(output, scratch, value.len(), value.len()))?;
-        encode_items::<T, Item, Sep>(output, scratch, value, L::FRAMING == Framing::Count)
+        framed(L::encode(output, scratch, value.len()))?;
+        encode_items::<T, Item, Sep>(output, scratch, value, L::STATES_LEN)
     }
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
-        let plan = L::decode_plan(input, scratch)?;
-        let values = match plan.count {
+        let values = match L::decode(input, scratch)? {
             Some(count) => {
                 if count < MIN || count > MAX {
                     crate::utils::cold_path();
@@ -120,8 +105,7 @@ where
                 values
             }
             None => {
-                let mut extent = take_bytes(input, plan.wire_len)?;
-                let values = decode_uncounted::<T, Item, Sep, MAX>(&mut extent, scratch)?;
+                let values = decode_uncounted::<T, Item, Sep, MAX>(input, scratch)?;
                 if values.len() < MIN {
                     crate::utils::cold_path();
                     return Err(Error::Invalid.into());
@@ -260,7 +244,7 @@ fn fixed_area_lens(slot_len: usize, max: usize) -> Result<usize, Error> {
 
 impl<T, Len, Slot, const MAX: usize> CompositeFmt<Vec<T>> for FixedAreaList<T, Len, Slot, MAX>
 where
-    Len: LengthSpec<Identity>,
+    Len: LengthSpec,
     Slot: FixedAreaSlot<T>,
 {
     type Decoded<'de> = Vec<Slot::Decoded<'de>>;
@@ -272,13 +256,8 @@ where
             return Err(Error::InvalidValueLength.into());
         }
 
-        const { assert!(!matches!(Len::FRAMING, Framing::Rest), "a fixed area needs a declared used extent") };
-        let used_len = value.len().checked_mul(Slot::WIRE_LEN).ok_or_else(|| {
-            crate::utils::cold_path();
-            CompositeError::from(Error::BufferOverflow)
-        })?;
-        // A counting prefix counts used slots; a wire-length prefix counts their bytes.
-        framed(Len::encode(output, scratch, value.len(), used_len))?;
+        const { assert!(Len::STATES_LEN, "a fixed area needs a declared used extent") };
+        framed(Len::encode(output, scratch, value.len()))?;
 
         // Write each slot in turn, so nothing is reserved and filled later.
         for (index, item) in value.iter().enumerate() {
@@ -291,16 +270,8 @@ where
     #[inline(always)]
     fn decode<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError> {
         const { assert!(Slot::WIRE_LEN != 0, "fixed-area slots must be at least one byte wide") };
-        const { assert!(!matches!(Len::FRAMING, Framing::Rest), "a fixed area needs a declared used extent") };
-        let plan = Len::decode_plan(input, scratch)?;
-        let count = match plan.count {
-            Some(count) => count,
-            None if plan.wire_len.is_multiple_of(Slot::WIRE_LEN) => plan.wire_len / Slot::WIRE_LEN,
-            None => {
-                crate::utils::cold_path();
-                return Err(Error::Invalid.into());
-            }
-        };
+        const { assert!(Len::STATES_LEN, "a fixed area needs a declared used extent") };
+        let count = Len::decode(input, scratch)?.unwrap_or_default();
         if count > MAX {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());
@@ -464,9 +435,9 @@ mod tests {
     }
 
     #[test]
-    fn lists_are_framed_like_fields() {
-        // A wire-length prefix states the items' byte length.
-        type Extent = BoundedList<String, crate::AsciiWireLength<2>, Text, Separator<b'|'>, 0, 4>;
+    fn lists_count_items_and_frames_give_byte_extents() {
+        // A byte length is a frame around a list that takes the rest.
+        type Extent = Frame<Field<crate::Binary<0, 99>, AsciiLength<2>>, BoundedList<String, Rest, Text, Separator<b'|'>, 0, 4>>;
         roundtrip::<Extent>(&["AB", "C"], b"04AB|C");
         roundtrip::<Extent>(&[], b"00");
         assert_eq!(
@@ -573,10 +544,6 @@ mod tests {
         roundtrip::<Area>(&[], b"0      ");
         roundtrip::<Area>(&["AB"], b"1AB    ");
         roundtrip::<Area>(&["AB", "00", "  "], b"3AB00  ");
-        // A wire-length prefix counts the used slots' bytes.
-        type ByteArea = FixedAreaList<String, crate::AsciiWireLength<1>, Optional, 3>;
-        roundtrip::<ByteArea>(&["AB"], b"2AB    ");
-        assert_eq!(decode::<ByteArea>(b"1AB    "), Err(Error::Invalid));
     }
 
     #[test]

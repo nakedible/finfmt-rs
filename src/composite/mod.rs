@@ -89,12 +89,13 @@ pub trait AbsentFmt {
     }
 }
 
-/// Encode/decode an inner composite through an outer scalar field.
+/// Encode/decode an inner composite through an outer scalar field. A group of
+/// fields or a list with a byte length is a frame whose field has that length,
+/// such as `Frame<Field<Binary<0, 999>, AsciiLength<3>>, Inner>`.
 pub struct Frame<F, S>(PhantomData<(F, S)>);
 /// A fixed physical body whose length prefix excludes absent trailing fields.
 ///
-/// `Len` describes the used body extent in bytes, through either a semantic- or
-/// wire-length policy. The full body, including absent filler, remains on the
+/// `Len` states the used body extent in bytes. The full body, including absent filler, remains on the
 /// wire. The declared extent must end at a field boundary, and excluded fields
 /// must match their absent encoding.
 pub struct TrailingLengthFrame<T, Len, Body, Tails, const BASE_LEN: usize>(PhantomData<(T, Len, Body, Tails)>);
@@ -114,12 +115,10 @@ pub struct Empty<T>(PhantomData<T>);
 /// bytes before, between and after entries. Values are never trimmed, and
 /// encoding never emits padding.
 pub struct BerTlvList<T, const ALLOW_ZERO_PADDING: bool = false>(PhantomData<T>);
-/// A list of `MIN` to `MAX` items, framed like a field by `L`:
-/// - a counting prefix, such as [`crate::AsciiLength`], or [`crate::Fixed`] states
-///   the item count;
-/// - a wire-length prefix, such as [`crate::AsciiWireLength`], states the items'
-///   byte length;
-/// - [`crate::Rest`] takes the rest of the input.
+/// A list of `MIN` to `MAX` items, whose length `L` counts items: a prefix
+/// such as [`crate::AsciiLength`], or [`crate::Fixed`], states the item count,
+/// and [`crate::Rest`] takes the rest of the input. A list with a byte length
+/// is a [`Frame`] around a list that takes the rest.
 ///
 /// `Sep` is `()` or a [`Separator`] between items. Encoding a list outside
 /// `MIN..=MAX` items is `InvalidValueLength`.
@@ -145,9 +144,8 @@ pub struct OptionalAbsent<T, Inner, Absent, const N: usize>(PhantomData<(T, Inne
 pub struct ByteFill<const BYTE: u8 = b' '>;
 /// A fixed physical area of `MAX` slots with a separately declared used extent.
 ///
-/// `Len` states the extent like a field's length: a counting prefix counts the
-/// used slots, and a wire-length prefix counts their bytes. [`crate::Rest`]
-/// cannot recover it.
+/// `Len` states the number of used slots. [`crate::Rest`] cannot recover it and
+/// fails to build.
 /// Slots inside that extent decode as present values. Remaining slots encode
 /// canonically and decode through their [`AbsentFmt::is_absent`] matcher.
 pub struct FixedAreaList<T, Len, Slot, const MAX: usize>(PhantomData<(T, Len, Slot)>);
@@ -175,8 +173,8 @@ mod tests {
     use crate::field::Length;
     use crate::primitive::nibble::{BcdzDigits, UpperHexDigits};
     use crate::{
-        Ascii, AsciiLength, AsciiWireLength, Binary, Ebcdic037, EbcdicLength, EbcdicWireLength, Error, Field, Fixed, Numeric, PadLeft,
-        PadRightEven, SignPrefix, Track2, UnpackNibbles,
+        Ascii, AsciiLength, Binary, Count, Ebcdic037, EbcdicLength, Error, Field, Fixed, Numeric, PadLeft, PadRightEven, SignPrefix,
+        Track2, UnpackNibbles,
     };
 
     type N6 = Field<Numeric<6, 6>, Fixed<6>>;
@@ -185,14 +183,14 @@ mod tests {
     type A3 = Field<Ascii<3, 3>, Fixed<3>>;
     type A4 = Field<crate::Ascii<4, 4>, Fixed<4>>;
     type BitmapBinaryWord = crate::Identity;
-    type Track2Fmt = Field<Track2<1, 37>, EbcdicWireLength<2>, crate::chain!(PadRightEven<b'?'>, crate::PackNibblesLeft<BcdzDigits, 0x0F>)>;
+    type Track2Fmt = Field<Track2<1, 37>, EbcdicLength<2>, crate::chain!(PadRightEven<b'?'>, crate::PackNibblesLeft<BcdzDigits, 0x0F>)>;
     const PIPE_SEPARATOR: u8 = b'|';
 
     fn error_kind<T>(result: Result<T, CompositeError>) -> Result<T, Error> {
         result.map_err(|error| error.kind)
     }
     type AmountFmt =
-        SignPrefix<Field<Numeric<1, 16>, Fixed<16>, crate::chain!(PadLeft<16, b'0', 1>, crate::PackNibblesRight<BcdzDigits, 0>)>>;
+        SignPrefix<Field<Numeric<1, 16>, Fixed<16>, crate::chain!(PadLeft<16, b'0', 1>, Count, crate::PackNibblesRight<BcdzDigits, 0>)>>;
 
     #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     struct FixedTail {
@@ -333,7 +331,7 @@ mod tests {
     }
 
     type FramedFixedTailFmt = Frame<Field<Ascii<0, 12>, AsciiLength<2>>, FixedTailFmt>;
-    type FramedHexFixedTailFmt = Frame<Field<Binary<0, 12>, AsciiWireLength<2>, UnpackNibbles<UpperHexDigits>>, FixedTailFmt>;
+    type FramedHexFixedTailFmt = Frame<Field<Binary<0, 12>, AsciiLength<2>, UnpackNibbles<UpperHexDigits>>, FixedTailFmt>;
     type OptionalA3SpaceFmt = OptionalAbsent<String, SerdeScalar<A3>, ByteFill<b' '>, 3>;
 
     #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1072,7 +1070,8 @@ mod tests {
                 assert_eq!(output[5], 0xFF);
             }
         }
-        type Compressed = Field<Numeric<1, 4>, crate::Fixed<4>, crate::chain!(PadLeft<4, b'0', 1>, crate::PackNibblesRight<BcdzDigits, 0>)>;
+        type Compressed =
+            Field<Numeric<1, 4>, crate::Fixed<4>, crate::chain!(PadLeft<4, b'0', 1>, Count, crate::PackNibblesRight<BcdzDigits, 0>)>;
         for capacity in 0..=5 {
             let mut output = [0xFF; 3];
             let mut scratch = [0; 5];
@@ -1536,9 +1535,6 @@ mod tests {
     #[test]
     fn test_trailing_length_frame_roundtrip_and_validation() {
         check_trailing_length_frame::<TrailingLengthDataFmt>();
-        check_trailing_length_frame::<
-            TrailingLengthFrame<TrailingLengthData, crate::AsciiWireLength<2>, TrailingLengthBodyFmt, TrailingLengthTails, 2>,
-        >();
     }
 
     #[test]

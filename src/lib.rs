@@ -16,12 +16,12 @@ pub use composite::{
     Frame, NoTrailingFields, OptionalAbsent, ScalarValue, Separator, SerdeScalar, TrailingField, TrailingLengthFrame, decode, encode,
 };
 pub use field::{
-    Alpha, Alphanum, Ascii, AsciiLength, AsciiPrintable, AsciiWireLength, Bcd, BcdBytes, Bcdz, Binary, BlankableEbcdicLength, Check,
-    DecodeCheck, DecodePlan, Ebcdic037, Ebcdic037Ascii, Ebcdic1142, Ebcdic1142Text, EbcdicLength, EbcdicPrintable, EbcdicWireLength, Field,
-    Fixed, FixedBinaryBe, FixedComp3, FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedEbcdic, Framing, Hex, HexEven,
-    Identity, ImpliedDecimal, Iso88591, Length, LengthSpec, LowerHex, LowerHexEven, MinusPrefix, Numeric, Offset, PackNibbles,
-    PackNibblesLeft, PackNibblesRight, PadLeft, PadLeftEven, PadRight, PadRightEven, PaddedField, Rest, SignPrefix, Step, Track2, Truncate,
-    UnpackNibbles, UpperAlpha, UpperAlphanum, UpperAsciiPrintable, UpperHex, UpperHexEven, WireLength,
+    Alpha, Alphanum, Ascii, AsciiLength, AsciiPrintable, Bcd, BcdBytes, Bcdz, Binary, BlankableEbcdicLength, Check, Count, DecodeCheck,
+    Ebcdic037, Ebcdic037Ascii, Ebcdic1142, Ebcdic1142Text, EbcdicLength, EbcdicPrintable, Field, Fixed, FixedBinaryBe, FixedComp3,
+    FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedEbcdic, Hex, HexEven, Identity, ImpliedDecimal, Iso88591,
+    Length, LengthSpec, LowerHex, LowerHexEven, MinusPrefix, Numeric, Offset, PackNibbles, PackNibblesLeft, PackNibblesRight, PadLeft,
+    PadLeftEven, PadRight, PadRightEven, Rest, SignPrefix, Step, Track2, Truncate, UnpackNibbles, UpperAlpha, UpperAlphanum,
+    UpperAsciiPrintable, UpperHex, UpperHexEven,
 };
 pub use scalarfmt::ScalarFmt;
 pub use types::{CompositeError, Error, PathSegment};

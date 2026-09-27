@@ -50,14 +50,6 @@ fn bench_bytes(suite: &mut Suite) {
             })
         });
 
-        group.bench("take_padded_8_ebcdic_space", |b| {
-            let input = b"abcd\x40\x40\x40\x40";
-            b.iter(|| {
-                let mut input = black_box(&input[..]);
-                black_box(take_padded_8_ebcdic_space(&mut input, 4))
-            })
-        });
-
         group.bench("is_filled_ebcdic_space", |b| {
             b.iter(|| black_box(is_filled_ebcdic_space(black_box(FILLED_8_SPACE))))
         });

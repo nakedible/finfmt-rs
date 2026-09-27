@@ -171,7 +171,7 @@ fn trailing_body_len<Tails: TrailingTails, const BASE_LEN: usize>() -> Result<us
 
 impl<T, Len, Body, Tails, const BASE_LEN: usize> CompositeFmt<T> for TrailingLengthFrame<T, Len, Body, Tails, BASE_LEN>
 where
-    Len: crate::field::LengthSpec<crate::field::Identity>,
+    Len: crate::field::LengthSpec,
     Body: CompositeFmt<T>,
     Tails: TrailingTails,
 {
@@ -193,15 +193,15 @@ where
             crate::utils::cold_path();
             CompositeError::from(Error::BufferOverflow)
         })?;
-        Len::encode(output, scratch, logical_len, logical_len)?;
+        Len::encode(output, scratch, logical_len)?;
         copy_bytes(output, body)?;
         Ok(())
     }
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
-        let plan = Len::decode_plan(input, scratch)?;
-        let logical_len = plan.count.unwrap_or(plan.wire_len);
+        const { assert!(Len::STATES_LEN, "a trailing-length frame needs a declared length") };
+        let logical_len = Len::decode(input, scratch)?.unwrap_or_default();
         if logical_len < BASE_LEN {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());

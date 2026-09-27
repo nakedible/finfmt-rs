@@ -1,7 +1,5 @@
 use crate::Error;
-use crate::primitive::bytes::{
-    copy_bytes, fill_repeated, is_filled, reserve_bytes, reserve_filled, take_bytes, take_delimited, take_padded,
-};
+use crate::primitive::bytes::{copy_bytes, fill_repeated, is_filled, reserve_bytes, reserve_filled, take_bytes, take_delimited};
 
 #[inline(never)]
 pub fn copy_bytes_through<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
@@ -21,11 +19,6 @@ pub fn reserve_bytes_8<'a>(output: &mut &'a mut [u8]) -> Result<&'a mut [u8], Er
 #[inline(never)]
 pub fn reserve_filled_8_ebcdic_space<'a>(output: &mut &'a mut [u8]) -> Result<&'a mut [u8], Error> {
     reserve_filled(output, 8, 0x40)
-}
-
-#[inline(never)]
-pub fn take_padded_8_ebcdic_space<'a>(input: &mut &'a [u8], used_len: usize) -> Result<&'a [u8], Error> {
-    take_padded(input, 8, used_len, 0x40)
 }
 
 #[inline(never)]

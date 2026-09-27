@@ -53,7 +53,7 @@ Names use natural English word order, following the standard library
 (`fmt::UpperHex`, `from_be_bytes`, `split_at_mut_checked`):
 
 - Types put the noun that says what the item is last: `UpperHex`,
-  `AsciiWireLength`, `BlankableEbcdicLength`, `SignPrefix`.
+  `AsciiLength`, `BlankableEbcdicLength`, `SignPrefix`.
 - Functions are verb plus object in natural order: `encode_packed_decimal_fixed`,
   `unpack_padded_nibbles`, `validate_track2_chars`.
 - A qualifier that selects a behaviour variant of an existing item goes at the
@@ -75,8 +75,15 @@ encoding.
 formats. It converts one byte representation to another and reports the
 resulting length.
 
-`LengthSpec` describes how a field length is encoded or inferred: fixed, rest,
-wire-length prefixed, semantic-length prefixed, and related wrappers.
+`LengthSpec` describes how a length is stated: a prefix codec, a fixed length,
+or nothing (`Rest`), plus arithmetic wrappers such as `Offset`. What the
+length counts is the consumer's choice, never the check's units: a field
+counts its rendered data at its step chain's `Count` marker, or its wire bytes
+without one, and a list counts its items. Encoding computes the count by
+arithmetic up to the marker (`Step::counted_len`); decoding derives the wire
+length from the count by arithmetic after it (`Step::counted_wire_len`), and
+the steps after the marker get their exact lengths, so padding there is split
+off exactly rather than by content.
 
 `CompositeFmt<T>` is the composite contract. It encodes and decodes complete Rust
 values using caller-provided output and scratch buffers.

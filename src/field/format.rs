@@ -1,23 +1,28 @@
 use core::marker::PhantomData;
 
 use super::{Check, LengthSpec, Step};
-use crate::primitive::bytes::{reserve_filled, take_bytes, take_padded};
+use crate::primitive::bytes::take_bytes;
 use crate::utils::{cold_path, length_as_invalid};
 use crate::{Error, ScalarFmt};
 
 /// Compose a semantic check, length framing, and byte transform.
-/// `C` and `S` must agree on the value unit and input repertoire.
+/// `C` and `S` must agree on the value unit and input repertoire. `L` states
+/// the length at the chain's [`crate::Count`] marker, or the wire length
+/// without one. A chain with two markers fails to build:
+///
+/// ```compile_fail
+/// use finfmt::{Ascii, AsciiLength, Count, Field, ScalarFmt, chain};
+/// type Twice = Field<Ascii<0, 9>, AsciiLength<1>, chain!(Count, Count)>;
+/// let _ = Twice::encoded_len(b"A");
+/// ```
 pub struct Field<C, L, S = super::Identity>(PhantomData<(C, L, S)>);
-/// A [`Field`] in a fixed area of `PAD_TO` bytes. `L` frames only the used
-/// part and the rest is `FILL` bytes, which decoding checks. For formats whose
-/// length states the unpadded data inside a fixed-size field.
-pub struct PaddedField<C, L, S, const PAD_TO: usize, const FILL: u8>(PhantomData<(C, L, S)>);
 
-impl<C: Check, L: LengthSpec<S>, S: Step> Field<C, L, S> {
+impl<C: Check, L: LengthSpec, S: Step> Field<C, L, S> {
     #[inline(always)]
     fn total_len(semantic_len: usize) -> Result<usize, Error> {
+        const { S::HAS_COUNT };
         let wire_len = S::encoded_len(semantic_len)?;
-        framed(L::encoded_len(S::counted_len(semantic_len)?, wire_len))?
+        framed(L::encoded_len(S::counted_len(semantic_len)?))?
             .checked_add(wire_len)
             .ok_or_else(|| {
                 cold_path();
@@ -27,20 +32,35 @@ impl<C: Check, L: LengthSpec<S>, S: Step> Field<C, L, S> {
 
     #[inline(always)]
     fn encode_checked(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8], semantic_len: usize) -> Result<(), Error> {
-        let wire_len = S::encoded_len(semantic_len)?;
-        framed(L::encode(output, scratch, S::counted_len(semantic_len)?, wire_len))?;
+        const { S::HAS_COUNT };
+        framed(L::encode(output, scratch, S::counted_len(semantic_len)?))?;
         let encoded = S::encode(output, scratch, input)?;
-        debug_assert_eq!(encoded.len(), wire_len, "step encoded a different number of bytes than predicted");
+        debug_assert_eq!(
+            Ok(encoded.len()),
+            S::encoded_len(semantic_len),
+            "step encoded a different number of bytes than predicted"
+        );
         Ok(())
     }
 
-    /// Frame and step-decode a value, returning it with the length the framing requires.
+    /// Frame and step-decode a value, without checking it.
     #[inline(always)]
-    fn decode_unchecked<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<(&'a [u8], Option<usize>), Error> {
-        let plan = L::decode_plan(input, scratch)?;
-        let wire = take_bytes(input, plan.wire_len)?;
-        Ok((S::decode(wire, scratch, plan.count)?, plan.count))
+    fn decode_unchecked<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
+        const { S::HAS_COUNT };
+        let count = L::decode(input, scratch)?;
+        let wire = match count {
+            // The count is untrusted: a wire length it overflows is invalid data.
+            Some(count) => take_bytes(input, S::counted_wire_len(count).map_err(overflow_as_invalid)?)?,
+            None => core::mem::take(input),
+        };
+        S::decode_counted(wire, scratch, count)
     }
+}
+
+#[inline(always)]
+fn overflow_as_invalid(error: Error) -> Error {
+    cold_path();
+    if error == Error::BufferOverflow { Error::Invalid } else { error }
 }
 
 /// A field whose check accepts a length its framing cannot hold is written
@@ -54,19 +74,6 @@ fn framed<T>(result: Result<T, Error>) -> Result<T, Error> {
     result
 }
 
-/// Check the decoded value. The framing's count is the field's width, which
-/// width padding may have trimmed, so the value can only be shorter; decoding
-/// never adds value units.
-#[inline(always)]
-fn check_decoded_len(checked: Result<usize, Error>, count: Option<usize>) -> Result<(), Error> {
-    let len = checked.map_err(length_as_invalid)?;
-    debug_assert!(
-        count.is_none_or(|count| len <= count),
-        "decoded value is wider than the framing count"
-    );
-    Ok(())
-}
-
 /// Decode text once: the UTF-8 check here is the only one.
 #[inline(always)]
 fn decoded_text(semantic: &[u8]) -> Result<&str, Error> {
@@ -76,7 +83,7 @@ fn decoded_text(semantic: &[u8]) -> Result<&str, Error> {
     })
 }
 
-impl<C: Check, L: LengthSpec<S>, S: Step> ScalarFmt for Field<C, L, S> {
+impl<C: Check, L: LengthSpec, S: Step> ScalarFmt for Field<C, L, S> {
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
         Self::total_len(C::validate(input)?)
@@ -96,104 +103,37 @@ impl<C: Check, L: LengthSpec<S>, S: Step> ScalarFmt for Field<C, L, S> {
     }
 
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
-        let (semantic, expected) = Self::decode_unchecked(input, scratch)?;
-        check_decoded_len(C::validate(semantic), expected)?;
+        let semantic = Self::decode_unchecked(input, scratch)?;
+        C::validate(semantic).map_err(length_as_invalid)?;
         Ok(semantic)
     }
 
     fn decode_str<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a str, Error> {
-        let (semantic, expected) = Self::decode_unchecked(input, scratch)?;
-        let text = decoded_text(semantic)?;
-        check_decoded_len(C::validate_str(text), expected)?;
-        Ok(text)
-    }
-}
-
-impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> PaddedField<C, L, S, PAD_TO, FILL> {
-    #[inline(always)]
-    fn wire_len(semantic_len: usize) -> Result<usize, Error> {
-        let wire_len = S::encoded_len(semantic_len)?;
-        debug_assert!(wire_len <= PAD_TO, "the field's check accepts a value wider than its area");
-        Ok(wire_len)
-    }
-
-    #[inline(always)]
-    fn total_len(semantic_len: usize) -> Result<usize, Error> {
-        let wire_len = Self::wire_len(semantic_len)?;
-        framed(L::encoded_len(S::counted_len(semantic_len)?, wire_len))?
-            .checked_add(PAD_TO)
-            .ok_or_else(|| {
-                cold_path();
-                Error::BufferOverflow
-            })
-    }
-
-    #[inline(always)]
-    fn encode_checked(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8], semantic_len: usize) -> Result<(), Error> {
-        let wire_len = Self::wire_len(semantic_len)?;
-        framed(L::encode(output, scratch, S::counted_len(semantic_len)?, wire_len))?;
-        let encoded = S::encode(output, scratch, input)?;
-        debug_assert_eq!(encoded.len(), wire_len, "step encoded a different number of bytes than predicted");
-        reserve_filled(output, PAD_TO.saturating_sub(wire_len), FILL)?;
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn decode_unchecked<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<(&'a [u8], Option<usize>), Error> {
-        let plan = L::decode_plan(input, scratch)?;
-        let wire = take_padded(input, PAD_TO, plan.wire_len, FILL)?;
-        Ok((S::decode(wire, scratch, plan.count)?, plan.count))
-    }
-}
-
-impl<C: Check, L: LengthSpec<S>, S: Step, const PAD_TO: usize, const FILL: u8> ScalarFmt for PaddedField<C, L, S, PAD_TO, FILL> {
-    #[inline(always)]
-    fn encoded_len(input: &[u8]) -> Result<usize, Error> {
-        Self::total_len(C::validate(input)?)
-    }
-
-    #[inline(always)]
-    fn encoded_len_str(input: &str) -> Result<usize, Error> {
-        Self::total_len(C::validate_str(input)?)
-    }
-
-    fn encode(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
-        Self::encode_checked(output, scratch, input, C::validate(input)?)
-    }
-
-    fn encode_str(output: &mut &mut [u8], scratch: &mut [u8], input: &str) -> Result<(), Error> {
-        Self::encode_checked(output, scratch, input.as_bytes(), C::validate_str(input)?)
-    }
-
-    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
-        let (semantic, expected) = Self::decode_unchecked(input, scratch)?;
-        check_decoded_len(C::validate(semantic), expected)?;
-        Ok(semantic)
-    }
-
-    fn decode_str<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a str, Error> {
-        let (semantic, expected) = Self::decode_unchecked(input, scratch)?;
-        let text = decoded_text(semantic)?;
-        check_decoded_len(C::validate_str(text), expected)?;
+        let text = decoded_text(Self::decode_unchecked(input, scratch)?)?;
+        C::validate_str(text).map_err(length_as_invalid)?;
         Ok(text)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Field, PaddedField};
+    use super::Field;
     use crate::field::{
-        Ascii, Ebcdic1142, Ebcdic1142Text, EbcdicLength, EbcdicWireLength, Fixed, FixedBinaryBe, FixedNibbleInt, Length, MinusPrefix,
-        Numeric, PackNibblesLeft, PackNibblesRight, PadLeft, PadLeftEven, PadRight, PadRightEven, SignPrefix, Track2,
+        Ascii, Count, Ebcdic1142, Ebcdic1142Text, EbcdicLength, Fixed, FixedBinaryBe, FixedNibbleInt, Length, MinusPrefix, Numeric,
+        PackNibblesLeft, PackNibblesRight, PadLeft, PadLeftEven, PadRight, PadRightEven, SignPrefix, Track2,
     };
     use crate::primitive::nibble::{BcdzDigits, EbcdicHexDigits, UpperHexDigits};
-    use crate::{AsciiLength, Ebcdic037, Error, Identity, ScalarFmt, WireLength};
+    use crate::{AsciiLength, Ebcdic037, Error, ScalarFmt};
 
-    type LlvarPan =
-        Field<Numeric<0, 19>, EbcdicLength<2>, crate::chain!(PadRight<19, b'?'>, PadLeftEven<b'0'>, PackNibblesRight<BcdzDigits, 0>)>;
-    type LlvarTrack2 = Field<Track2<0, 37>, EbcdicWireLength<2>, crate::chain!(PadRightEven<b'?'>, PackNibblesLeft<BcdzDigits, 0x0F>)>;
-    type LlvarHexAscii = Field<Ascii<0, 2>, EbcdicLength<2>, crate::chain!(crate::Ebcdic037, PackNibblesRight<EbcdicHexDigits, 0>)>;
-    type N16 = Field<Numeric<1, 16>, EbcdicLength<2>, crate::chain!(PadLeft<16, b'0', 1>, PackNibblesRight<BcdzDigits, 0>)>;
+    // The prefix counts the digits padded to 19, not the packing nibble.
+    type LlvarPan = Field<
+        Numeric<0, 19>,
+        EbcdicLength<2>,
+        crate::chain!(PadRight<19, b'?'>, Count, PadLeftEven<b'0'>, PackNibblesRight<BcdzDigits, 0>),
+    >;
+    type LlvarTrack2 = Field<Track2<0, 37>, EbcdicLength<2>, crate::chain!(PadRightEven<b'?'>, PackNibblesLeft<BcdzDigits, 0x0F>)>;
+    type LlvarHexAscii = Field<Ascii<0, 2>, EbcdicLength<2>, crate::chain!(Count, crate::Ebcdic037, PackNibblesRight<EbcdicHexDigits, 0>)>;
+    type N16 = Field<Numeric<1, 16>, EbcdicLength<2>, crate::chain!(PadLeft<16, b'0', 1>, Count, PackNibblesRight<BcdzDigits, 0>)>;
     type CdAmount = SignPrefix<N16>;
     type PlusMinusAmount = SignPrefix<N16, b'+', b'-'>;
     type MinusAmount = MinusPrefix<N16>;
@@ -205,7 +145,9 @@ mod tests {
         crate::chain!(PadLeft<2, b'0', 1>, crate::DecodeCheck<crate::Ebcdic037, crate::EbcdicPrintable<2, 2>>),
     >;
     type FixedIbm1142<const N: usize> = Field<Ebcdic1142Text<0, N>, Fixed<N>, crate::chain!(Ebcdic1142, PadRight<N, 0x40>)>;
-    type PaddedHex = PaddedField<crate::UpperHexEven<0, 8>, EbcdicWireLength<2>, PackNibblesRight<UpperHexDigits, 0>, 4, 0x40>;
+    // The prefix counts the packed bytes, not the area's fill.
+    type PaddedHex =
+        Field<crate::UpperHexEven<0, 8>, EbcdicLength<2>, crate::chain!(PackNibblesRight<UpperHexDigits, 0>, Count, PadRight<4, 0x40>)>;
     type FixedAsciiViaEbcdic = Field<Ascii<1, 1>, Fixed<1>, crate::Ebcdic037>;
     type StrictFixedAsciiViaEbcdic = Field<Ascii<1, 1>, Fixed<1>, crate::DecodeCheck<crate::Ebcdic037, crate::EbcdicPrintable<1, 1>>>;
 
@@ -275,8 +217,8 @@ mod tests {
             let decoded = F::decode(&mut &wire[..written], &mut &mut [0; 64][..])?.to_vec();
             Ok((wire[..written].to_vec(), decoded))
         }
-        type ByteCount = Field<Track2<0, 37>, EbcdicWireLength<2>, crate::chain!(PadRightEven<b'?'>, PackNibblesLeft<BcdzDigits, 0>)>;
-        type DigitCount = Field<Numeric<0, 19>, EbcdicLength<2>, crate::chain!(PadRightEven<b'?'>, PackNibblesLeft<BcdzDigits, 0>)>;
+        type ByteCount = Field<Track2<0, 37>, EbcdicLength<2>, crate::chain!(PadRightEven<b'?'>, PackNibblesLeft<BcdzDigits, 0>)>;
+        type DigitCount = Field<Numeric<0, 19>, EbcdicLength<2>, crate::chain!(Count, PadRightEven<b'?'>, PackNibblesLeft<BcdzDigits, 0>)>;
         assert_eq!(
             roundtrip::<ByteCount>(b"123=45"),
             Ok((b"\xF0\xF3\x12\x3D\x45".to_vec(), b"123=45".to_vec()))
@@ -471,7 +413,7 @@ mod tests {
     }
 
     #[test]
-    fn test_padded_field_roundtrip_and_edges() {
+    fn uncounted_area_padding_roundtrip_and_edges() {
         let encoded = encode_field::<PaddedHex>(b"ABCD", PaddedHex::encoded_len(b"ABCD").unwrap(), 8).unwrap();
         assert_eq!(encoded, [0xF0, 0xF2, 0xAB, 0xCD, 0x40, 0x40]);
         assert_eq!(decode_field::<PaddedHex>(&encoded, 8).unwrap(), b"ABCD");
@@ -499,7 +441,7 @@ mod tests {
     fn borrowing_and_transforming_decoders_own_their_scratch_reservations() {
         type Borrowed = Field<Ascii<3, 3>, Fixed<3>>;
         type BorrowedChain = Field<Ascii<0, 8>, Fixed<8>, crate::chain!(PadLeft<8>, PadRight<8>)>;
-        type Padded = PaddedField<Ascii<0, 8>, AsciiLength<1>, Identity, 8, b' '>;
+        type Padded = Field<Ascii<0, 8>, AsciiLength<1>, crate::chain!(Count, PadRight<8>)>;
         type Translated = Field<Ascii<3, 3>, Fixed<5>, crate::chain!(Ebcdic037, PadRight<5, 0x40>)>;
         type Utf8 = Field<Ebcdic1142Text<1, 1>, Fixed<1>, Ebcdic1142>;
         assert_eq!(decode::<Borrowed>(b"ABCtail", 0), (Ok(b"ABC".to_vec()), 4, 0));
@@ -519,15 +461,27 @@ mod tests {
     }
 
     #[test]
-    fn counting_prefixes_state_the_width_that_follows() {
-        type F = Field<Ascii<0, 4>, AsciiLength<1>, PadRight<4>>;
-        type P = PaddedField<Ascii<0, 4>, AsciiLength<1>, PadRight<4>, 5, b' '>;
-        // Encoding counts the padded width; decoding takes that many units.
-        assert_eq!(encode_field::<F>(b"AB", 5, 8), Ok(b"4AB  ".to_vec()));
+    fn the_count_marker_decides_what_the_length_counts() {
+        // Without a marker the prefix counts wire bytes, padding included.
+        type Wire = Field<Ascii<0, 4>, AsciiLength<1>, PadRight<4>>;
+        assert_eq!(encode_field::<Wire>(b"AB", 5, 8), Ok(b"4AB  ".to_vec()));
         let mut input = &b"1AB  "[..];
-        assert_eq!(F::decode(&mut input, &mut &mut [][..]), Ok(&b"A"[..]));
+        assert_eq!(Wire::decode(&mut input, &mut &mut [][..]), Ok(&b"A"[..]));
         assert_eq!(input, b"B  ");
-        assert_eq!(P::decode(&mut &b"1AB   "[..], &mut &mut [][..]), Err(Error::Invalid));
+        // Before the padding it counts the value: the padding is split off
+        // exactly, so a value ending in the fill survives, and a byte other
+        // than the fill is invalid.
+        type Value = Field<Ascii<0, 4>, AsciiLength<1>, crate::chain!(Count, PadRight<4>)>;
+        assert_eq!(encode_field::<Value>(b"AB", 5, 8), Ok(b"2AB  ".to_vec()));
+        assert_eq!(encode_field::<Value>(b"A ", 5, 8), Ok(b"2A   ".to_vec()));
+        assert_eq!(decode_field::<Value>(b"2A   ", 0), Ok(b"A ".to_vec()));
+        assert_eq!(decode_field::<Value>(b"1AB  ", 0), Err(Error::Invalid));
+        assert_eq!(decode_field::<Value>(b"6AB    ", 0), Err(Error::Invalid));
+        // A fixed length is taken at the marker too: 3 digits in 2 bytes.
+        type Packed = Field<Numeric<3, 3>, Fixed<3>, crate::chain!(Count, PackNibblesRight<BcdzDigits, 0>)>;
+        assert_eq!(encode_field::<Packed>(b"123", 2, 8), Ok(b"\x01\x23".to_vec()));
+        assert_eq!(decode_field::<Packed>(b"\x01\x23", 8), Ok(b"123".to_vec()));
+        assert_eq!(decode_field::<Packed>(b"\x11\x23", 8), Err(Error::Invalid));
     }
 
     #[test]
@@ -554,7 +508,10 @@ mod tests {
 
     #[test]
     fn wire_extent_is_framed_before_decoding_capacity() {
-        type F = Field<Ebcdic1142Text<0, { usize::MAX }>, WireLength<FixedBinaryBe<8>>, Ebcdic1142>;
+        type F = Field<Ebcdic1142Text<0, { usize::MAX }>, Length<FixedBinaryBe<8>>, Ebcdic1142>;
+        type Counted =
+            Field<crate::Binary<0, { usize::MAX }>, Length<FixedBinaryBe<8>>, crate::chain!(Count, crate::UnpackNibbles<UpperHexDigits>)>;
+        assert_eq!(decode_field::<Counted>(&(usize::MAX as u64).to_be_bytes(), 0), Err(Error::Invalid));
         let max = (usize::MAX as u64).to_be_bytes();
         assert_eq!(decode_field::<F>(&max, 0), Err(Error::UnexpectedEof));
     }
@@ -581,7 +538,6 @@ mod tests {
         fails::<Field<Ascii<0, 300>, Length<crate::FixedComp3<1>>>>(&[b'A'; 10]);
         // Sizing and encoding both check the padded width against the prefix.
         fails::<Field<Ascii<0, 12>, AsciiLength<1>, PadRight<12>>>(b"AB");
-        fails::<PaddedField<Ascii<0, 8>, AsciiLength<1>, Identity, 2, b' '>>(b"ABC");
     }
 
     #[test]
@@ -610,6 +566,28 @@ mod proptests {
     use crate::*;
 
     proptest! {
+        #[test]
+        fn the_count_marker_can_sit_anywhere_in_the_chain(digits in "[0-9]{0,9}") {
+            use crate::primitive::nibble::BcdzDigits;
+            type Digits = Field<Numeric<0, 9>, AsciiLength<2>, crate::chain!(Count, PadRightEven<b'?'>, PackNibblesLeft<BcdzDigits>, PadRight<8, 0x40>)>;
+            type Even = Field<Numeric<0, 9>, AsciiLength<2>, crate::chain!(PadRightEven<b'?'>, Count, PackNibblesLeft<BcdzDigits>, PadRight<8, 0x40>)>;
+            type Bytes = Field<Numeric<0, 9>, AsciiLength<2>, crate::chain!(PadRightEven<b'?'>, PackNibblesLeft<BcdzDigits>, Count, PadRight<8, 0x40>)>;
+            fn roundtrip<F: ScalarFmt>(digits: &str) -> Result<u8, TestCaseError> {
+                let mut wire = [0; 16];
+                let mut out = wire.as_mut_slice();
+                F::encode_str(&mut out, &mut [0; 32][..], digits).unwrap();
+                let used = 16 - out.len();
+                prop_assert_eq!(used, 10);
+                let mut scratch = [0; 32];
+                prop_assert_eq!(F::decode_str(&mut &wire[..used], &mut &mut scratch[..]), Ok(digits));
+                Ok((wire[0] - b'0') * 10 + wire[1] - b'0')
+            }
+            let len = digits.len() as u8;
+            prop_assert_eq!(roundtrip::<Digits>(&digits)?, len);
+            prop_assert_eq!(roundtrip::<Even>(&digits)?, len + len % 2);
+            prop_assert_eq!(roundtrip::<Bytes>(&digits)?, len.div_ceil(2));
+        }
+
         #[test]
         fn cp1142_field_preserves_values_and_character_prefix(bytes in prop::collection::vec(any::<u8>(), 0..64)) {
             use crate::primitive::ebcdic::EBCDIC_1142_TO_UNICODE;

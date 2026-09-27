@@ -2,7 +2,7 @@
 use no_panic::no_panic;
 
 use crate::Error;
-use crate::primitive::bytes::reserve_bytes;
+use crate::primitive::bytes::{is_filled, reserve_bytes};
 use crate::utils::cold_path;
 
 /// Write `input` followed by `fill` bytes up to `pad_to` bytes, or the fill
@@ -89,6 +89,31 @@ pub fn decode_padded_even(input: &[u8], len: Option<usize>, pad_left: bool, fill
         }
         None => Ok(if edge == fill { rest } else { input }),
     }
+}
+
+/// Split a value of exactly `len` bytes from the `fill` bytes padding it to
+/// the input's width: the padding is on the right, or on the left when
+/// `pad_left` is true. A `len` wider than the input, or a padding byte other
+/// than `fill`, is `Invalid`. Fill bytes inside the value are kept, so values
+/// that really end in the fill character survive.
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub fn decode_padded_exact(input: &[u8], len: usize, pad_left: bool, fill: u8) -> Result<&[u8], Error> {
+    let Some(pad_len) = input.len().checked_sub(len) else {
+        cold_path();
+        return Err(Error::Invalid);
+    };
+    let (value, padding) = if pad_left {
+        let (padding, value) = input.split_at(pad_len);
+        (value, padding)
+    } else {
+        input.split_at(len)
+    };
+    if !is_filled(padding, fill) {
+        cold_path();
+        return Err(Error::Invalid);
+    }
+    Ok(value)
 }
 
 /// Retain at most `max_len` bytes from the left, or from the right when
@@ -245,6 +270,24 @@ mod tests {
     }
 
     #[test]
+    fn exact_padding_splits_by_length_and_checks_the_fill() {
+        for (input, len, pad_left, expected) in [
+            (&b"Hi  "[..], 2, false, Ok(&b"Hi"[..])),
+            (b"  Hi", 2, true, Ok(b"Hi")),
+            (b"A   ", 2, false, Ok(b"A ")),
+            (b"   A", 2, true, Ok(b" A")),
+            (b"Hi", 2, false, Ok(b"Hi")),
+            (b"", 0, true, Ok(b"")),
+            (b"Hi x", 2, false, Err(Error::Invalid)),
+            (b"x Hi", 2, true, Err(Error::Invalid)),
+            (b"Hi", 3, false, Err(Error::Invalid)),
+            (b"Hi", usize::MAX, true, Err(Error::Invalid)),
+        ] {
+            assert_eq!(decode_padded_exact(input, len, pad_left, b' '), expected);
+        }
+    }
+
+    #[test]
     fn test_roundtrip() {
         assert_eq!(roundtrip(b"Hello", 8, true, b' '), b"Hello");
         assert_eq!(roundtrip(b"Hello", 8, false, b' '), b"Hello");
@@ -373,6 +416,18 @@ mod proptests {
             let decoded = decode_padded(encoded, input.len(), right, fill);
             prop_assert_eq!(decoded, input.as_slice());
             prop_assert_eq!(decoded.as_ptr(), encoded[if right { extra } else { 0 }..].as_ptr());
+        }
+
+        #[test]
+        fn exact_padding_roundtrips_any_bytes(
+            input in prop::collection::vec(any::<u8>(), 0..64),
+            extra in 0usize..32,
+            right in any::<bool>(),
+            fill in any::<u8>(),
+        ) {
+            let mut storage = [0xA5; 96];
+            let encoded = encode_padded(&mut storage.as_mut_slice(), &input, input.len() + extra, right, fill).unwrap();
+            prop_assert_eq!(decode_padded_exact(encoded, input.len(), right, fill), Ok(input.as_slice()));
         }
 
         #[test]

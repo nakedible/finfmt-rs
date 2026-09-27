@@ -35,7 +35,7 @@ impl Step for Ebcdic037 {
     }
 
     #[inline(always)]
-    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], _count: Option<usize>) -> Result<&'a [u8], Error> {
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], _len: Option<usize>) -> Result<&'a [u8], Error> {
         let buf = reserve_bytes(scratch, input.len())?;
         translate_bytes(buf, input, &EBCDIC_037_TO_ASCII)?;
         Ok(buf)
@@ -60,7 +60,7 @@ impl Step for Ebcdic1142 {
     }
 
     #[inline(always)]
-    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], _count: Option<usize>) -> Result<&'a [u8], Error> {
+    fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], _len: Option<usize>) -> Result<&'a [u8], Error> {
         decode_ebcdic_1142(scratch, input).map(|buf| &*buf)
     }
 }

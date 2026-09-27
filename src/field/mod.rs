@@ -25,16 +25,13 @@ pub use check::{
     HexEven, Iso88591, LowerHex, LowerHexEven, Numeric, Track2, UpperAlpha, UpperAlphanum, UpperAsciiPrintable, UpperHex, UpperHexEven,
 };
 pub use ebcdic::{Ebcdic037, Ebcdic1142};
-pub use format::{Field, PaddedField};
-pub use length::{
-    AsciiLength, AsciiWireLength, BlankableEbcdicLength, DecodePlan, EbcdicLength, EbcdicWireLength, Fixed, Framing, Length, LengthSpec,
-    Offset, Rest, WireLength,
-};
+pub use format::Field;
+pub use length::{AsciiLength, BlankableEbcdicLength, EbcdicLength, Fixed, Length, LengthSpec, Offset, Rest};
 pub use nibble::{PackNibbles, PackNibblesLeft, PackNibblesRight, UnpackNibbles};
 pub use numeric::{
     FixedBinaryBe, FixedComp3, FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedEbcdic, ImpliedDecimal, MinusPrefix,
     SignPrefix,
 };
-pub use step::{Chain, DecodeCheck, Step};
+pub use step::{Chain, Count, DecodeCheck, Step};
 pub use text::{Identity, PadLeft, PadLeftEven, PadRight, PadRightEven};
 pub use truncate::Truncate;
