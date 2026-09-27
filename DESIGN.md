@@ -33,9 +33,9 @@ chaining primitive operations with length, padding, validation, charset, nibble,
 and numeric adapters. This layer should not invent new byte algorithms; it
 should choose and compose primitives.
 
-`src/composite/` contains composite formats. `CompositeFmt<T>` maps Rust values
-to and from fields, lists, delimited records, bitmaps, BER-TLV sets, variants,
-ordered unions, and absent/filler wrappers. Composite code may route data
+`src/composite/` contains the field dispatch traits and composite formats:
+fields, lists, delimited records, bitmaps, BER-TLV sets, variants, ordered
+unions, and absent/filler wrappers. Composite code may route data
 between scalar formats and primitives, but byte-level conversion still belongs
 in `primitive`.
 
@@ -85,8 +85,17 @@ length from the count by arithmetic after it (`Step::counted_wire_len`), and
 the steps after the marker get their exact lengths, so padding there is split
 off exactly rather than by content.
 
-`CompositeFmt<T>` is the composite contract. It encodes and decodes complete Rust
-values using caller-provided output and scratch buffers.
+`FieldEncode<T>` and `FieldDecode<'de, T>` are the format contract: a format
+encodes values of type `T`, and decodes values of type `T` that may borrow
+input or scratch for `'de`. Scalar and composite formats implement the same
+pair, so composites take their inner formats through it and nest alike. Every
+`ScalarFmt` is a format for the value types implementing `ScalarEncode` /
+`ScalarDecode<'de>`: the crate provides strings, `&str` and integers
+(`CompactString` behind the `compact_str` feature), and users implement them
+for their own types. The value's type selects the `ScalarFmt` method (text or
+typed number), so an integer field on a binary format needs no text round trip.
+A value that should use its serde mapping on the wire is spelled out per field
+with `SerdeScalar<F>`.
 
 ## Buffers
 
@@ -250,14 +259,18 @@ success.
 
 ## Serde Boundary
 
-Serde support is intentionally isolated in files with `_serde` in the name where
-possible. It exists for Rust/JSON ergonomics and for special generic adapter
-cases such as BER-TLV list/map decoding.
+Serde is an optional feature, on by default, and its support is isolated in
+files with `_serde` in the name. It serves Rust/JSON ergonomics, the explicit
+`SerdeScalar<F>` field adapter, and structural BER-TLV list/map decoding
+(`BerTlvList`). Nothing else requires it: field dispatch uses the value traits,
+and the crate builds without serde.
 
 The general structural wire-format path is not serde-based. Serde concepts such
 as flattening and optional field handling do not map cleanly to bitmap-driven,
 delimiter-driven, fixed-layout, or variant wire formats. Those are represented
-by explicit `CompositeFmt` implementations and macros.
+by explicit field format implementations and macros. Serde attributes on a
+value type describe its JSON form; they reach the wire only through an explicit
+`SerdeScalar<F>`.
 
 ## Composite Semantics
 
@@ -278,9 +291,9 @@ rejected by default. Formats with an extras path preserve unknown tags as
 uppercase hex strings, and list-style BER-TLV formats preserve order and
 duplicates.
 
-Repeated and delimited formats decode each item through its own `CompositeFmt` or
-`ScalarFmt` and reject trailing bytes inside an item unless that item format
-explicitly consumes them.
+Repeated and delimited formats decode each item through its own format and
+reject trailing bytes inside an item unless that item format explicitly
+consumes them.
 
 Union and literal matching paths are allowed to decode speculatively. They must
 snapshot input cursors before trial decoding and only advance the input for the

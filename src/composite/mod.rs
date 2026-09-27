@@ -1,16 +1,23 @@
-//! Composite format traits, wrappers, and record macros.
+//! Composite formats and the field dispatch traits.
 //!
-//! Record macros parse field entries syntactically:
-//! - `field: Fmt` uses the serde-backed scalar path with `Fmt: ScalarFmt`.
-//! - `field: DirectScalar<Fmt>` uses `ScalarValue` directly instead of serde.
-//!   Use `DirectScalar<Fmt, &str>` for a borrowed string.
-//! - `field: Composite<Fmt>` nests another `CompositeFmt`.
-//! - `field: Option<...>` means the wire container can omit that field.
+//! A format for values of type `T` implements [`FieldEncode<T>`] and
+//! [`FieldDecode<'de, T>`]. Every [`ScalarFmt`] is such a format for the value
+//! types implementing [`ScalarEncode`]/[`ScalarDecode`]: strings, `&str` and
+//! integers, and `CompactString` with the `compact_str` feature. Serde values
+//! go through [`SerdeScalar<F>`], spelled out per field. The composites here
+//! take their inner formats through the same traits, so scalar and composite
+//! formats nest alike.
 //!
-//! `Option<Fmt>` is container-level presence, not merely a scalar field whose
-//! semantic Rust value happens to be `Option<T>`. In `concat_format!`, optional
-//! fields are tail-only and decode to `None` after EOF. In `delimited_format!`,
-//! an empty segment decodes to `None`. In bitmap and BER-TLV formats, absence is
+//! Record macros take entries of these forms:
+//! - `field: Fmt`, a field encoded by `Fmt`;
+//! - `field(context): Fmt`, a field whose format also reads an earlier field;
+//! - `field: Option<Fmt>`, a field the wire container can omit;
+//! - `_: Fmt = b"…"`, a literal encoded by `Fmt`.
+//!
+//! `Option<Fmt>` is container-level presence, not merely a field whose value
+//! happens to be `Option<T>`. In `concat_format!`, optional fields are
+//! tail-only and decode to `None` after EOF. In `delimited_format!`, an empty
+//! segment decodes to `None`. In bitmap and BER-TLV formats, absence is
 //! controlled by the bitmap bit or tag presence. If bytes are always present but
 //! a pattern inside those bytes means "no value", express that in the field
 //! format, for example with `OptionalAbsent`, not by wrapping the macro field in
@@ -22,34 +29,49 @@ use crate::primitive::bytes::{copy_bytes, reserve_bytes, take_delimited};
 use crate::utils::split_scratch;
 use crate::{CompositeError, Error, ScalarFmt};
 
-/// Encode/decode a structured value.
+/// Encode a value of type `T`.
 ///
-/// Both methods advance their cursors, so formats compose: a nested format
-/// consumes its part of the parent's input and output. Encode scratch is a
-/// per-call workspace; decode scratch is an arena that decoded values may
-/// borrow from. Use [`crate::encode`] and [`crate::decode`] for a whole message.
-pub trait CompositeFmt<T> {
-    type Decoded<'de>;
+/// Encoding advances `output` past what it writes, so formats compose: a nested
+/// format writes its part of the parent's output. Scratch is a workspace for
+/// this call only. Use [`crate::encode`] for a whole message.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a format for values of type `{T}`",
+    label = "no `FieldEncode<{T}>` implementation",
+    note = "scalar formats encode strings and integers; use `SerdeScalar<Fmt>` for a serde value, or implement `ScalarEncode` for your own type"
+)]
+pub trait FieldEncode<T: ?Sized> {
+    fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError>;
+}
 
-    fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError>;
-    fn decode<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, CompositeError>;
+/// Decode a value of type `T`, which may borrow from input or scratch for `'de`.
+///
+/// Decoding advances `input` past what it consumes. Scratch is an arena that
+/// decoded values may borrow from: the callee advances it past every byte it
+/// keeps. Use [`crate::decode`] for a whole message.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a format for values of type `{T}`",
+    label = "no `FieldDecode<{T}>` implementation",
+    note = "scalar formats decode strings and integers; use `SerdeScalar<Fmt>` for a serde value, or implement `ScalarDecode` for your own type"
+)]
+pub trait FieldDecode<'de, T> {
+    fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<T, CompositeError>;
 }
 
 /// Encode a whole message, returning the number of bytes written to `output`.
 #[inline]
-pub fn encode<F: CompositeFmt<T>, T>(output: &mut [u8], scratch: &mut [u8], value: &T) -> Result<usize, CompositeError> {
+pub fn encode<F: FieldEncode<T>, T: ?Sized>(output: &mut [u8], scratch: &mut [u8], value: &T) -> Result<usize, CompositeError> {
     let capacity = output.len();
     let mut cursor = output;
-    F::encode(&mut cursor, scratch, value)?;
+    F::encode_field(&mut cursor, scratch, value)?;
     Ok(capacity - cursor.len())
 }
 
 /// Decode a whole message. Input left over after the value is `Invalid`.
 #[inline]
-pub fn decode<'de, F: CompositeFmt<T>, T>(input: &'de [u8], scratch: &'de mut [u8]) -> Result<F::Decoded<'de>, CompositeError> {
+pub fn decode<'de, F: FieldDecode<'de, T>, T>(input: &'de [u8], scratch: &'de mut [u8]) -> Result<T, CompositeError> {
     let mut input = input;
     let mut scratch = scratch;
-    let value = F::decode(&mut input, &mut scratch)?;
+    let value = F::decode_field(&mut input, &mut scratch)?;
     if !input.is_empty() {
         crate::utils::cold_path();
         return Err(Error::Invalid.into());
@@ -57,17 +79,20 @@ pub fn decode<'de, F: CompositeFmt<T>, T>(input: &'de [u8], scratch: &'de mut [u
     Ok(value)
 }
 
-/// Encode/decode a composite value using an already available context value.
-pub trait ContextFmt<T, C: ?Sized> {
-    type Decoded<'de>;
-
+/// Encode a value using an already available context value, such as an
+/// earlier field that selects the layout.
+pub trait ContextEncode<T: ?Sized, C: ?Sized> {
     fn encode_with(output: &mut &mut [u8], scratch: &mut [u8], context: &C, value: &T) -> Result<(), CompositeError>;
-    fn decode_with<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8], context: &C) -> Result<Self::Decoded<'de>, CompositeError>;
+}
+
+/// Decode a value using an already available context value.
+pub trait ContextDecode<'de, T, C: ?Sized> {
+    fn decode_with(input: &mut &'de [u8], scratch: &mut &'de mut [u8], context: &C) -> Result<T, CompositeError>;
 }
 
 /// Canonical bytes used by wrapper formats to represent an absent value.
 ///
-/// This is separate from [`CompositeFmt`]: some wrappers only need an explicit
+/// This is separate from the field traits: some wrappers only need an explicit
 /// absent byte encoding, not a meaningful semantic value.
 ///
 /// Formats using this for `Option<T>` should choose a present-side format that
@@ -89,7 +114,7 @@ pub trait AbsentFmt {
     }
 }
 
-/// Encode/decode an inner composite through an outer scalar field. A group of
+/// Encode/decode an inner format's value through an outer scalar field. A group of
 /// fields or a list with a byte length is a frame whose field has that length,
 /// such as `Frame<Field<Binary<0, 999>, AsciiLength<3>>, Inner>`.
 pub struct Frame<F, S>(PhantomData<(F, S)>);
@@ -98,10 +123,11 @@ pub struct Frame<F, S>(PhantomData<(F, S)>);
 /// `Len` states the used body extent in bytes. The full body, including absent filler, remains on the
 /// wire. The declared extent must end at a field boundary, and excluded fields
 /// must match their absent encoding.
-pub struct TrailingLengthFrame<T, Len, Body, Tails, const BASE_LEN: usize>(PhantomData<(T, Len, Body, Tails)>);
+pub struct TrailingLengthFrame<Len, Body, Tails, const BASE_LEN: usize>(PhantomData<(Len, Body, Tails)>);
 pub struct TrailingField<Field, Rest = NoTrailingFields>(PhantomData<(Field, Rest)>);
 pub struct NoTrailingFields;
-pub struct Empty<T>(PhantomData<T>);
+/// Encode nothing, and decode the value's `Default`.
+pub struct Empty;
 /// Structural BER-TLV representation as a Serde map or sequence of
 /// `(tag, value)` pairs. Tags and values are uppercase hex, such as `"9F02"` and
 /// `"000000012345"`; an empty value is `""`. Only `ber_tlv_format!` extras, which
@@ -114,7 +140,8 @@ pub struct Empty<T>(PhantomData<T>);
 /// Decoding is strict by default. Set `ALLOW_ZERO_PADDING` to accept `00`
 /// bytes before, between and after entries. Values are never trimmed, and
 /// encoding never emits padding.
-pub struct BerTlvList<T, const ALLOW_ZERO_PADDING: bool = false>(PhantomData<T>);
+#[cfg(feature = "serde")]
+pub struct BerTlvList<const ALLOW_ZERO_PADDING: bool = false>;
 /// A list of `MIN` to `MAX` items, whose length `L` counts items: a prefix
 /// such as [`crate::AsciiLength`], or [`crate::Fixed`], states the item count,
 /// and [`crate::Rest`] takes the rest of the input. A list with a byte length
@@ -130,16 +157,16 @@ pub struct BerTlvList<T, const ALLOW_ZERO_PADDING: bool = false>(PhantomData<T>)
 /// byte extent is an empty list, so a single item that encodes to no bytes is
 /// ambiguous. Item checks must keep separators out of values; debug builds
 /// assert it.
-pub struct BoundedList<T, L, Item, Sep, const MIN: usize, const MAX: usize>(PhantomData<(T, L, Item, Sep)>);
+pub struct BoundedList<L, Item, Sep, const MIN: usize, const MAX: usize>(PhantomData<(L, Item, Sep)>);
 /// Encode `None` as an explicit absent byte encoding and decode matching bytes
 /// back to `None`. Both encodings are exactly `N` bytes, and `N` must be nonzero:
 ///
 /// ```compile_fail
-/// # use finfmt::composite::{ByteFill, CompositeFmt, Empty, OptionalAbsent};
-/// type ZeroWidth = OptionalAbsent<(), Empty<()>, ByteFill, 0>;
-/// let _ = ZeroWidth::decode(&mut &b""[..], &mut &mut [][..]);
+/// # use finfmt::composite::{ByteFill, Empty, FieldDecode, OptionalAbsent};
+/// type ZeroWidth = OptionalAbsent<Empty, ByteFill, 0>;
+/// let _ = <ZeroWidth as FieldDecode<'_, Option<()>>>::decode_field(&mut &b""[..], &mut &mut [][..]);
 /// ```
-pub struct OptionalAbsent<T, Inner, Absent, const N: usize>(PhantomData<(T, Inner, Absent)>);
+pub struct OptionalAbsent<Inner, Absent, const N: usize>(PhantomData<(Inner, Absent)>);
 /// Fill the provided absent area with one byte.
 pub struct ByteFill<const BYTE: u8 = b' '>;
 /// A fixed physical area of `MAX` slots with a separately declared used extent.
@@ -148,21 +175,23 @@ pub struct ByteFill<const BYTE: u8 = b' '>;
 /// fails to build.
 /// Slots inside that extent decode as present values. Remaining slots encode
 /// canonically and decode through their [`AbsentFmt::is_absent`] matcher.
-pub struct FixedAreaList<T, Len, Slot, const MAX: usize>(PhantomData<(T, Len, Slot)>);
+pub struct FixedAreaList<Len, Slot, const MAX: usize>(PhantomData<(Len, Slot)>);
 pub struct Separator<const BYTE: u8>;
 
 mod bertlv;
 #[doc(hidden)]
 pub use bertlv::decode_ber_tlv_collection_entry;
 mod bertlv_macros;
+#[cfg(feature = "serde")]
 mod bertlv_serde;
 mod bitmap_macros;
 mod concat_macros;
 mod delimited_macros;
 mod repeated;
 mod scalar;
+#[cfg(feature = "serde")]
 mod scalar_serde;
-pub use scalar::{Composite, DirectScalar, ScalarValue};
+pub use scalar::{ScalarDecode, ScalarEncode};
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -220,7 +249,7 @@ mod tests {
         struct NestedConcatFmt for NestedConcat {
             head: N2,
             tail: N2,
-            inner: Option<Composite<FixedTailFmt>>,
+            inner: Option<FixedTailFmt>,
         }
     }
 
@@ -278,7 +307,7 @@ mod tests {
         struct BorrowedTlvFmt for<'a> BorrowedTlv<'a> {
             "59" => ascii: A4,
             "5A" => ebcdic: A4Ebcdic,
-            "DF23" => tail: Option<Composite<BorrowedConcatFmt>>,
+            "DF23" => tail: Option<BorrowedConcatFmt>,
         }
     }
 
@@ -290,31 +319,31 @@ mod tests {
             ebcdic: Option<&'a str>,
         }
         crate::concat_format! { struct Concat for<'a> Record<'a> {
-            ascii: DirectScalar<A4, &'a str>, ebcdic: Option<DirectScalar<A4Ebcdic, &str>>,
+            ascii: A4, ebcdic: Option<A4Ebcdic>,
         } }
         crate::delimited_format! { struct Delimited for<'a> Record<'a>, b'|' {
-            ascii: DirectScalar<A4, &str>, ebcdic: Option<DirectScalar<A4Ebcdic, &'a str> >,
+            ascii: A4, ebcdic: Option<A4Ebcdic >,
         } }
         crate::bitmap_format! { struct Bitmap for<'a> Record<'a>, crate::bitmap::BitmapLayout::iso(1, 1), BitmapBinaryWord {
-            head: { ascii: DirectScalar<A4, &str>, }
-            3 => ebcdic: Option<DirectScalar<A4Ebcdic, &'a str>>,
+            head: { ascii: A4, }
+            3 => ebcdic: Option<A4Ebcdic>,
         } }
         const ASCII_TAG: &str = "59";
         crate::ber_tlv_format! { struct Ber for<'a> Record<'a> {
-            ASCII_TAG => ascii: DirectScalar<A4, &'a str>, "5A" => ebcdic: Option<DirectScalar<A4Ebcdic, &str> >,
+            ASCII_TAG => ascii: A4, "5A" => ebcdic: Option<A4Ebcdic >,
         } }
-        fn check<F: for<'a, 'de> CompositeFmt<Record<'a>, Decoded<'de> = Record<'de>>>() {
+        fn check<F: for<'a> FieldEncode<Record<'a>> + for<'de> FieldDecode<'de, Record<'de>>>() {
             for ebcdic in [None, Some("WXYZ")] {
                 let value = Record { ascii: "ABCD", ebcdic };
                 let mut output = [0; 32];
                 let mut scratch = [0; 32];
                 let used = {
                     let mut out = output.as_mut_slice();
-                    F::encode(&mut out, &mut scratch, &value).unwrap();
+                    F::encode_field(&mut out, &mut scratch, &value).unwrap();
                     32 - out.len()
                 };
                 let mut input = &output[..used];
-                let decoded = F::decode(&mut input, &mut &mut scratch[..]).unwrap();
+                let decoded: Record<'_> = F::decode_field(&mut input, &mut &mut scratch[..]).unwrap();
                 assert_eq!(decoded, value);
                 assert!(input.is_empty());
                 assert!((output.as_ptr_range()).contains(&decoded.ascii.as_ptr()));
@@ -332,7 +361,7 @@ mod tests {
 
     type FramedFixedTailFmt = Frame<Field<Ascii<0, 12>, AsciiLength<2>>, FixedTailFmt>;
     type FramedHexFixedTailFmt = Frame<Field<Binary<0, 12>, AsciiLength<2>, UnpackNibbles<UpperHexDigits>>, FixedTailFmt>;
-    type OptionalA3SpaceFmt = OptionalAbsent<String, SerdeScalar<A3>, ByteFill<b' '>, 3>;
+    type OptionalA3SpaceFmt = OptionalAbsent<A3, ByteFill<b' '>, 3>;
 
     #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     struct FramedConcat {
@@ -344,7 +373,7 @@ mod tests {
     crate::concat_format! {
         struct FramedConcatFmt for FramedConcat {
             head: N2,
-            inner: Composite<FramedFixedTailFmt>,
+            inner: FramedFixedTailFmt,
             tail: N2,
         }
     }
@@ -360,7 +389,7 @@ mod tests {
         struct FramedHexConcatFmt for FramedHexConcat {
             head: N2,
             tail: N2,
-            inner: Composite<FramedHexFixedTailFmt>,
+            inner: FramedHexFixedTailFmt,
         }
     }
 
@@ -374,13 +403,13 @@ mod tests {
     crate::concat_format! {
         struct TrailingLengthBodyFmt for TrailingLengthData {
             base: A2,
-            tail1: Composite<OptionalA3SpaceFmt>,
-            tail2: Composite<OptionalA3SpaceFmt>,
+            tail1: OptionalA3SpaceFmt,
+            tail2: OptionalA3SpaceFmt,
         }
     }
 
     type TrailingLengthTails = TrailingField<OptionalA3SpaceFmt, TrailingField<OptionalA3SpaceFmt>>;
-    type TrailingLengthDataFmt = TrailingLengthFrame<TrailingLengthData, AsciiLength<2>, TrailingLengthBodyFmt, TrailingLengthTails, 2>;
+    type TrailingLengthDataFmt = TrailingLengthFrame<AsciiLength<2>, TrailingLengthBodyFmt, TrailingLengthTails, 2>;
 
     #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     struct TlvData {
@@ -392,7 +421,7 @@ mod tests {
         #[doc = "Test format for a named BER-TLV struct."]
         struct TlvDataFmt for TlvData {
             "59" => t59_code: A4,
-            "DF23" => tdf23_tail: Option<Composite<FixedTailFmt>>,
+            "DF23" => tdf23_tail: Option<FixedTailFmt>,
         }
     }
 
@@ -405,7 +434,7 @@ mod tests {
     crate::ber_tlv_format! {
         struct TlvNoDefaultFmt for TlvNoDefault {
             "59" => t59_code: A4,
-            "DF23" => tdf23_tail: Option<Composite<FixedTailFmt>>,
+            "DF23" => tdf23_tail: Option<FixedTailFmt>,
         }
     }
 
@@ -452,17 +481,17 @@ mod tests {
     crate::union_format! {
         #[doc = "Test format for an untagged speculative enum."]
         struct UnionValueFmt for UnionValue {
-            Known(DirectScalar<FixedNumeric4>),
-            Alpha(DirectScalar<FixedAlpha4>),
-            Unknown(DirectScalar<RestAscii8>),
+            Known(FixedNumeric4),
+            Alpha(FixedAlpha4),
+            Unknown(RestAscii8),
         }
     }
 
     crate::union_format! {
         struct RestUnionValueFmt for UnionValue {
-            Known(DirectScalar<RestNumeric4>),
-            Alpha(DirectScalar<FixedAlpha4>),
-            Unknown(DirectScalar<RestAscii8>),
+            Known(RestNumeric4),
+            Alpha(FixedAlpha4),
+            Unknown(RestAscii8),
         }
     }
 
@@ -474,8 +503,8 @@ mod tests {
 
     crate::union_format! {
         struct BorrowedUnionValueFmt for<'a> BorrowedUnionValue<'a> {
-            Known(DirectScalar<FixedNumeric4, &'a str>),
-            Unknown(DirectScalar<A4Ebcdic, &'a str>),
+            Known(FixedNumeric4),
+            Unknown(A4Ebcdic),
         }
     }
 
@@ -487,8 +516,8 @@ mod tests {
 
     crate::union_format! {
         struct ShortUnionValueFmt for ShortUnionValue {
-            Numeric(DirectScalar<FixedNumeric4>),
-            Alpha(DirectScalar<FixedAlpha4>),
+            Numeric(FixedNumeric4),
+            Alpha(FixedAlpha4),
         }
     }
 
@@ -502,7 +531,7 @@ mod tests {
         #[doc = "Test format for a nested BER-TLV field inside a bitmap."]
         struct WithBitmapTlvFmt for WithBitmapTlv, crate::bitmap::BitmapLayout::iso(1, 1), BitmapBinaryWord {
             3 => f003_processing_code: N6,
-            48 => f048_details: Option<Composite<TlvDataFmt>>,
+            48 => f048_details: Option<TlvDataFmt>,
         }
     }
 
@@ -520,7 +549,7 @@ mod tests {
             3 => f003_processing_code: N6,
             11 => f011_stan: N6,
             35 => f035_track2_data: Option<Track2Fmt>,
-            48 => f048_fixed_tail: Option<Composite<FixedTailFmt>>,
+            48 => f048_fixed_tail: Option<FixedTailFmt>,
             97 => f097_amount_net_settlement: Option<AmountFmt>,
         }
     }
@@ -575,20 +604,22 @@ mod tests {
 
     crate::bitmap_format! {
         struct SerdeScalarBitmapDataFmt for SerdeScalarBitmapData, crate::bitmap::BitmapLayout::iso(1, 1), BitmapBinaryWord {
-            3 => f003_processing_code: N6,
-            11 => f011_stan: Option<N6>,
+            3 => f003_processing_code: SerdeScalar<N6>,
+            11 => f011_stan: Option<SerdeScalar<N6>>,
         }
     }
 
     #[derive(Debug, Default, PartialEq, Eq)]
     struct ManualProcessingCode(String);
 
-    impl ScalarValue for ManualProcessingCode {
-        fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
+    impl ScalarEncode for ManualProcessingCode {
+        fn encode_scalar<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
             F::encode_str(output, scratch, &self.0)
         }
+    }
 
-        fn decode_with<'de, F: ScalarFmt>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self, Error> {
+    impl<'de> ScalarDecode<'de> for ManualProcessingCode {
+        fn decode_scalar<F: ScalarFmt>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self, Error> {
             Ok(Self(F::decode_str(input, scratch)?.to_owned()))
         }
     }
@@ -596,12 +627,14 @@ mod tests {
     #[derive(Debug, Default, PartialEq, Eq)]
     struct ManualStan(u32);
 
-    impl ScalarValue for ManualStan {
-        fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
+    impl ScalarEncode for ManualStan {
+        fn encode_scalar<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
             F::encode_u64(output, scratch, u64::from(self.0))
         }
+    }
 
-        fn decode_with<'de, F: ScalarFmt>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self, Error> {
+    impl<'de> ScalarDecode<'de> for ManualStan {
+        fn decode_scalar<F: ScalarFmt>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self, Error> {
             let value = u32::try_from(F::decode_u64(input, scratch)?).map_err(|_| Error::Invalid)?;
             Ok(Self(value))
         }
@@ -615,8 +648,8 @@ mod tests {
 
     crate::bitmap_format! {
         struct ManualScalarBitmapDataFmt for ManualScalarBitmapData, crate::bitmap::BitmapLayout::iso(1, 1), BitmapBinaryWord {
-            3 => f003_processing_code: DirectScalar<N6>,
-            11 => f011_stan: Option<DirectScalar<N6>>,
+            3 => f003_processing_code: N6,
+            11 => f011_stan: Option<N6>,
         }
     }
 
@@ -634,53 +667,53 @@ mod tests {
 
     crate::concat_format! {
         struct FieldSyntaxConcatFmt for FieldSyntaxRecord {
-            serde_value: N2,
-            direct_value: DirectScalar<N2>,
-            nested_value: Composite<FixedTailFmt>,
-            optional_serde: Option<N2>,
-            optional_direct: Option<DirectScalar<N2>>,
-            optional_nested: Option<Composite<FixedTailFmt>>,
-            optional_direct_inline: Option<DirectScalar<Field<Numeric<2, 2>, Fixed<2>>>>,
-            optional_nested_inline: Option<Composite<Frame<Field<Ascii<0, 12>, AsciiLength<2>>, FixedTailFmt>>>,
+            serde_value: SerdeScalar<N2>,
+            direct_value: N2,
+            nested_value: FixedTailFmt,
+            optional_serde: Option<SerdeScalar<N2>>,
+            optional_direct: Option<N2>,
+            optional_nested: Option<FixedTailFmt>,
+            optional_direct_inline: Option<Field<Numeric<2, 2>, Fixed<2>>>,
+            optional_nested_inline: Option<Frame<Field<Ascii<0, 12>, AsciiLength<2>>, FixedTailFmt>>,
         }
     }
 
     crate::delimited_format! {
         struct FieldSyntaxDelimitedFmt for FieldSyntaxRecord, PIPE_SEPARATOR {
-            serde_value: N2,
-            direct_value: DirectScalar<N2>,
-            nested_value: Composite<FixedTailFmt>,
-            optional_serde: Option<N2>,
-            optional_direct: Option<DirectScalar<N2>>,
-            optional_nested: Option<Composite<FixedTailFmt>>,
-            optional_direct_inline: Option<DirectScalar<Field<Numeric<2, 2>, Fixed<2>>>>,
-            optional_nested_inline: Option<Composite<Frame<Field<Ascii<0, 12>, AsciiLength<2>>, FixedTailFmt>>>,
+            serde_value: SerdeScalar<N2>,
+            direct_value: N2,
+            nested_value: FixedTailFmt,
+            optional_serde: Option<SerdeScalar<N2>>,
+            optional_direct: Option<N2>,
+            optional_nested: Option<FixedTailFmt>,
+            optional_direct_inline: Option<Field<Numeric<2, 2>, Fixed<2>>>,
+            optional_nested_inline: Option<Frame<Field<Ascii<0, 12>, AsciiLength<2>>, FixedTailFmt>>,
         }
     }
 
     crate::bitmap_format! {
         struct FieldSyntaxBitmapFmt for FieldSyntaxRecord, crate::bitmap::BitmapLayout::iso(1, 1), BitmapBinaryWord {
-            2 => serde_value: N2,
-            3 => direct_value: DirectScalar<N2>,
-            4 => nested_value: Composite<FixedTailFmt>,
-            5 => optional_serde: Option<N2>,
-            6 => optional_direct: Option<DirectScalar<N2>>,
-            7 => optional_nested: Option<Composite<FixedTailFmt>>,
-            8 => optional_direct_inline: Option<DirectScalar<Field<Numeric<2, 2>, Fixed<2>>>>,
-            9 => optional_nested_inline: Option<Composite<Frame<Field<Ascii<0, 12>, AsciiLength<2>>, FixedTailFmt>>>,
+            2 => serde_value: SerdeScalar<N2>,
+            3 => direct_value: N2,
+            4 => nested_value: FixedTailFmt,
+            5 => optional_serde: Option<SerdeScalar<N2>>,
+            6 => optional_direct: Option<N2>,
+            7 => optional_nested: Option<FixedTailFmt>,
+            8 => optional_direct_inline: Option<Field<Numeric<2, 2>, Fixed<2>>>,
+            9 => optional_nested_inline: Option<Frame<Field<Ascii<0, 12>, AsciiLength<2>>, FixedTailFmt>>,
         }
     }
 
     crate::ber_tlv_format! {
         struct FieldSyntaxBerTlvFmt for FieldSyntaxRecord {
-            "02" => serde_value: N2,
-            "03" => direct_value: DirectScalar<N2>,
-            "04" => nested_value: Composite<FixedTailFmt>,
-            "05" => optional_serde: Option<N2>,
-            "06" => optional_direct: Option<DirectScalar<N2>>,
-            "07" => optional_nested: Option<Composite<FixedTailFmt>>,
-            "08" => optional_direct_inline: Option<DirectScalar<Field<Numeric<2, 2>, Fixed<2>>>>,
-            "09" => optional_nested_inline: Option<Composite<Frame<Field<Ascii<0, 12>, AsciiLength<2>>, FixedTailFmt>>>,
+            "02" => serde_value: SerdeScalar<N2>,
+            "03" => direct_value: N2,
+            "04" => nested_value: FixedTailFmt,
+            "05" => optional_serde: Option<SerdeScalar<N2>>,
+            "06" => optional_direct: Option<N2>,
+            "07" => optional_nested: Option<FixedTailFmt>,
+            "08" => optional_direct_inline: Option<Field<Numeric<2, 2>, Fixed<2>>>,
+            "09" => optional_nested_inline: Option<Frame<Field<Ascii<0, 12>, AsciiLength<2>>, FixedTailFmt>>,
         }
     }
 
@@ -688,12 +721,14 @@ mod tests {
     #[serde(transparent)]
     struct DualStan(u8);
 
-    impl ScalarValue for DualStan {
-        fn encode_with<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
+    impl ScalarEncode for DualStan {
+        fn encode_scalar<F: ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
             F::encode_u64(output, scratch, u64::from(self.0) + 10)
         }
+    }
 
-        fn decode_with<'de, F: ScalarFmt>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self, Error> {
+    impl<'de> ScalarDecode<'de> for DualStan {
+        fn decode_scalar<F: ScalarFmt>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self, Error> {
             let value = F::decode_u64(input, scratch)?;
             let value = value.checked_sub(10).ok_or(Error::Invalid)?;
             let value = u8::try_from(value).map_err(|_| Error::Invalid)?;
@@ -713,13 +748,13 @@ mod tests {
 
     crate::bitmap_format! {
         struct SerdeDualStanDataFmt for SerdeDualStanData, crate::bitmap::BitmapLayout::iso(1, 1), BitmapBinaryWord {
-            11 => f011_stan: N2,
+            11 => f011_stan: SerdeScalar<N2>,
         }
     }
 
     crate::bitmap_format! {
         struct ManualDualStanDataFmt for ManualDualStanData, crate::bitmap::BitmapLayout::iso(1, 1), BitmapBinaryWord {
-            11 => f011_stan: DirectScalar<N2>,
+            11 => f011_stan: N2,
         }
     }
 
@@ -730,7 +765,7 @@ mod tests {
 
     crate::concat_format! {
         struct BoolScalarDataFmt for BoolScalarData {
-            value: N2,
+            value: SerdeScalar<N2>,
         }
     }
 
@@ -741,7 +776,7 @@ mod tests {
 
     crate::concat_format! {
         struct BytesScalarDataFmt for BytesScalarData {
-            value: A4,
+            value: SerdeScalar<A4>,
         }
     }
 
@@ -757,7 +792,7 @@ mod tests {
 
     crate::concat_format! {
         struct StructScalarDataFmt for StructScalarData {
-            value: A4,
+            value: SerdeScalar<A4>,
         }
     }
 
@@ -862,16 +897,16 @@ mod tests {
 
     crate::concat_format! {
         struct RetainedVariantRecordFmt for RetainedVariantRecord {
-            selector: Composite<VariantSelectorFmt>,
-            body: Composite<RetainedVariantDataFmt>::with(selector),
+            selector: VariantSelectorFmt,
+            body(selector): RetainedVariantDataFmt,
             suffix: A4,
         }
     }
 
     crate::delimited_format! {
         struct DelimitedRetainedVariantRecordFmt for RetainedVariantRecord, b'|' {
-            selector: Composite<VariantSelectorFmt>,
-            body: Composite<RetainedVariantDataFmt>::with(selector),
+            selector: VariantSelectorFmt,
+            body(selector): RetainedVariantDataFmt,
             suffix: A4,
         }
     }
@@ -923,19 +958,17 @@ mod tests {
 
     type A5Padded = Field<Ascii<0, 5>, crate::Fixed<5>, crate::chain!(crate::PadRight<5, b' '>)>;
     type CountN2 = Field<Numeric<1, 2>, Fixed<2>, PadLeft<2, b'0', 1>>;
-    type CountedAsciiListFmt =
-        Frame<Field<Binary<7, 19>, AsciiLength<2>>, BoundedList<String, AsciiLength<2>, DirectScalar<A5Padded>, Separator<b'/'>, 0, 3>>;
+    type CountedAsciiListFmt = Frame<Field<Binary<7, 19>, AsciiLength<2>>, BoundedList<AsciiLength<2>, A5Padded, Separator<b'/'>, 0, 3>>;
     type ScalarCountedAsciiListFmt =
-        Frame<Field<Binary<7, 19>, AsciiLength<2>>, BoundedList<String, Length<CountN2>, DirectScalar<A5Padded>, Separator<b'/'>, 0, 3>>;
-    type FixedAsciiListFmt = BoundedList<String, Fixed<3>, DirectScalar<A5Padded>, (), 3, 3>;
+        Frame<Field<Binary<7, 19>, AsciiLength<2>>, BoundedList<Length<CountN2>, A5Padded, Separator<b'/'>, 0, 3>>;
+    type FixedAsciiListFmt = BoundedList<Fixed<3>, A5Padded, (), 3, 3>;
 
     #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(transparent)]
     struct NoDefaultAbsentValue(String);
 
-    type OptionalNoDefaultAbsentFmt = OptionalAbsent<NoDefaultAbsentValue, SerdeScalar<A4>, ByteFill<b' '>, 4>;
-    type RepeatedNoDefaultByteFillFmt =
-        FixedAreaList<NoDefaultAbsentValue, EbcdicLength<1>, OptionalAbsent<NoDefaultAbsentValue, SerdeScalar<A4>, ByteFill<b' '>, 4>, 2>;
+    type OptionalNoDefaultAbsentFmt = OptionalAbsent<SerdeScalar<A4>, ByteFill<b' '>, 4>;
+    type RepeatedNoDefaultByteFillFmt = FixedAreaList<EbcdicLength<1>, OptionalAbsent<SerdeScalar<A4>, ByteFill<b' '>, 4>, 2>;
 
     crate::absent_format! {
         #[doc = "Test format for an explicit literal absent encoding."]
@@ -944,13 +977,8 @@ mod tests {
         }
     }
 
-    type OptionalNoDefaultLiteralAbsentFmt = OptionalAbsent<NoDefaultAbsentValue, SerdeScalar<A4>, NoDefaultLiteralAbsentFmt, 4>;
-    type RepeatedNoDefaultAbsentFmt = FixedAreaList<
-        NoDefaultAbsentValue,
-        EbcdicLength<1>,
-        OptionalAbsent<NoDefaultAbsentValue, SerdeScalar<A4>, NoDefaultLiteralAbsentFmt, 4>,
-        2,
-    >;
+    type OptionalNoDefaultLiteralAbsentFmt = OptionalAbsent<SerdeScalar<A4>, NoDefaultLiteralAbsentFmt, 4>;
+    type RepeatedNoDefaultAbsentFmt = FixedAreaList<EbcdicLength<1>, OptionalAbsent<SerdeScalar<A4>, NoDefaultLiteralAbsentFmt, 4>, 2>;
 
     #[test]
     fn test_whole_message_entry_points() {
@@ -992,55 +1020,55 @@ mod tests {
         let total = output.len();
         let used = {
             let mut out = output.as_mut_slice();
-            CountedAsciiListFmt::encode(&mut out, scratch.as_mut_slice(), &value).unwrap();
+            CountedAsciiListFmt::encode_field(&mut out, scratch.as_mut_slice(), &value).unwrap();
             total - out.len()
         };
         assert_eq!(&output[..used], b"1903ABC  /DEF  /GHI  ");
 
         let mut input = &output[..used];
-        let decoded = CountedAsciiListFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap();
+        let decoded: Vec<String> = CountedAsciiListFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap();
         assert!(input.is_empty());
         assert_eq!(decoded, value);
 
         let used = {
             let mut out = output.as_mut_slice();
-            ScalarCountedAsciiListFmt::encode(&mut out, scratch.as_mut_slice(), &value).unwrap();
+            ScalarCountedAsciiListFmt::encode_field(&mut out, scratch.as_mut_slice(), &value).unwrap();
             total - out.len()
         };
         assert_eq!(&output[..used], b"1903ABC  /DEF  /GHI  ");
 
         let mut input = &output[..used];
-        let decoded = ScalarCountedAsciiListFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap();
+        let decoded: Vec<String> = ScalarCountedAsciiListFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap();
         assert!(input.is_empty());
         assert_eq!(decoded, value);
 
         let used = {
             let mut out = output.as_mut_slice();
-            FixedAsciiListFmt::encode(&mut out, scratch.as_mut_slice(), &value).unwrap();
+            FixedAsciiListFmt::encode_field(&mut out, scratch.as_mut_slice(), &value).unwrap();
             total - out.len()
         };
         assert_eq!(&output[..used], b"ABC  DEF  GHI  ");
 
         let mut input = &output[..used];
-        let decoded = FixedAsciiListFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap();
+        let decoded: Vec<String> = FixedAsciiListFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap();
         assert!(input.is_empty());
         assert_eq!(decoded, value);
 
         let too_many = vec!["A".to_owned(), "B".to_owned(), "C".to_owned(), "D".to_owned()];
         let mut out = output.as_mut_slice();
         assert_eq!(
-            error_kind(CountedAsciiListFmt::encode(&mut out, scratch.as_mut_slice(), &too_many)),
+            error_kind(CountedAsciiListFmt::encode_field(&mut out, scratch.as_mut_slice(), &too_many)),
             Err(Error::InvalidValueLength)
         );
         let mut out = output.as_mut_slice();
         assert_eq!(
-            error_kind(FixedAsciiListFmt::encode(&mut out, scratch.as_mut_slice(), &too_many)),
+            error_kind(FixedAsciiListFmt::encode_field(&mut out, scratch.as_mut_slice(), &too_many)),
             Err(Error::InvalidValueLength)
         );
 
         let mut invalid = b"1903ABC  XDEF  XGHI  ".as_slice();
         assert_eq!(
-            error_kind(CountedAsciiListFmt::decode(&mut invalid, &mut scratch.as_mut_slice())),
+            error_kind::<Vec<String>>(CountedAsciiListFmt::decode_field(&mut invalid, &mut scratch.as_mut_slice())),
             Err(Error::Invalid)
         );
     }
@@ -1052,7 +1080,7 @@ mod tests {
             first: String,
             second: String,
         }
-        crate::delimited_format! { struct Format for Record, b'|' { first: A2, second: DirectScalar<A2>, } }
+        crate::delimited_format! { struct Format for Record, b'|' { first: A2, second: A2, } }
         let value = Record {
             first: "AB".into(),
             second: "CD".into(),
@@ -1060,7 +1088,7 @@ mod tests {
         for capacity in 0..=6 {
             let mut output = [0xFF; 6];
             let mut out = &mut output[..capacity];
-            let result = error_kind(Format::encode(&mut out, &mut [], &value));
+            let result = error_kind(Format::encode_field(&mut out, &mut [], &value));
             if capacity < 5 {
                 assert_eq!(result, Err(Error::BufferOverflow));
             } else {
@@ -1076,7 +1104,7 @@ mod tests {
             let mut output = [0xFF; 3];
             let mut scratch = [0; 5];
             let mut out = output.as_mut_slice();
-            let result = error_kind(encode_delimited_value::<_, DirectScalar<Compressed>>(
+            let result = error_kind(encode_delimited_value::<_, Compressed>(
                 &mut out,
                 &mut scratch[..capacity],
                 &"1".to_owned(),
@@ -1121,13 +1149,13 @@ mod tests {
         let total = output.len();
         let used = {
             let mut out = output.as_mut_slice();
-            DelimitedSlotsFmt::encode(&mut out, scratch.as_mut_slice(), &value).unwrap();
+            DelimitedSlotsFmt::encode_field(&mut out, scratch.as_mut_slice(), &value).unwrap();
             total - out.len()
         };
         assert_eq!(&output[..used], b"ABCD\\X  \\WXYZ");
 
         let mut input = &output[..used];
-        let decoded = DelimitedSlotsFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap();
+        let decoded = DelimitedSlotsFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap();
         assert!(input.is_empty());
         assert_eq!(decoded, value);
 
@@ -1135,12 +1163,13 @@ mod tests {
             first: "AB\\D".into(),
             ..value
         };
-        let result = std::panic::catch_unwind(|| DelimitedSlotsFmt::encode(&mut &mut [0u8; 32][..], &mut [0u8; 32], &separator_inside));
+        let result =
+            std::panic::catch_unwind(|| DelimitedSlotsFmt::encode_field(&mut &mut [0u8; 32][..], &mut [0u8; 32], &separator_inside));
         assert_eq!(result.is_err(), cfg!(debug_assertions));
 
         let mut invalid = b"ABCD\\X  ".as_slice();
         assert_eq!(
-            error_kind(DelimitedSlotsFmt::decode(&mut invalid, &mut scratch.as_mut_slice())),
+            error_kind(DelimitedSlotsFmt::decode_field(&mut invalid, &mut scratch.as_mut_slice())),
             Err(Error::Invalid)
         );
     }
@@ -1161,24 +1190,27 @@ mod tests {
         let concat_used = {
             let total = output.len();
             let mut out = output.as_mut_slice();
-            ConcatNoDefaultFmt::encode(&mut out, scratch.as_mut_slice(), &concat).unwrap();
+            ConcatNoDefaultFmt::encode_field(&mut out, scratch.as_mut_slice(), &concat).unwrap();
             total - out.len()
         };
         assert_eq!(&output[..concat_used], b"HEAD12ABCD");
         let mut input = &output[..concat_used];
-        assert_eq!(ConcatNoDefaultFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap(), concat);
+        assert_eq!(
+            ConcatNoDefaultFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap(),
+            concat
+        );
         assert!(input.is_empty());
 
         let delimited_used = {
             let total = output.len();
             let mut out = output.as_mut_slice();
-            DelimitedNoDefaultFmt::encode(&mut out, scratch.as_mut_slice(), &delimited).unwrap();
+            DelimitedNoDefaultFmt::encode_field(&mut out, scratch.as_mut_slice(), &delimited).unwrap();
             total - out.len()
         };
         assert_eq!(&output[..delimited_used], b"HEAD|12|ABCD");
         let mut input = &output[..delimited_used];
         assert_eq!(
-            DelimitedNoDefaultFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap(),
+            DelimitedNoDefaultFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap(),
             delimited
         );
         assert!(input.is_empty());
@@ -1192,14 +1224,14 @@ mod tests {
         let optional_none = {
             let total = output.len();
             let mut out = output.as_mut_slice();
-            OptionalNoDefaultAbsentFmt::encode(&mut out, scratch.as_mut_slice(), &None).unwrap();
+            OptionalNoDefaultAbsentFmt::encode_field(&mut out, scratch.as_mut_slice(), &None::<NoDefaultAbsentValue>).unwrap();
             total - out.len()
         };
         assert_eq!(&output[..optional_none], b"    ");
         let mut input = &output[..optional_none];
         assert_eq!(
-            OptionalNoDefaultAbsentFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap(),
-            None
+            OptionalNoDefaultAbsentFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap(),
+            None::<NoDefaultAbsentValue>
         );
         assert!(input.is_empty());
 
@@ -1207,13 +1239,13 @@ mod tests {
         let optional_some_used = {
             let total = output.len();
             let mut out = output.as_mut_slice();
-            OptionalNoDefaultAbsentFmt::encode(&mut out, scratch.as_mut_slice(), &optional_some).unwrap();
+            OptionalNoDefaultAbsentFmt::encode_field(&mut out, scratch.as_mut_slice(), &optional_some).unwrap();
             total - out.len()
         };
         assert_eq!(&output[..optional_some_used], b"ABCD");
         let mut input = &output[..optional_some_used];
         assert_eq!(
-            OptionalNoDefaultAbsentFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap(),
+            OptionalNoDefaultAbsentFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap(),
             optional_some
         );
         assert!(input.is_empty());
@@ -1222,13 +1254,17 @@ mod tests {
         let repeated_fill_used = {
             let total = output.len();
             let mut out = output.as_mut_slice();
-            RepeatedNoDefaultByteFillFmt::encode(&mut out, scratch.as_mut_slice(), &values).unwrap();
+            RepeatedNoDefaultByteFillFmt::encode_field(&mut out, scratch.as_mut_slice(), &values).unwrap();
             total - out.len()
         };
         assert_eq!(&output[..repeated_fill_used], b"\xF1ABCD    ");
         let mut input = &output[..repeated_fill_used];
         assert_eq!(
-            RepeatedNoDefaultByteFillFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap(),
+            <RepeatedNoDefaultByteFillFmt as FieldDecode<'_, Vec<NoDefaultAbsentValue>>>::decode_field(
+                &mut input,
+                &mut scratch.as_mut_slice()
+            )
+            .unwrap(),
             values
         );
         assert!(input.is_empty());
@@ -1236,13 +1272,17 @@ mod tests {
         let repeated_absent_used = {
             let total = output.len();
             let mut out = output.as_mut_slice();
-            RepeatedNoDefaultAbsentFmt::encode(&mut out, scratch.as_mut_slice(), &values).unwrap();
+            RepeatedNoDefaultAbsentFmt::encode_field(&mut out, scratch.as_mut_slice(), &values).unwrap();
             total - out.len()
         };
         assert_eq!(&output[..repeated_absent_used], b"\xF1ABCDNONE");
         let mut input = &output[..repeated_absent_used];
         assert_eq!(
-            RepeatedNoDefaultAbsentFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap(),
+            <RepeatedNoDefaultAbsentFmt as FieldDecode<'_, Vec<NoDefaultAbsentValue>>>::decode_field(
+                &mut input,
+                &mut scratch.as_mut_slice()
+            )
+            .unwrap(),
             values
         );
         assert!(input.is_empty());
@@ -1250,14 +1290,14 @@ mod tests {
         let literal_none = {
             let total = output.len();
             let mut out = output.as_mut_slice();
-            OptionalNoDefaultLiteralAbsentFmt::encode(&mut out, scratch.as_mut_slice(), &None).unwrap();
+            OptionalNoDefaultLiteralAbsentFmt::encode_field(&mut out, scratch.as_mut_slice(), &None::<NoDefaultAbsentValue>).unwrap();
             total - out.len()
         };
         assert_eq!(&output[..literal_none], b"NONE");
         let mut input = &output[..literal_none];
         assert_eq!(
-            OptionalNoDefaultLiteralAbsentFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap(),
-            None
+            OptionalNoDefaultLiteralAbsentFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap(),
+            None::<NoDefaultAbsentValue>
         );
         assert!(input.is_empty());
     }
@@ -1273,7 +1313,7 @@ mod tests {
             third: "WXYZ".into(),
         };
         let mut out = output.as_mut_slice();
-        let error = DelimitedSlotsFmt::encode(&mut out, scratch.as_mut_slice(), &invalid).unwrap_err();
+        let error = DelimitedSlotsFmt::encode_field(&mut out, scratch.as_mut_slice(), &invalid).unwrap_err();
         assert_eq!(error.kind, Error::Invalid);
         assert_eq!(error.path(), [crate::PathSegment::Field("first")]);
         assert!(!error.is_truncated());
@@ -1288,7 +1328,7 @@ mod tests {
             tail: "34".into(),
         };
         let mut out = output.as_mut_slice();
-        let error = NestedConcatFmt::encode(&mut out, scratch.as_mut_slice(), &nested).unwrap_err();
+        let error = NestedConcatFmt::encode_field(&mut out, scratch.as_mut_slice(), &nested).unwrap_err();
         assert_eq!(error.kind, Error::InvalidValueLength);
         assert_eq!(error.path(), [crate::PathSegment::Field("inner"), crate::PathSegment::Field("c")]);
         assert!(!error.is_truncated());
@@ -1323,14 +1363,14 @@ mod tests {
             let total = output.len();
             let encoded = {
                 let mut out_ptr = output.as_mut_slice();
-                NestedConcatFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &value).map(|_| total - out_ptr.len())
+                NestedConcatFmt::encode_field(&mut out_ptr, scratch.as_mut_slice(), &value).map(|_| total - out_ptr.len())
             };
             if let Some(expected) = expected {
                 let encoded = encoded.unwrap();
                 assert_eq!(&output[..encoded], expected);
                 let mut input = &output[..encoded];
                 let mut decode_scratch = [0u8; 32];
-                let decoded = NestedConcatFmt::decode(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
+                let decoded = NestedConcatFmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
                 assert_eq!(decoded, value);
                 assert!(input.is_empty());
             } else {
@@ -1343,11 +1383,11 @@ mod tests {
     fn test_borrowed_struct_decode() {
         fn roundtrip<T, F>(value: &T, output: &mut [u8], scratch: &mut [u8]) -> usize
         where
-            F: CompositeFmt<T>,
+            F: FieldEncode<T>,
         {
             let total = output.len();
             let mut out = output;
-            F::encode(&mut out, scratch, value).map(|_| total - out.len()).unwrap()
+            F::encode_field(&mut out, scratch, value).map(|_| total - out.len()).unwrap()
         }
 
         let concat = BorrowedConcat {
@@ -1379,7 +1419,7 @@ mod tests {
         let mut input = &output[..used];
         let mut decode_scratch = [0u8; 96];
         let scratch_start = decode_scratch.as_ptr();
-        let decoded = BorrowedConcatFmt::decode(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
+        let decoded = BorrowedConcatFmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
         assert_eq!(decoded, concat);
         assert!(input.is_empty());
         assert_eq!(decoded.ascii.as_ptr(), output.as_ptr());
@@ -1392,19 +1432,19 @@ mod tests {
 
         let used = roundtrip::<_, BorrowedDelimitedFmt>(&delimited, output.as_mut_slice(), scratch.as_mut_slice());
         let mut input = &output[..used];
-        let decoded = BorrowedDelimitedFmt::decode(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
+        let decoded = BorrowedDelimitedFmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
         assert_eq!(decoded, delimited);
         assert!(input.is_empty());
 
         let used = roundtrip::<_, BorrowedBitmapFmt>(&bitmap, output.as_mut_slice(), scratch.as_mut_slice());
         let mut input = &output[..used];
-        let decoded = BorrowedBitmapFmt::decode(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
+        let decoded = BorrowedBitmapFmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
         assert_eq!(decoded, bitmap);
         assert!(input.is_empty());
 
         let used = roundtrip::<_, BorrowedTlvFmt>(&tlv, output.as_mut_slice(), scratch.as_mut_slice());
         let mut input = &output[..used];
-        let decoded = BorrowedTlvFmt::decode(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
+        let decoded = BorrowedTlvFmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
         assert_eq!(decoded, tlv);
         assert!(input.is_empty());
     }
@@ -1425,13 +1465,13 @@ mod tests {
         let total = output.len();
         let encoded = {
             let mut out_ptr = output.as_mut_slice();
-            FramedConcatFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &value).map(|_| total - out_ptr.len())
+            FramedConcatFmt::encode_field(&mut out_ptr, scratch.as_mut_slice(), &value).map(|_| total - out_ptr.len())
         }
         .unwrap();
         assert_eq!(&output[..encoded], b"121212345678ABCD34");
         let mut input = &output[..encoded];
         let mut decode_scratch = [0u8; 64];
-        let decoded = FramedConcatFmt::decode(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
+        let decoded = FramedConcatFmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
         assert_eq!(decoded, value);
         assert!(input.is_empty());
     }
@@ -1452,20 +1492,20 @@ mod tests {
         let total = output.len();
         let encoded = {
             let mut out_ptr = output.as_mut_slice();
-            FramedHexConcatFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &value).map(|_| total - out_ptr.len())
+            FramedHexConcatFmt::encode_field(&mut out_ptr, scratch.as_mut_slice(), &value).map(|_| total - out_ptr.len())
         }
         .unwrap();
         assert_eq!(&output[..encoded], b"123424313233343536373841424344");
         let mut input = &output[..encoded];
         let mut decode_scratch = [0u8; 64];
-        let decoded = FramedHexConcatFmt::decode(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
+        let decoded = FramedHexConcatFmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
         assert_eq!(decoded, value);
         assert!(input.is_empty());
     }
 
     fn check_trailing_length_frame<F>()
     where
-        F: for<'de> CompositeFmt<TrailingLengthData, Decoded<'de> = TrailingLengthData>,
+        F: FieldEncode<TrailingLengthData> + for<'de> FieldDecode<'de, TrailingLengthData>,
     {
         let mut output = [0u8; 32];
         let mut scratch = [0u8; 64];
@@ -1506,14 +1546,14 @@ mod tests {
             let total = output.len();
             let encoded = {
                 let mut out = output.as_mut_slice();
-                F::encode(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
+                F::encode_field(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
             }
             .unwrap();
             assert_eq!(&output[..encoded], expected);
 
             output[encoded..encoded + 4].copy_from_slice(b"TAIL");
             let mut input = &output[..encoded + 4];
-            let decoded = F::decode(&mut input, &mut scratch.as_mut_slice()).unwrap();
+            let decoded = F::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap();
             assert_eq!(decoded, value);
             assert_eq!(input, b"TAIL");
         }
@@ -1528,7 +1568,7 @@ mod tests {
             (b"0", Error::UnexpectedEof),
         ] {
             let mut input = invalid;
-            assert_eq!(error_kind(F::decode(&mut input, &mut scratch.as_mut_slice())), Err(error));
+            assert_eq!(error_kind(F::decode_field(&mut input, &mut scratch.as_mut_slice())), Err(error));
         }
     }
 
@@ -1566,7 +1606,7 @@ mod tests {
                 copy_bytes(&mut out, b"XY").unwrap();
                 let mut input = &output[..26];
                 assert_eq!(
-                    error_kind(Format::decode(&mut input, &mut &mut scratch[..])),
+                    error_kind(Format::decode_field(&mut input, &mut &mut scratch[..])),
                     Err(Error::Invalid),
                     "field {id}"
                 );
@@ -1581,11 +1621,11 @@ mod tests {
             };
             let used = {
                 let mut out = output.as_mut_slice();
-                Format::encode(&mut out, &mut scratch, &value).unwrap();
+                Format::encode_field(&mut out, &mut scratch, &value).unwrap();
                 32 - out.len()
             };
             let mut input = &output[..used];
-            assert_eq!(Format::decode(&mut input, &mut &mut scratch[..]).unwrap(), value);
+            assert_eq!(Format::decode_field(&mut input, &mut &mut scratch[..]).unwrap(), value);
             assert!(input.is_empty());
         }
     }
@@ -1601,13 +1641,13 @@ mod tests {
         let total = output.len();
         let encoded = {
             let mut out_ptr = output.as_mut_slice();
-            LocalBitmapDataFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &value).map(|_| total - out_ptr.len())
+            LocalBitmapDataFmt::encode_field(&mut out_ptr, scratch.as_mut_slice(), &value).map(|_| total - out_ptr.len())
         }
         .unwrap();
         assert_eq!(&output[..encoded], b"HEAD\x60\x00\x00\x0012ABCD");
         let mut input = &output[..encoded];
         let mut decode_scratch = [0u8; 32];
-        let decoded = LocalBitmapDataFmt::decode(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
+        let decoded = LocalBitmapDataFmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
         assert_eq!(decoded, value);
         assert!(input.is_empty());
     }
@@ -1633,11 +1673,11 @@ mod tests {
             let total = output.len();
             let used = {
                 let mut out_ptr = output.as_mut_slice();
-                BitmapNoDefaultFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &value).map(|_| total - out_ptr.len())
+                BitmapNoDefaultFmt::encode_field(&mut out_ptr, scratch.as_mut_slice(), &value).map(|_| total - out_ptr.len())
             }
             .unwrap();
             let mut input = &output[..used];
-            let decoded = BitmapNoDefaultFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap();
+            let decoded = BitmapNoDefaultFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap();
             assert_eq!(decoded, value);
             assert!(input.is_empty());
         }
@@ -1666,14 +1706,14 @@ mod tests {
             let total = output.len();
             let encoded = {
                 let mut out_ptr = output.as_mut_slice();
-                SerdeScalarBitmapDataFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &value).map(|_| total - out_ptr.len())
+                SerdeScalarBitmapDataFmt::encode_field(&mut out_ptr, scratch.as_mut_slice(), &value).map(|_| total - out_ptr.len())
             }
             .unwrap();
             assert_eq!(&output[..encoded], expected);
 
             let mut input = &output[..encoded];
             let mut decode_scratch = [0u8; 32];
-            let decoded = SerdeScalarBitmapDataFmt::decode(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
+            let decoded = SerdeScalarBitmapDataFmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
             assert_eq!(decoded, value);
             assert!(input.is_empty());
         }
@@ -1702,14 +1742,14 @@ mod tests {
             let total = output.len();
             let encoded = {
                 let mut out_ptr = output.as_mut_slice();
-                ManualScalarBitmapDataFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &value).map(|_| total - out_ptr.len())
+                ManualScalarBitmapDataFmt::encode_field(&mut out_ptr, scratch.as_mut_slice(), &value).map(|_| total - out_ptr.len())
             }
             .unwrap();
             assert_eq!(&output[..encoded], expected);
 
             let mut input = &output[..encoded];
             let mut decode_scratch = [0u8; 32];
-            let decoded = ManualScalarBitmapDataFmt::decode(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
+            let decoded = ManualScalarBitmapDataFmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
             assert_eq!(decoded, value);
             assert!(input.is_empty());
         }
@@ -1717,20 +1757,19 @@ mod tests {
 
     fn assert_field_syntax_roundtrip<F>(value: &FieldSyntaxRecord)
     where
-        F: CompositeFmt<FieldSyntaxRecord>,
-        for<'de> F::Decoded<'de>: core::fmt::Debug + PartialEq<FieldSyntaxRecord>,
+        F: FieldEncode<FieldSyntaxRecord> + for<'de> FieldDecode<'de, FieldSyntaxRecord>,
     {
         let mut output = [0u8; 128];
         let mut scratch = [0u8; 128];
         let total = output.len();
         let used = {
             let mut out_ptr = output.as_mut_slice();
-            F::encode(&mut out_ptr, scratch.as_mut_slice(), value).map(|_| total - out_ptr.len())
+            F::encode_field(&mut out_ptr, scratch.as_mut_slice(), value).map(|_| total - out_ptr.len())
         }
         .unwrap();
         let mut input = &output[..used];
         let mut decode_scratch = [0u8; 128];
-        let decoded = F::decode(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
+        let decoded: FieldSyntaxRecord = F::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
         assert_eq!(&decoded, value);
         assert!(input.is_empty());
     }
@@ -1808,7 +1847,7 @@ mod tests {
                 let mut output = [0u8; 128];
                 let mut scratch = [0u8; 128];
                 let mut out_ptr = output.as_mut_slice();
-                FieldSyntaxConcatFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &tail_gap)
+                FieldSyntaxConcatFmt::encode_field(&mut out_ptr, scratch.as_mut_slice(), &tail_gap)
             }),
             Err(Error::Invalid)
         );
@@ -1822,14 +1861,13 @@ mod tests {
         let total = output.len();
         let encoded = {
             let mut out_ptr = output.as_mut_slice();
-            <DirectScalar<A4, &str> as CompositeFmt<&str>>::encode(&mut out_ptr, scratch.as_mut_slice(), &value)
-                .map(|_| total - out_ptr.len())
+            <A4 as FieldEncode<&str>>::encode_field(&mut out_ptr, scratch.as_mut_slice(), &value).map(|_| total - out_ptr.len())
         }
         .unwrap();
         assert_eq!(&output[..encoded], b"ABCD");
 
         let mut input = &output[..encoded];
-        let decoded = <DirectScalar<A4, &str> as CompositeFmt<&str>>::decode(&mut input, &mut scratch.as_mut_slice()).unwrap();
+        let decoded = <A4 as FieldDecode<'_, &str>>::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap();
         assert_eq!(decoded, value);
         assert!(input.is_empty());
     }
@@ -1844,7 +1882,7 @@ mod tests {
         let serde_len = {
             let total = serde_output.len();
             let mut out_ptr = serde_output.as_mut_slice();
-            SerdeDualStanDataFmt::encode(&mut out_ptr, serde_scratch.as_mut_slice(), &serde_value).map(|_| total - out_ptr.len())
+            SerdeDualStanDataFmt::encode_field(&mut out_ptr, serde_scratch.as_mut_slice(), &serde_value).map(|_| total - out_ptr.len())
         }
         .unwrap();
         assert_eq!(&serde_output[..serde_len], &b"\x00\x20\x00\x00\x00\x00\x00\x0017"[..]);
@@ -1854,20 +1892,20 @@ mod tests {
         let manual_len = {
             let total = manual_output.len();
             let mut out_ptr = manual_output.as_mut_slice();
-            ManualDualStanDataFmt::encode(&mut out_ptr, manual_scratch.as_mut_slice(), &manual_value).map(|_| total - out_ptr.len())
+            ManualDualStanDataFmt::encode_field(&mut out_ptr, manual_scratch.as_mut_slice(), &manual_value).map(|_| total - out_ptr.len())
         }
         .unwrap();
         assert_eq!(&manual_output[..manual_len], &b"\x00\x20\x00\x00\x00\x00\x00\x0027"[..]);
 
         let mut serde_input = &serde_output[..serde_len];
         let mut serde_decode_scratch = [0u8; 16];
-        let serde_decoded = SerdeDualStanDataFmt::decode(&mut serde_input, &mut serde_decode_scratch.as_mut_slice()).unwrap();
+        let serde_decoded = SerdeDualStanDataFmt::decode_field(&mut serde_input, &mut serde_decode_scratch.as_mut_slice()).unwrap();
         assert_eq!(serde_decoded, serde_value);
         assert!(serde_input.is_empty());
 
         let mut manual_input = &manual_output[..manual_len];
         let mut manual_decode_scratch = [0u8; 16];
-        let manual_decoded = ManualDualStanDataFmt::decode(&mut manual_input, &mut manual_decode_scratch.as_mut_slice()).unwrap();
+        let manual_decoded = ManualDualStanDataFmt::decode_field(&mut manual_input, &mut manual_decode_scratch.as_mut_slice()).unwrap();
         assert_eq!(manual_decoded, manual_value);
         assert!(manual_input.is_empty());
     }
@@ -1880,15 +1918,15 @@ mod tests {
         for encode in [
             error_kind({
                 let mut out_ptr = output.as_mut_slice();
-                BoolScalarDataFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &BoolScalarData { value: true })
+                BoolScalarDataFmt::encode_field(&mut out_ptr, scratch.as_mut_slice(), &BoolScalarData { value: true })
             }),
             error_kind({
                 let mut out_ptr = output.as_mut_slice();
-                BytesScalarDataFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &BytesScalarData { value: vec![0x31, 0x32] })
+                BytesScalarDataFmt::encode_field(&mut out_ptr, scratch.as_mut_slice(), &BytesScalarData { value: vec![0x31, 0x32] })
             }),
             error_kind({
                 let mut out_ptr = output.as_mut_slice();
-                StructScalarDataFmt::encode(
+                StructScalarDataFmt::encode_field(
                     &mut out_ptr,
                     scratch.as_mut_slice(),
                     &StructScalarData {
@@ -1901,9 +1939,17 @@ mod tests {
         }
 
         for decode in [
-            error_kind(BoolScalarDataFmt::decode(&mut b"12".as_slice(), &mut scratch.as_mut_slice())).map(|_| ()),
-            error_kind(BytesScalarDataFmt::decode(&mut b"ABCD".as_slice(), &mut scratch.as_mut_slice())).map(|_| ()),
-            error_kind(StructScalarDataFmt::decode(&mut b"ABCD".as_slice(), &mut scratch.as_mut_slice())).map(|_| ()),
+            error_kind(BoolScalarDataFmt::decode_field(&mut b"12".as_slice(), &mut scratch.as_mut_slice())).map(|_| ()),
+            error_kind(BytesScalarDataFmt::decode_field(
+                &mut b"ABCD".as_slice(),
+                &mut scratch.as_mut_slice(),
+            ))
+            .map(|_| ()),
+            error_kind(StructScalarDataFmt::decode_field(
+                &mut b"ABCD".as_slice(),
+                &mut scratch.as_mut_slice(),
+            ))
+            .map(|_| ()),
         ] {
             assert_eq!(decode, Err(Error::Internal));
         }
@@ -1920,13 +1966,13 @@ mod tests {
             let total = output.len();
             let encoded = {
                 let mut out_ptr = output.as_mut_slice();
-                VariantDataFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &value).map(|_| total - out_ptr.len())
+                VariantDataFmt::encode_field(&mut out_ptr, scratch.as_mut_slice(), &value).map(|_| total - out_ptr.len())
             }
             .unwrap();
             assert_eq!(&output[..encoded], expected);
             let mut input = &output[..encoded];
             let mut decode_scratch = [0u8; 32];
-            let decoded = VariantDataFmt::decode(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
+            let decoded = VariantDataFmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
             assert_eq!(decoded, value);
             assert!(input.is_empty());
         }
@@ -1944,26 +1990,26 @@ mod tests {
         let total = output.len();
         let used = {
             let mut out = output.as_mut_slice();
-            RetainedVariantRecordFmt::encode(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
+            RetainedVariantRecordFmt::encode_field(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
         }
         .unwrap();
         assert_eq!(&output[..used], b"AXBBWXYZDONE");
 
         let mut input = &output[..used];
         let mut decode_scratch = [0u8; 32];
-        let decoded = RetainedVariantRecordFmt::decode(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
+        let decoded = RetainedVariantRecordFmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
         assert_eq!(decoded, value);
         assert!(input.is_empty());
 
         let used = {
             let mut out = output.as_mut_slice();
-            DelimitedRetainedVariantRecordFmt::encode(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
+            DelimitedRetainedVariantRecordFmt::encode_field(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
         }
         .unwrap();
         assert_eq!(&output[..used], b"AXBB|WXYZ|DONE");
 
         let mut input = &output[..used];
-        let decoded = DelimitedRetainedVariantRecordFmt::decode(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
+        let decoded = DelimitedRetainedVariantRecordFmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
         assert_eq!(decoded, value);
         assert!(input.is_empty());
 
@@ -1990,13 +2036,13 @@ mod tests {
         };
         let mut out = output.as_mut_slice();
         assert_eq!(
-            error_kind(RetainedVariantRecordFmt::encode(&mut out, scratch.as_mut_slice(), &mismatch)),
+            error_kind(RetainedVariantRecordFmt::encode_field(&mut out, scratch.as_mut_slice(), &mismatch)),
             Err(Error::Invalid)
         );
 
         let mut unknown = &b"AXZZWXYZDONE"[..];
         assert_eq!(
-            error_kind(RetainedVariantRecordFmt::decode(&mut unknown, &mut scratch.as_mut_slice())),
+            error_kind(RetainedVariantRecordFmt::decode_field(&mut unknown, &mut scratch.as_mut_slice())),
             Err(Error::Invalid)
         );
 
@@ -2006,7 +2052,7 @@ mod tests {
             suffix: "DONE".into(),
         };
         let separator_inside = std::panic::catch_unwind(|| {
-            DelimitedRetainedVariantRecordFmt::encode(&mut &mut [0u8; 32][..], &mut [0u8; 32], &with_separator)
+            DelimitedRetainedVariantRecordFmt::encode_field(&mut &mut [0u8; 32][..], &mut [0u8; 32], &with_separator)
         });
         assert_eq!(separator_inside.is_err(), cfg!(debug_assertions));
     }
@@ -2020,12 +2066,12 @@ mod tests {
         let used = {
             let total = output.len();
             let mut out = output.as_mut_slice();
-            BorrowedVariantDataFmt::encode(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
+            BorrowedVariantDataFmt::encode_field(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
         }
         .unwrap();
         assert_eq!(&output[..used], b"AXBBWXYZ");
         let mut input = &output[..used];
-        let decoded = BorrowedVariantDataFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap();
+        let decoded = BorrowedVariantDataFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap();
         assert_eq!(decoded, value);
         assert!(input.is_empty());
     }
@@ -2063,7 +2109,7 @@ mod tests {
             let total = output.len();
             let used = {
                 let mut out_ptr = output.as_mut_slice();
-                Auth1100Fmt::encode(&mut out_ptr, scratch.as_mut_slice(), &value).unwrap();
+                Auth1100Fmt::encode_field(&mut out_ptr, scratch.as_mut_slice(), &value).unwrap();
                 total - out_ptr.len()
             };
 
@@ -2080,7 +2126,7 @@ mod tests {
 
             let mut input = &output[..used];
             let mut decode_scratch = [0u8; 128];
-            let decoded = Auth1100Fmt::decode(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
+            let decoded = Auth1100Fmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
             assert_eq!(decoded, value);
             assert!(input.is_empty());
         }
@@ -2102,7 +2148,7 @@ mod tests {
         let total = output.len();
         let used = {
             let mut out_ptr = output.as_mut_slice();
-            TlvDataFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &value).unwrap();
+            TlvDataFmt::encode_field(&mut out_ptr, scratch.as_mut_slice(), &value).unwrap();
             total - out_ptr.len()
         };
 
@@ -2112,7 +2158,7 @@ mod tests {
         let mut input = &with_unknown[..];
         let mut decode_scratch = [0u8; 64];
         assert_eq!(
-            error_kind(TlvDataFmt::decode(&mut input, &mut decode_scratch.as_mut_slice())),
+            error_kind(TlvDataFmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice())),
             Err(Error::Invalid)
         );
     }
@@ -2122,7 +2168,7 @@ mod tests {
         let mut dup = &b"\x59\x04ABCD\x59\x04WXYZ"[..];
         let mut scratch = [0u8; 32];
         assert_eq!(
-            error_kind(TlvDataFmt::decode(&mut dup, &mut scratch.as_mut_slice())),
+            error_kind(TlvDataFmt::decode_field(&mut dup, &mut scratch.as_mut_slice())),
             Err(Error::Invalid)
         );
 
@@ -2143,7 +2189,7 @@ mod tests {
         let total = output.len();
         let used = {
             let mut out_ptr = output.as_mut_slice();
-            WithBitmapTlvFmt::encode(&mut out_ptr, encode_scratch.as_mut_slice(), &value).unwrap();
+            WithBitmapTlvFmt::encode_field(&mut out_ptr, encode_scratch.as_mut_slice(), &value).unwrap();
             total - out_ptr.len()
         };
 
@@ -2153,7 +2199,7 @@ mod tests {
 
         let mut input = &output[..used];
         let mut decode_scratch = [0u8; 128];
-        let decoded = WithBitmapTlvFmt::decode(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
+        let decoded = WithBitmapTlvFmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
         assert_eq!(decoded, value);
         assert!(input.is_empty());
     }
@@ -2163,7 +2209,7 @@ mod tests {
         let bytes = b"\x59\x04ABCD\x9F\x02\x02\x12\x34";
         let mut input = &bytes[..];
         let mut scratch = [0u8; 64];
-        let decoded = TlvWithExtrasFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap();
+        let decoded = TlvWithExtrasFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap();
         assert!(input.is_empty());
         assert_eq!(decoded.t59_code, "ABCD");
         assert_eq!(decoded.extras.get("t9F02_unknown").map(String::as_str), Some("1234"));
@@ -2175,7 +2221,7 @@ mod tests {
         let total = output.len();
         let used = {
             let mut out_ptr = output.as_mut_slice();
-            TlvWithExtrasFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &decoded).unwrap();
+            TlvWithExtrasFmt::encode_field(&mut out_ptr, scratch.as_mut_slice(), &decoded).unwrap();
             total - out_ptr.len()
         };
         assert_eq!(&output[..used], bytes);
@@ -2184,10 +2230,10 @@ mod tests {
     #[test]
     fn test_named_ber_padding_is_local_and_opt_in() {
         crate::ber_tlv_format! { struct Padded for TlvData, allow_zero_padding = true {
-            "59" => t59_code: A4, "DF23" => tdf23_tail: Option<Composite<FixedTailFmt>>,
+            "59" => t59_code: A4, "DF23" => tdf23_tail: Option<FixedTailFmt>,
         } }
         crate::ber_tlv_format! { struct Strict for TlvData, allow_zero_padding = false {
-            "59" => t59_code: A4, "DF23" => tdf23_tail: Option<Composite<FixedTailFmt>>,
+            "59" => t59_code: A4, "DF23" => tdf23_tail: Option<FixedTailFmt>,
         } }
         crate::ber_tlv_format! { struct PaddedExtras for TlvWithExtras, allow_zero_padding = true {
             extras: extras, "59" => t59_code: A4,
@@ -2208,37 +2254,40 @@ mod tests {
                 t59_code: "ABCD".into(),
                 tdf23_tail: None,
             };
-            assert_eq!(Padded::decode(&mut &*bytes, &mut &mut [0; 64][..]).unwrap(), expected);
-            assert_eq!(error_kind(Strict::decode(&mut &*bytes, &mut &mut [0; 64][..])), Err(Error::Invalid));
+            assert_eq!(Padded::decode_field(&mut &*bytes, &mut &mut [0; 64][..]).unwrap(), expected);
             assert_eq!(
-                error_kind(TlvDataFmt::decode(&mut &*bytes, &mut &mut [0; 64][..])),
+                error_kind(Strict::decode_field(&mut &*bytes, &mut &mut [0; 64][..])),
                 Err(Error::Invalid)
             );
             assert_eq!(
-                BorrowedFmt::decode(&mut &*bytes, &mut &mut [][..]).unwrap(),
+                error_kind(TlvDataFmt::decode_field(&mut &*bytes, &mut &mut [0; 64][..])),
+                Err(Error::Invalid)
+            );
+            assert_eq!(
+                BorrowedFmt::decode_field(&mut &*bytes, &mut &mut [][..]).unwrap(),
                 Borrowed { code: "ABCD" }
             );
             let mut output = [0; 16];
             let mut out = output.as_mut_slice();
-            Padded::encode(&mut out, &mut [0; 8], &expected).unwrap();
+            Padded::encode_field(&mut out, &mut [0; 8], &expected).unwrap();
             let used = 16 - out.len();
             assert_eq!(&output[..used], b"\x59\x04ABCD");
         }
         let wire = b"\0\x59\x04ABCD\0\xFF\x01\x02\0\xFF\0";
         let extras = BTreeMap::from([("tFF01_unknown".into(), "00FF".into())]);
         assert_eq!(
-            PaddedExtras::decode(&mut wire.as_slice(), &mut &mut [0; 64][..]).unwrap(),
+            PaddedExtras::decode_field(&mut wire.as_slice(), &mut &mut [0; 64][..]).unwrap(),
             TlvWithExtras {
                 t59_code: "ABCD".into(),
                 extras: extras.clone()
             }
         );
         assert_eq!(
-            BorrowedExtrasFmt::decode(&mut wire.as_slice(), &mut &mut [0; 64][..]).unwrap(),
+            BorrowedExtrasFmt::decode_field(&mut wire.as_slice(), &mut &mut [0; 64][..]).unwrap(),
             BorrowedExtras { code: "ABCD", extras }
         );
         assert_eq!(
-            error_kind(Padded::decode(&mut b"\0\0".as_slice(), &mut &mut [][..])),
+            error_kind(Padded::decode_field(&mut b"\0\0".as_slice(), &mut &mut [][..])),
             Err(Error::Invalid)
         );
 
@@ -2246,15 +2295,15 @@ mod tests {
         struct Outer {
             inner: TlvData,
         }
-        crate::ber_tlv_format! { struct StrictInner for Outer, allow_zero_padding = true { "E1" => inner: Composite<TlvDataFmt>, } }
-        crate::ber_tlv_format! { struct PaddedInner for Outer, allow_zero_padding = true { "E1" => inner: Composite<Padded>, } }
+        crate::ber_tlv_format! { struct StrictInner for Outer, allow_zero_padding = true { "E1" => inner: TlvDataFmt, } }
+        crate::ber_tlv_format! { struct PaddedInner for Outer, allow_zero_padding = true { "E1" => inner: Padded, } }
         let nested = b"\0\xE1\x07\0\x59\x04ABCD\0";
         assert_eq!(
-            error_kind(StrictInner::decode(&mut nested.as_slice(), &mut &mut [0; 64][..])),
+            error_kind(StrictInner::decode_field(&mut nested.as_slice(), &mut &mut [0; 64][..])),
             Err(Error::Invalid)
         );
         assert_eq!(
-            PaddedInner::decode(&mut nested.as_slice(), &mut &mut [0; 64][..]).unwrap(),
+            PaddedInner::decode_field(&mut nested.as_slice(), &mut &mut [0; 64][..]).unwrap(),
             Outer {
                 inner: TlvData {
                     t59_code: "ABCD".into(),
@@ -2288,9 +2337,9 @@ mod tests {
             };
             let expected = CompositeError::from(Error::Invalid).with_field("extras");
             // Values are staged in scratch before their head is written.
-            assert_eq!(Fmt::encode(&mut [0; 32].as_mut_slice(), &mut [0; 8], &value), Err(expected));
+            assert_eq!(Fmt::encode_field(&mut [0; 32].as_mut_slice(), &mut [0; 8], &value), Err(expected));
             assert_eq!(
-                BorrowedFmt::encode(&mut [0; 32].as_mut_slice(), &mut [0; 8], &borrowed),
+                BorrowedFmt::encode_field(&mut [0; 32].as_mut_slice(), &mut [0; 8], &borrowed),
                 Err(expected)
             );
         }
@@ -2300,7 +2349,7 @@ mod tests {
     fn test_ber_tlv_extras_repeated_unknown_tag_keeps_the_last_in_a_map() {
         let bytes = b"\x59\x04ABCD\x9F\x02\x01\x01\x9F\x02\x01\x02";
         let mut scratch = [0u8; 64];
-        let decoded = TlvWithExtrasFmt::decode(&mut &bytes[..], &mut scratch.as_mut_slice()).unwrap();
+        let decoded = TlvWithExtrasFmt::decode_field(&mut &bytes[..], &mut scratch.as_mut_slice()).unwrap();
         assert_eq!(decoded.extras, BTreeMap::from([("t9F02_unknown".to_owned(), "02".to_owned())]));
     }
 
@@ -2318,19 +2367,19 @@ mod tests {
         let mut scratch = [0u8; 64];
         let mut out_ptr = output.as_mut_slice();
         assert_eq!(
-            error_kind(TlvWithExtrasFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &invalid_key)),
+            error_kind(TlvWithExtrasFmt::encode_field(&mut out_ptr, scratch.as_mut_slice(), &invalid_key)),
             Err(Error::Invalid)
         );
         let mut out_ptr = output.as_mut_slice();
         assert_eq!(
-            error_kind(TlvWithExtrasFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &invalid_value)),
+            error_kind(TlvWithExtrasFmt::encode_field(&mut out_ptr, scratch.as_mut_slice(), &invalid_value)),
             Err(Error::Invalid)
         );
     }
 
     #[test]
     fn test_ber_tlv_list_roundtrip_preserves_order_and_duplicates() {
-        type TlvListFmt = BerTlvList<Vec<(String, String)>>;
+        type TlvListFmt = BerTlvList;
 
         let value = vec![
             ("59".to_owned(), "ABCD".to_owned()),
@@ -2342,12 +2391,12 @@ mod tests {
         let used = {
             let total = output.len();
             let mut out = output.as_mut_slice();
-            TlvListFmt::encode(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
+            TlvListFmt::encode_field(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
         }
         .unwrap();
 
         let mut input = &output[..used];
-        let decoded = TlvListFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap();
+        let decoded: Vec<(String, String)> = TlvListFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap();
         assert_eq!(decoded, value);
         assert!(input.is_empty());
     }
@@ -2358,12 +2407,14 @@ mod tests {
         // parsed into an owned value before the next, so one entry's worth is enough.
         let wire: Vec<u8> = (0..10u8).flat_map(|i| [0x9F, i + 1, 0x04, 0xDE, 0xAD, 0xBE, 0xEF]).collect();
         let mut scratch = [0u8; 21];
-        let list = BerTlvList::<Vec<(String, String)>>::decode(&mut wire.as_slice(), &mut &mut scratch[..]).unwrap();
+        let list =
+            <BerTlvList as FieldDecode<'_, Vec<(String, String)>>>::decode_field(&mut wire.as_slice(), &mut &mut scratch[..]).unwrap();
         assert_eq!(list.len(), 10);
-        let map = BerTlvList::<BTreeMap<String, String>>::decode(&mut wire.as_slice(), &mut &mut scratch[..]).unwrap();
+        let map =
+            <BerTlvList as FieldDecode<'_, BTreeMap<String, String>>>::decode_field(&mut wire.as_slice(), &mut &mut scratch[..]).unwrap();
         assert_eq!(map.len(), 10);
         let with_known = [&b"\x59\x04ABCD"[..], &wire].concat();
-        let extras = TlvWithExtrasFmt::decode(&mut with_known.as_slice(), &mut &mut scratch[..]).unwrap();
+        let extras = TlvWithExtrasFmt::decode_field(&mut with_known.as_slice(), &mut &mut scratch[..]).unwrap();
         assert_eq!(extras.extras.len(), 10);
     }
 
@@ -2373,8 +2424,8 @@ mod tests {
         #[serde(transparent)]
         struct TlvSeqWrapper(Vec<(String, String)>);
 
-        type TlvMapFmt = BerTlvList<BTreeMap<String, String>>;
-        type TlvSeqWrapperFmt = BerTlvList<TlvSeqWrapper>;
+        type TlvMapFmt = BerTlvList;
+        type TlvSeqWrapperFmt = BerTlvList;
 
         let map = BTreeMap::from([("59".to_owned(), "ABCD".to_owned()), ("9F02".to_owned(), "1234".to_owned())]);
         let wrapper = TlvSeqWrapper(vec![
@@ -2390,31 +2441,31 @@ mod tests {
         let used = {
             let total = output.len();
             let mut out = output.as_mut_slice();
-            TlvMapFmt::encode(&mut out, scratch.as_mut_slice(), &map).map(|_| total - out.len())
+            TlvMapFmt::encode_field(&mut out, scratch.as_mut_slice(), &map).map(|_| total - out.len())
         }
         .unwrap();
         assert_eq!(&output[..used], map_bytes);
         let mut input = map_bytes.as_slice();
-        let decoded = TlvMapFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap();
+        let decoded: BTreeMap<String, String> = TlvMapFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap();
         assert_eq!(decoded, map);
         assert!(input.is_empty());
 
         let used = {
             let total = output.len();
             let mut out = output.as_mut_slice();
-            TlvSeqWrapperFmt::encode(&mut out, scratch.as_mut_slice(), &wrapper).map(|_| total - out.len())
+            TlvSeqWrapperFmt::encode_field(&mut out, scratch.as_mut_slice(), &wrapper).map(|_| total - out.len())
         }
         .unwrap();
         assert_eq!(&output[..used], wrapper_bytes);
         let mut input = wrapper_bytes.as_slice();
-        let decoded = TlvSeqWrapperFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap();
+        let decoded: TlvSeqWrapper = TlvSeqWrapperFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap();
         assert_eq!(decoded, wrapper);
         assert!(input.is_empty());
     }
 
     #[test]
     fn test_ber_tlv_list_invalid_key_or_value_rejected_on_encode() {
-        type TlvListFmt = BerTlvList<Vec<(String, String)>>;
+        type TlvListFmt = BerTlvList;
 
         let invalid_key = vec![("bad".to_owned(), "1234".to_owned())];
         let invalid_value = vec![("9F02".to_owned(), "12fg".to_owned())];
@@ -2422,12 +2473,12 @@ mod tests {
         let mut scratch = [0u8; 64];
         let mut out = output.as_mut_slice();
         assert_eq!(
-            error_kind(TlvListFmt::encode(&mut out, scratch.as_mut_slice(), &invalid_key)),
+            error_kind(TlvListFmt::encode_field(&mut out, scratch.as_mut_slice(), &invalid_key)),
             Err(Error::Invalid)
         );
         let mut out = output.as_mut_slice();
         assert_eq!(
-            error_kind(TlvListFmt::encode(&mut out, scratch.as_mut_slice(), &invalid_value)),
+            error_kind(TlvListFmt::encode_field(&mut out, scratch.as_mut_slice(), &invalid_value)),
             Err(Error::Invalid)
         );
     }
@@ -2455,11 +2506,14 @@ mod tests {
             let used = {
                 let total = output.len();
                 let mut out = output.as_mut_slice();
-                TlvNoDefaultFmt::encode(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
+                TlvNoDefaultFmt::encode_field(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
             }
             .unwrap();
             let mut input = &output[..used];
-            assert_eq!(TlvNoDefaultFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap(), value);
+            assert_eq!(
+                TlvNoDefaultFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap(),
+                value
+            );
             assert!(input.is_empty());
         }
     }
@@ -2475,12 +2529,12 @@ mod tests {
         let used = {
             let total = output.len();
             let mut out = output.as_mut_slice();
-            TlvWithExtrasNoDefaultFmt::encode(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
+            TlvWithExtrasNoDefaultFmt::encode_field(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
         }
         .unwrap();
         let mut input = &output[..used];
         assert_eq!(
-            TlvWithExtrasNoDefaultFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap(),
+            TlvWithExtrasNoDefaultFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap(),
             value
         );
         assert!(input.is_empty());
@@ -2492,14 +2546,14 @@ mod tests {
 
         let mut input = b"1234".as_slice();
         assert_eq!(
-            UnionValueFmt::decode(&mut input, &mut scratch.as_mut_slice()),
+            UnionValueFmt::decode_field(&mut input, &mut scratch.as_mut_slice()),
             Ok(UnionValue::Known("1234".into()))
         );
         assert!(input.is_empty());
 
         let mut input = b"ABCD".as_slice();
         assert_eq!(
-            UnionValueFmt::decode(&mut input, &mut scratch.as_mut_slice()),
+            UnionValueFmt::decode_field(&mut input, &mut scratch.as_mut_slice()),
             Ok(UnionValue::Alpha("ABCD".into()))
         );
         assert!(input.is_empty());
@@ -2507,27 +2561,27 @@ mod tests {
         let mut input = b"12AB".as_slice();
         let mut exact_scratch = [0u8; 4];
         assert_eq!(
-            UnionValueFmt::decode(&mut input, &mut exact_scratch.as_mut_slice()),
+            UnionValueFmt::decode_field(&mut input, &mut exact_scratch.as_mut_slice()),
             Ok(UnionValue::Unknown("12AB".into()))
         );
         assert!(input.is_empty());
 
         let mut input = b"12".as_slice();
         assert_eq!(
-            UnionValueFmt::decode(&mut input, &mut scratch.as_mut_slice()),
+            UnionValueFmt::decode_field(&mut input, &mut scratch.as_mut_slice()),
             Ok(UnionValue::Unknown("12".into()))
         );
         assert!(input.is_empty());
 
         let mut input = b"12345".as_slice();
         assert_eq!(
-            RestUnionValueFmt::decode(&mut input, &mut scratch.as_mut_slice()),
+            RestUnionValueFmt::decode_field(&mut input, &mut scratch.as_mut_slice()),
             Ok(UnionValue::Unknown("12345".into()))
         );
         assert!(input.is_empty());
 
         let mut input = b"12".as_slice();
-        let error = ShortUnionValueFmt::decode(&mut input, &mut scratch.as_mut_slice()).unwrap_err();
+        let error = ShortUnionValueFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap_err();
         assert_eq!(error.kind, Error::UnexpectedEof);
         assert!(error.path().is_empty());
         assert_eq!(input, b"12");
@@ -2536,7 +2590,7 @@ mod tests {
         let used = {
             let total = output.len();
             let mut out = output.as_mut_slice();
-            UnionValueFmt::encode(&mut out, scratch.as_mut_slice(), &UnionValue::Known("1234".into())).unwrap();
+            UnionValueFmt::encode_field(&mut out, scratch.as_mut_slice(), &UnionValue::Known("1234".into())).unwrap();
             total - out.len()
         };
         assert_eq!(&output[..used], b"1234");
@@ -2544,21 +2598,21 @@ mod tests {
         let used = {
             let total = output.len();
             let mut out = output.as_mut_slice();
-            UnionValueFmt::encode(&mut out, scratch.as_mut_slice(), &UnionValue::Unknown("ABCD".into())).unwrap();
+            UnionValueFmt::encode_field(&mut out, scratch.as_mut_slice(), &UnionValue::Unknown("ABCD".into())).unwrap();
             total - out.len()
         };
         assert_eq!(&output[..used], b"ABCD");
 
         let mut input = b"1234".as_slice();
         assert_eq!(
-            BorrowedUnionValueFmt::decode(&mut input, &mut scratch.as_mut_slice()),
+            BorrowedUnionValueFmt::decode_field(&mut input, &mut scratch.as_mut_slice()),
             Ok(BorrowedUnionValue::Known("1234"))
         );
         assert!(input.is_empty());
 
         let mut input = b"\xC1\xC2\xC3\xC4".as_slice();
         assert_eq!(
-            BorrowedUnionValueFmt::decode(&mut input, &mut scratch.as_mut_slice()),
+            BorrowedUnionValueFmt::decode_field(&mut input, &mut scratch.as_mut_slice()),
             Ok(BorrowedUnionValue::Unknown("ABCD"))
         );
         assert!(input.is_empty());
@@ -2566,7 +2620,7 @@ mod tests {
         let used = {
             let total = output.len();
             let mut out = output.as_mut_slice();
-            BorrowedUnionValueFmt::encode(&mut out, scratch.as_mut_slice(), &BorrowedUnionValue::Unknown("ABCD")).unwrap();
+            BorrowedUnionValueFmt::encode_field(&mut out, scratch.as_mut_slice(), &BorrowedUnionValue::Unknown("ABCD")).unwrap();
             total - out.len()
         };
         assert_eq!(&output[..used], b"\xC1\xC2\xC3\xC4");
@@ -2575,7 +2629,9 @@ mod tests {
 mod enum_macros;
 mod wrappers;
 
+#[cfg(feature = "serde")]
 pub use scalar_serde::SerdeScalar;
+#[cfg(feature = "serde")]
 #[doc(hidden)]
 pub use scalar_serde::{decode_serde_scalar, encode_serde_scalar};
 
@@ -2608,12 +2664,6 @@ pub fn encode_delimiter(output: &mut &mut [u8], byte: u8) -> Result<(), Error> {
 #[inline(always)]
 pub fn wrap_composite_error<E: Into<CompositeError>>(error: E, field: &'static str) -> CompositeError {
     error.into().with_field(field)
-}
-
-#[inline(always)]
-#[doc(hidden)]
-pub fn encode_nested_value<T, F: CompositeFmt<T>>(value: &T, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), CompositeError> {
-    F::encode(output, scratch, value)
 }
 
 #[inline(always)]
@@ -2684,14 +2734,16 @@ pub fn should_retry_union(error: Error) -> bool {
     matches!(error, Error::Invalid | Error::UnexpectedEof)
 }
 
+/// Decode an owned value with a scratch reborrow the value does not outlive,
+/// so a failed trial leaves the arena untouched.
 #[inline(always)]
 #[doc(hidden)]
-pub fn decode_composite_value<'de, T, F>(input: &mut &'de [u8], scratch: &'de mut [u8]) -> Result<T, CompositeError>
+pub fn decode_owned_value<'de, T, F>(input: &mut &'de [u8], scratch: &'de mut [u8]) -> Result<T, CompositeError>
 where
-    F: CompositeFmt<T, Decoded<'de> = T>,
+    F: FieldDecode<'de, T>,
 {
     let mut scratch = scratch;
-    F::decode(input, &mut scratch)
+    F::decode_field(input, &mut scratch)
 }
 
 /// Encode through `encode`, then, in debug builds only, pass the bytes it wrote
@@ -2732,20 +2784,20 @@ where
 
 #[inline]
 #[doc(hidden)]
-pub fn encode_delimited_value<T, S: CompositeFmt<T>>(
+pub fn encode_delimited_value<T: ?Sized, F: FieldEncode<T>>(
     output: &mut &mut [u8],
     scratch: &mut [u8],
     value: &T,
     separator: Option<u8>,
 ) -> Result<(), CompositeError> {
     encode_delimited_segment(output, scratch, separator, |segment_out, nested_scratch| {
-        S::encode(segment_out, nested_scratch, value)
+        F::encode_field(segment_out, nested_scratch, value)
     })
 }
 
 #[inline]
 #[doc(hidden)]
-pub fn encode_delimited_context<T, C: ?Sized, S: ContextFmt<T, C>>(
+pub fn encode_delimited_context<T: ?Sized, C: ?Sized, F: ContextEncode<T, C>>(
     output: &mut &mut [u8],
     scratch: &mut [u8],
     context: &C,
@@ -2753,23 +2805,7 @@ pub fn encode_delimited_context<T, C: ?Sized, S: ContextFmt<T, C>>(
     separator: Option<u8>,
 ) -> Result<(), CompositeError> {
     encode_delimited_segment(output, scratch, separator, |segment_out, nested_scratch| {
-        S::encode_with(segment_out, nested_scratch, context, value)
-    })
-}
-
-#[inline]
-#[doc(hidden)]
-pub fn encode_delimited_serde_value<T, F: ScalarFmt>(
-    output: &mut &mut [u8],
-    scratch: &mut [u8],
-    value: &T,
-    separator: Option<u8>,
-) -> Result<(), CompositeError>
-where
-    T: ?Sized + serde::Serialize,
-{
-    encode_delimited_segment(output, scratch, separator, |segment_out, nested_scratch| {
-        encode_serde_scalar::<T, F>(value, segment_out, nested_scratch).map_err(CompositeError::from)
+        F::encode_with(segment_out, nested_scratch, context, value)
     })
 }
 
@@ -2805,32 +2841,18 @@ where
 
 #[inline]
 #[doc(hidden)]
-pub fn decode_delimited_value<'a, T, S: CompositeFmt<T>>(
-    segment: &'a [u8],
-    scratch: &mut &'a mut [u8],
-) -> Result<S::Decoded<'a>, CompositeError> {
-    decode_delimited_segment(segment, scratch, |input, scratch| S::decode(input, scratch))
+pub fn decode_delimited_value<'a, T, F: FieldDecode<'a, T>>(segment: &'a [u8], scratch: &mut &'a mut [u8]) -> Result<T, CompositeError> {
+    decode_delimited_segment(segment, scratch, |input, scratch| F::decode_field(input, scratch))
 }
 
 #[inline]
 #[doc(hidden)]
-pub fn decode_delimited_context<'a, T, C: ?Sized, S: ContextFmt<T, C>>(
+pub fn decode_delimited_context<'a, T, C: ?Sized, F: ContextDecode<'a, T, C>>(
     segment: &'a [u8],
     scratch: &mut &'a mut [u8],
     context: &C,
-) -> Result<S::Decoded<'a>, CompositeError> {
-    decode_delimited_segment(segment, scratch, |input, scratch| S::decode_with(input, scratch, context))
-}
-
-#[inline]
-#[doc(hidden)]
-pub fn decode_delimited_serde_value<'a, T, F: ScalarFmt>(segment: &'a [u8], scratch: &mut &'a mut [u8]) -> Result<T, CompositeError>
-where
-    T: serde::Deserialize<'a>,
-{
-    decode_delimited_segment(segment, scratch, |input, scratch| {
-        decode_serde_scalar::<T, F>(input, scratch).map_err(CompositeError::from)
-    })
+) -> Result<T, CompositeError> {
+    decode_delimited_segment(segment, scratch, |input, scratch| F::decode_with(input, scratch, context))
 }
 
 #[inline]
@@ -2858,13 +2880,24 @@ pub fn decode_delimited_literal<'a, F: ScalarFmt>(
     })
 }
 
+/// Encode one variant's value. Like [`decode_variant`], a variant body is its
+/// own function, so large variants do not inline into each other.
+#[inline(never)]
+pub(crate) fn encode_variant<T: ?Sized, F: FieldEncode<T>>(
+    output: &mut &mut [u8],
+    scratch: &mut [u8],
+    value: &T,
+) -> Result<(), CompositeError> {
+    F::encode_field(output, scratch, value)
+}
+
 #[inline(never)]
 pub(crate) fn decode_variant<'a, T, E, F, W>(input: &mut &'a [u8], scratch: &mut &'a mut [u8], wrap: W) -> Result<E, CompositeError>
 where
-    F: CompositeFmt<T>,
-    W: FnOnce(F::Decoded<'a>) -> E,
+    F: FieldDecode<'a, T>,
+    W: FnOnce(T) -> E,
 {
-    Ok(wrap(F::decode(input, scratch)?))
+    Ok(wrap(F::decode_field(input, scratch)?))
 }
 
 #[inline]
@@ -2943,19 +2976,19 @@ mod delimited_proptests {
         tail: Option<String>,
     }
     crate::delimited_format! { struct Format for Record, b'|' {
-        first: Text, tail: Option<DirectScalar<Text>>,
+        first: Text, tail: Option<Text>,
     } }
     fn roundtrip(first: String, tail: Option<String>) {
         let mut value = Record { first, tail };
         let mut output = [0; 130];
         let used = {
             let mut out = output.as_mut_slice();
-            Format::encode(&mut out, &mut [], &value).unwrap();
+            Format::encode_field(&mut out, &mut [], &value).unwrap();
             130 - out.len()
         };
         let mut input = &output[..used];
         value.tail = value.tail.filter(|text| !text.is_empty());
-        assert_eq!(Format::decode(&mut input, &mut &mut [][..]).unwrap(), value);
+        assert_eq!(Format::decode_field(&mut input, &mut &mut [][..]).unwrap(), value);
         assert!(input.is_empty());
     }
     #[test]
@@ -2969,7 +3002,7 @@ mod delimited_proptests {
                 first: "A|B".into(),
                 tail: None,
             };
-            Format::encode(&mut &mut [0; 16][..], &mut [], &value)
+            Format::encode_field(&mut &mut [0; 16][..], &mut [], &value)
         });
         assert_eq!(separator_inside.is_err(), cfg!(debug_assertions));
         #[derive(Debug, PartialEq)]
@@ -2979,10 +3012,10 @@ mod delimited_proptests {
         crate::delimited_format! { struct LiteralFormat for Literal, b'|' { first: Text, _: Text = b"B|C", } }
         let value = Literal { first: "A".into() };
         let mut out = output.as_mut_slice();
-        LiteralFormat::encode(&mut out, &mut [], &value).unwrap();
+        LiteralFormat::encode_field(&mut out, &mut [], &value).unwrap();
         let used = 16 - out.len();
         assert_eq!(&output[..used], b"A|B|C");
-        assert_eq!(LiteralFormat::decode(&mut &output[..used], &mut &mut [][..]).unwrap(), value);
+        assert_eq!(LiteralFormat::decode_field(&mut &output[..used], &mut &mut [][..]).unwrap(), value);
     }
     proptest! {
         #[test]
@@ -3004,12 +3037,12 @@ mod tagged_tests {
         Short(()),
     }
     crate::tagged_format! { struct Prefix for Value {
-        _: A2 = b"AB" => Long(Empty<()>),
-        _: A1 = b"A" => Short(Empty<()>),
+        _: A2 = b"AB" => Long(Empty),
+        _: A1 = b"A" => Short(Empty),
     } }
     crate::tagged_format! { struct Guard for Value {
-        _: A1 = b"A" => Long(Empty<()>) if |remaining| remaining == 1,
-        _: A1 = b"A" => Short(Empty<()>),
+        _: A1 = b"A" => Long(Empty) if |remaining| remaining == 1,
+        _: A1 = b"A" => Short(Empty),
     } }
     #[test]
     fn partial_tags_and_guards_try_later_arms() {
@@ -3021,11 +3054,11 @@ mod tagged_tests {
             (b"ZZ", Err(Error::Invalid), b"ZZ"),
         ] {
             let mut input = wire;
-            assert_eq!(Prefix::decode(&mut input, &mut &mut [][..]).map_err(|e| e.kind), expected);
+            assert_eq!(Prefix::decode_field(&mut input, &mut &mut [][..]).map_err(|e| e.kind), expected);
             assert_eq!(input, rest);
         }
-        assert_eq!(Guard::decode(&mut &b"A"[..], &mut &mut [][..]).unwrap(), Value::Short(()));
-        assert_eq!(Guard::decode(&mut &b"AB"[..], &mut &mut [][..]).unwrap(), Value::Long(()));
+        assert_eq!(Guard::decode_field(&mut &b"A"[..], &mut &mut [][..]).unwrap(), Value::Short(()));
+        assert_eq!(Guard::decode_field(&mut &b"AB"[..], &mut &mut [][..]).unwrap(), Value::Long(()));
     }
     struct Reject<const CODE: u8>;
     impl<const CODE: u8> ScalarFmt for Reject<CODE> {
@@ -3049,11 +3082,14 @@ mod tagged_tests {
         macro_rules! check {
             ($code:literal, $expected:expr) => {{
                 crate::tagged_format! { struct Format for Value {
-                    _: Reject<$code> = b"A" => Long(Empty<()>),
-                    _: A1 = b"A" => Short(Empty<()>),
+                    _: Reject<$code> = b"A" => Long(Empty),
+                    _: A1 = b"A" => Short(Empty),
                 } }
                 let mut input = &b"A"[..];
-                assert_eq!(Format::decode(&mut input, &mut &mut [][..]).map_err(|e| e.kind), $expected);
+                assert_eq!(
+                    Format::decode_field(&mut input, &mut &mut [][..]).map_err(|e| e.kind),
+                    $expected
+                );
                 assert_eq!(input, if $code < 2 { &b""[..] } else { &b"A"[..] });
             }};
         }
@@ -3067,11 +3103,11 @@ mod tagged_tests {
             Empty(()),
         }
         crate::tagged_format! { struct Format for Body {
-            _: A1 = b"A" => Required(DirectScalar<A2>),
-            _: A1 = b"A" => Empty(Empty<()>),
+            _: A1 = b"A" => Required(A2),
+            _: A1 = b"A" => Empty(Empty),
         } }
         assert_eq!(
-            Format::decode(&mut &b"A"[..], &mut &mut [][..]).unwrap_err().kind,
+            Format::decode_field(&mut &b"A"[..], &mut &mut [][..]).unwrap_err().kind,
             Error::UnexpectedEof
         );
     }

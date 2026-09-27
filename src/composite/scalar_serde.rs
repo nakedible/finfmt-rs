@@ -1,18 +1,20 @@
 use core::marker::PhantomData;
 
 use serde::de::value::BorrowedStrDeserializer;
-use serde::de::{self, DeserializeOwned, Visitor};
+use serde::de::{self, Visitor};
 use serde::ser::{self, Impossible};
 use serde::{Deserialize, Serialize};
 
 use super::*;
 
-/// Wrap a leaf [`ScalarFmt`] as a [`CompositeFmt`] through Serde scalar values.
+/// Encode and decode a value through its serde implementation with the
+/// scalar format `F`, for types without a [`ScalarEncode`]/[`ScalarDecode`]
+/// mapping.
 ///
-/// Use this adapter when a composite wrapper needs a scalar field format for
-/// an owned type that implements Serde but does not implement [`ScalarValue`].
-/// Record macros use the same scalar machinery directly, including for borrowed
-/// values.
+/// This opts the field into serde's mapping, so the value's serde attributes
+/// and impls decide its wire text. A serde value that is a string or an
+/// integer maps onto `F`'s text or numeric methods; borrowed strings decode
+/// without copying.
 ///
 /// Serializers using `collect_str` format their text into caller-provided scratch
 /// before field encoding. Scratch must fit that text plus the field's workspace.
@@ -637,22 +639,18 @@ where
     })
 }
 
-impl<T, F: ScalarFmt> CompositeFmt<T> for SerdeScalar<F>
-where
-    T: Serialize + DeserializeOwned,
-{
-    type Decoded<'de> = T;
-
+impl<T: ?Sized + Serialize, F: ScalarFmt> FieldEncode<T> for SerdeScalar<F> {
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
+    fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
         encode_serde_scalar::<T, F>(value, output, scratch)?;
         Ok(())
     }
+}
 
+impl<'de, T: Deserialize<'de>, F: ScalarFmt> FieldDecode<'de, T> for SerdeScalar<F> {
     #[inline(always)]
-    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<T, CompositeError> {
-        let value = decode_serde_scalar::<T, F>(input, scratch)?;
-        Ok(value)
+    fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<T, CompositeError> {
+        Ok(decode_serde_scalar::<T, F>(input, scratch)?)
     }
 }
 

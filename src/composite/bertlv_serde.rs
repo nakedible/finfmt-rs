@@ -1256,20 +1256,17 @@ pub(crate) fn encode_ber_tlv_serde<T: ?Sized + Serialize>(output: &mut &mut [u8]
     value.serialize(BerTlvSerializer { output, scratch })
 }
 
-impl<T, const ALLOW_ZERO_PADDING: bool> CompositeFmt<T> for BerTlvList<T, ALLOW_ZERO_PADDING>
-where
-    T: Serialize + DeserializeOwned,
-{
-    type Decoded<'de> = T;
-
+impl<T: ?Sized + Serialize, const ALLOW_ZERO_PADDING: bool> FieldEncode<T> for BerTlvList<ALLOW_ZERO_PADDING> {
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
+    fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
         encode_ber_tlv_serde(output, scratch, value)?;
         Ok(())
     }
+}
 
+impl<'de, T: DeserializeOwned, const ALLOW_ZERO_PADDING: bool> FieldDecode<'de, T> for BerTlvList<ALLOW_ZERO_PADDING> {
     #[inline(always)]
-    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<T, CompositeError> {
+    fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<T, CompositeError> {
         let value = decode_ber_tlv_serde::<T, ALLOW_ZERO_PADDING>(input, scratch)?;
         if ALLOW_ZERO_PADDING {
             *input = crate::primitive::text::decode_padded(input, 0, true, 0);
@@ -1659,30 +1656,30 @@ mod tests {
         type Map = std::collections::BTreeMap<String, String>;
         let wire = b"\0\x59\x02\0\xFF\0\0\xFF\x01\0\0";
         let expected = vec![("59".into(), "00FF".into()), ("FF01".into(), "".into())];
-        let decoded = BerTlvList::<Pairs, true>::decode(&mut wire.as_slice(), &mut &mut [0; 64][..]).unwrap();
+        let decoded = <BerTlvList<true> as FieldDecode<'_, Pairs>>::decode_field(&mut wire.as_slice(), &mut &mut [0; 64][..]).unwrap();
         assert_eq!(decoded, expected);
         assert_eq!(
-            BerTlvList::<Map, true>::decode(&mut wire.as_slice(), &mut &mut [0; 64][..]).unwrap(),
+            <BerTlvList<true> as FieldDecode<'_, Map>>::decode_field(&mut wire.as_slice(), &mut &mut [0; 64][..]).unwrap(),
             expected.into_iter().collect()
         );
         assert_eq!(
-            BerTlvList::<Pairs>::decode(&mut wire.as_slice(), &mut &mut [0; 64][..])
+            <BerTlvList as FieldDecode<'_, Pairs>>::decode_field(&mut wire.as_slice(), &mut &mut [0; 64][..])
                 .unwrap_err()
                 .kind,
             Error::Invalid
         );
         let mut output = [0; 16];
         let mut out = output.as_mut_slice();
-        BerTlvList::<Pairs, true>::encode(&mut out, &mut [], &decoded).unwrap();
+        <BerTlvList<true> as FieldEncode<Pairs>>::encode_field(&mut out, &mut [], &decoded).unwrap();
         let used = 16 - out.len();
         assert_eq!(&output[..used], b"\x59\x02\0\xFF\xFF\x01\0");
         assert!(
-            BerTlvList::<Pairs, true>::decode(&mut b"\0\0".as_slice(), &mut &mut [][..])
+            <BerTlvList<true> as FieldDecode<'_, Pairs>>::decode_field(&mut b"\0\0".as_slice(), &mut &mut [][..])
                 .unwrap()
                 .is_empty()
         );
         assert!(
-            BerTlvList::<Pairs>::decode(&mut b"".as_slice(), &mut &mut [][..])
+            <BerTlvList as FieldDecode<'_, Pairs>>::decode_field(&mut b"".as_slice(), &mut &mut [][..])
                 .unwrap()
                 .is_empty()
         );
@@ -1692,7 +1689,7 @@ mod tests {
             (b"\0\xFF", Error::UnexpectedEof),
         ] {
             assert_eq!(
-                BerTlvList::<Pairs, true>::decode(&mut &*bytes, &mut &mut [0; 64][..])
+                <BerTlvList<true> as FieldDecode<'_, Pairs>>::decode_field(&mut &*bytes, &mut &mut [0; 64][..])
                     .unwrap_err()
                     .kind,
                 error
@@ -1728,18 +1725,18 @@ mod tests {
         }
         for bytes in [b"\x59\x01\xAB".as_slice(), b"\x59\x01\xAB\0\0"] {
             assert_eq!(
-                BerTlvList::<One, true>::decode(&mut &*bytes, &mut &mut [0; 32][..]).unwrap(),
+                <BerTlvList<true> as FieldDecode<'_, One>>::decode_field(&mut &*bytes, &mut &mut [0; 32][..]).unwrap(),
                 One(("59".into(), "AB".into()))
             );
         }
         assert_eq!(
-            BerTlvList::<One>::decode(&mut b"\x59\x01\xAB\0".as_slice(), &mut &mut [0; 32][..])
+            <BerTlvList as FieldDecode<'_, One>>::decode_field(&mut b"\x59\x01\xAB\0".as_slice(), &mut &mut [0; 32][..])
                 .unwrap_err()
                 .kind,
             Error::Invalid
         );
         assert_eq!(
-            BerTlvList::<One, true>::decode(&mut b"\x59\x01\xAB\0\x5A\0".as_slice(), &mut &mut [0; 32][..])
+            <BerTlvList<true> as FieldDecode<'_, One>>::decode_field(&mut b"\x59\x01\xAB\0\x5A\0".as_slice(), &mut &mut [0; 32][..])
                 .unwrap_err()
                 .kind,
             Error::Invalid
@@ -1765,9 +1762,9 @@ mod tests {
                 let expected = vec![("59".into(), hex), ("59".into(), "".into())];
                 let mut input = wire.as_slice();
                 let mut scratch = [0;128];
-                prop_assert_eq!(BerTlvList::<Pairs, true>::decode(&mut input, &mut &mut scratch[..]).unwrap(), expected.clone());
+                prop_assert_eq!(<BerTlvList<true> as FieldDecode<'_, Pairs>>::decode_field(&mut input, &mut &mut scratch[..]).unwrap(), expected.clone());
                 prop_assert!(input.is_empty());
-                let strict = BerTlvList::<Pairs>::decode(&mut wire.as_slice(), &mut &mut [0;128][..]).map_err(|error| error.kind);
+                let strict = <BerTlvList as FieldDecode<'_, Pairs>>::decode_field(&mut wire.as_slice(), &mut &mut [0;128][..]).map_err(|error| error.kind);
                 prop_assert_eq!(strict, if padding == [0;3] { Ok(expected) } else { Err(Error::Invalid) });
             }
 

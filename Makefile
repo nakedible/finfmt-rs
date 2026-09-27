@@ -8,6 +8,7 @@ fmt:
 check:
 	cargo +nightly fmt --check
 	cargo clippy --all-features --all-targets -- -D warnings
+	cargo clippy --no-default-features --lib -- -D warnings
 	cargo test --all-features
 	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 	cargo build --release --all-features --benches

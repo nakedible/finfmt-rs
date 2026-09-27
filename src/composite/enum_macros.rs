@@ -37,24 +37,24 @@ macro_rules! tagged_format {
         $(#[$attr])*
         $vis struct $name;
 
-        impl<$lt> $crate::composite::CompositeFmt<$ty<$lt>> for $name {
-            type Decoded<'de> = $ty<'de>;
-
+        impl<$lt> $crate::composite::FieldEncode<$ty<$lt>> for $name {
             #[inline(always)]
-            fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
+            fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 match value {
                     $(
                         $ty::$variant(inner) => {
                             let expected: &[u8] = $literal_bytes;
                             <$literal_fmt as $crate::ScalarFmt>::encode(output, scratch, expected).map_err($crate::CompositeError::from)?;
-                            <$fmt as $crate::composite::CompositeFmt<_>>::encode(output, scratch, inner)
+                            $crate::__private::encode_variant::<_, $fmt>(output, scratch, inner)
                         }
                     )+
                 }
             }
+        }
 
+        impl<'de> $crate::composite::FieldDecode<'de, $ty<'de>> for $name {
             #[inline(always)]
-            fn decode<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
+            fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<$ty<'de>, $crate::CompositeError> {
                 let mut saw_eof = false;
                 $(
                     $crate::__finfmt_tagged_const_decode_arm!(
@@ -85,24 +85,24 @@ macro_rules! tagged_format {
         $(#[$attr])*
         $vis struct $name;
 
-        impl $crate::composite::CompositeFmt<$ty> for $name {
-            type Decoded<'de> = $ty;
-
+        impl $crate::composite::FieldEncode<$ty> for $name {
             #[inline(always)]
-            fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
+            fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 match value {
                     $(
                         $ty::$variant(inner) => {
                             let expected: &[u8] = $literal_bytes;
                             <$literal_fmt as $crate::ScalarFmt>::encode(output, scratch, expected).map_err($crate::CompositeError::from)?;
-                            <$fmt as $crate::composite::CompositeFmt<_>>::encode(output, scratch, inner)
+                            $crate::__private::encode_variant::<_, $fmt>(output, scratch, inner)
                         }
                     )+
                 }
             }
+        }
 
+        impl<'de> $crate::composite::FieldDecode<'de, $ty> for $name {
             #[inline(always)]
-            fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
+            fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<$ty, $crate::CompositeError> {
                 let mut saw_eof = false;
                 $(
                     $crate::__finfmt_tagged_const_decode_arm!(
@@ -137,9 +137,7 @@ macro_rules! choice_format {
         $(#[$attr])*
         $vis struct $name;
 
-        impl<$lt> $crate::composite::ContextFmt<$ty<$lt>, $selector_ty> for $name {
-            type Decoded<'de> = $ty<'de>;
-
+        impl<$lt> $crate::composite::ContextEncode<$ty<$lt>, $selector_ty> for $name {
             #[inline(always)]
             fn encode_with(
                 output: &mut &mut [u8],
@@ -155,18 +153,20 @@ macro_rules! choice_format {
                                 $crate::__private::cold_path();
                                 return Err($crate::Error::Invalid.into());
                             }
-                            <$fmt as $crate::composite::CompositeFmt<_>>::encode(output, scratch, inner)
+                            $crate::__private::encode_variant::<_, $fmt>(output, scratch, inner)
                         }
                     )+
                 }
             }
+        }
 
+        impl<'de> $crate::composite::ContextDecode<'de, $ty<'de>, $selector_ty> for $name {
             #[inline(always)]
-            fn decode_with<'de>(
+            fn decode_with(
                 input: &mut &'de [u8],
                 scratch: &mut &'de mut [u8],
                 context: &$selector_ty,
-            ) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
+            ) -> Result<$ty<'de>, $crate::CompositeError> {
                 $(
                     {
                         let $selector = context;
@@ -191,9 +191,7 @@ macro_rules! choice_format {
         $(#[$attr])*
         $vis struct $name;
 
-        impl $crate::composite::ContextFmt<$ty, $selector_ty> for $name {
-            type Decoded<'de> = $ty;
-
+        impl $crate::composite::ContextEncode<$ty, $selector_ty> for $name {
             #[inline(always)]
             fn encode_with(
                 output: &mut &mut [u8],
@@ -209,16 +207,18 @@ macro_rules! choice_format {
                                 $crate::__private::cold_path();
                                 return Err($crate::Error::Invalid.into());
                             }
-                            <$fmt as $crate::composite::CompositeFmt<_>>::encode(output, scratch, inner)
+                            $crate::__private::encode_variant::<_, $fmt>(output, scratch, inner)
                         }
                     )+
                 }
             }
+        }
 
+        impl<'de> $crate::composite::ContextDecode<'de, $ty, $selector_ty> for $name {
             #[inline(always)]
-            fn decode_with<'a>(
-                input: &mut &'a [u8],
-                scratch: &mut &'a mut [u8],
+            fn decode_with(
+                input: &mut &'de [u8],
+                scratch: &mut &'de mut [u8],
                 context: &$selector_ty,
             ) -> Result<$ty, $crate::CompositeError> {
                 $(
@@ -246,7 +246,7 @@ macro_rules! __finfmt_union_decode_arms {
         $variant:ident($fmt:ty)
     ) => {{
         let source = *$input;
-        match <$fmt as $crate::composite::CompositeFmt<_>>::decode($input, $scratch) {
+        match <$fmt as $crate::composite::FieldDecode<'_, _>>::decode_field($input, $scratch) {
             Ok(inner) => Ok($ty::$variant(inner)),
             Err(error) => {
                 *$input = source;
@@ -261,7 +261,7 @@ macro_rules! __finfmt_union_decode_arms {
         $variant:ident($fmt:ty) $(, $($rest:tt)*)?
     ) => {{
         let source = *$input;
-        match <$fmt as $crate::composite::CompositeFmt<_>>::decode($input, $scratch) {
+        match <$fmt as $crate::composite::FieldDecode<'_, _>>::decode_field($input, $scratch) {
             Ok(inner) => Ok($ty::$variant(inner)),
             Err(error) if $crate::composite::should_retry_union(error.kind) => {
                 *$input = source;
@@ -289,7 +289,7 @@ macro_rules! __finfmt_union_decode_owned_arms {
         let mut arm_input = $source;
         let decoded = {
             let arm_scratch = &mut *$scratch_source;
-            $crate::composite::decode_composite_value::<_, $fmt>(&mut arm_input, arm_scratch)
+            $crate::composite::decode_owned_value::<_, $fmt>(&mut arm_input, arm_scratch)
         };
         match decoded {
             Ok(inner) => {
@@ -314,7 +314,7 @@ macro_rules! __finfmt_union_decode_owned_arms {
         let mut arm_input = $source;
         let decoded = {
             let arm_scratch = &mut *$scratch_source;
-            $crate::composite::decode_composite_value::<_, $fmt>(&mut arm_input, arm_scratch)
+            $crate::composite::decode_owned_value::<_, $fmt>(&mut arm_input, arm_scratch)
         };
         match decoded {
             Ok(inner) => {
@@ -351,20 +351,20 @@ macro_rules! union_format {
         $(#[$attr])*
         $vis struct $name;
 
-        impl<$lt> $crate::composite::CompositeFmt<$ty<$lt>> for $name {
-            type Decoded<'de> = $ty<'de>;
-
+        impl<$lt> $crate::composite::FieldEncode<$ty<$lt>> for $name {
             #[inline(always)]
-            fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
+            fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 match value {
                     $(
-                        $ty::$variant(inner) => <$fmt as $crate::composite::CompositeFmt<_>>::encode(output, scratch, inner),
+                        $ty::$variant(inner) => $crate::__private::encode_variant::<_, $fmt>(output, scratch, inner),
                     )+
                 }
             }
+        }
 
+        impl<'de> $crate::composite::FieldDecode<'de, $ty<'de>> for $name {
             #[inline(always)]
-            fn decode<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
+            fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<$ty<'de>, $crate::CompositeError> {
                 $crate::__finfmt_union_decode_arms!(input, scratch, $ty; $($variant($fmt)),+)
             }
         }
@@ -378,20 +378,20 @@ macro_rules! union_format {
         $(#[$attr])*
         $vis struct $name;
 
-        impl $crate::composite::CompositeFmt<$ty> for $name {
-            type Decoded<'de> = $ty;
-
+        impl $crate::composite::FieldEncode<$ty> for $name {
             #[inline(always)]
-            fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
+            fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 match value {
                     $(
-                        $ty::$variant(inner) => <$fmt as $crate::composite::CompositeFmt<_>>::encode(output, scratch, inner),
+                        $ty::$variant(inner) => $crate::__private::encode_variant::<_, $fmt>(output, scratch, inner),
                     )+
                 }
             }
+        }
 
+        impl<'de> $crate::composite::FieldDecode<'de, $ty> for $name {
             #[inline(always)]
-            fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
+            fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<$ty, $crate::CompositeError> {
                 let source = *input;
                 let scratch_source = core::mem::take(scratch);
                 $crate::__finfmt_union_decode_owned_arms!(input, scratch, scratch_source, source, $ty; $($variant($fmt)),+)

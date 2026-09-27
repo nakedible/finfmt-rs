@@ -1,32 +1,32 @@
 use super::*;
 use crate::primitive::bytes::{copy_bytes, is_filled, reserve_filled, take_bytes};
 
-impl<T, F: ScalarFmt, S: CompositeFmt<T>> CompositeFmt<T> for Frame<F, S> {
-    type Decoded<'de> = S::Decoded<'de>;
-
+impl<T: ?Sized, F: ScalarFmt, S: FieldEncode<T>> FieldEncode<T> for Frame<F, S> {
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
+    fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
         // The inner value is staged in scratch, using the unwritten output as its workspace.
         let used = {
             let mut semantic_out = &mut *scratch;
             let available = semantic_out.len();
-            S::encode(&mut semantic_out, output, value)?;
+            S::encode_field(&mut semantic_out, output, value)?;
             available - semantic_out.len()
         };
         let (semantic, scratch) = split_scratch(scratch, used)?;
         F::encode(output, scratch, semantic)?;
         Ok(())
     }
+}
 
+impl<'de, T, F: ScalarFmt, S: FieldDecode<'de, T>> FieldDecode<'de, T> for Frame<F, S> {
     #[inline(always)]
-    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
+    fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<T, CompositeError> {
         let source = *input;
         let mut input_ptr = source;
         let value_bytes = F::decode(&mut input_ptr, scratch)?;
         advance_input(input, source.len() - input_ptr.len())?;
 
         let mut value_input = value_bytes;
-        let value = S::decode(&mut value_input, scratch)?;
+        let value = S::decode_field(&mut value_input, scratch)?;
         if !value_input.is_empty() {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());
@@ -56,18 +56,9 @@ pub trait TrailingTails: trailing_sealed::TrailingTailsSealed {
     fn validate_omitted(input: &[u8], included_len: usize, scratch: &mut &mut [u8]) -> Result<(), Error>;
 }
 
-impl<T, Inner, Absent, const N: usize> trailing_sealed::TrailingTailSealed for OptionalAbsent<T, Inner, Absent, N>
-where
-    Inner: CompositeFmt<T>,
-    Absent: AbsentFmt,
-{
-}
+impl<Inner, Absent: AbsentFmt, const N: usize> trailing_sealed::TrailingTailSealed for OptionalAbsent<Inner, Absent, N> {}
 
-impl<T, Inner, Absent, const N: usize> TrailingTail for OptionalAbsent<T, Inner, Absent, N>
-where
-    Inner: CompositeFmt<T>,
-    Absent: AbsentFmt,
-{
+impl<Inner, Absent: AbsentFmt, const N: usize> TrailingTail for OptionalAbsent<Inner, Absent, N> {
     const WIRE_LEN: usize = N;
 
     #[inline(always)]
@@ -169,20 +160,18 @@ fn trailing_body_len<Tails: TrailingTails, const BASE_LEN: usize>() -> Result<us
     })
 }
 
-impl<T, Len, Body, Tails, const BASE_LEN: usize> CompositeFmt<T> for TrailingLengthFrame<T, Len, Body, Tails, BASE_LEN>
+impl<T: ?Sized, Len, Body, Tails, const BASE_LEN: usize> FieldEncode<T> for TrailingLengthFrame<Len, Body, Tails, BASE_LEN>
 where
     Len: crate::field::LengthSpec,
-    Body: CompositeFmt<T>,
+    Body: FieldEncode<T>,
     Tails: TrailingTails,
 {
-    type Decoded<'de> = Body::Decoded<'de>;
-
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
+    fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
         let full_len = trailing_body_len::<Tails, BASE_LEN>()?;
         let (staging, scratch) = split_scratch(scratch, full_len)?;
         let mut body_out = &mut staging[..];
-        Body::encode(&mut body_out, scratch, value)?;
+        Body::encode_field(&mut body_out, scratch, value)?;
         // Copy only what the body wrote, so a miswritten body never ships stale scratch.
         let written = full_len - body_out.len();
         debug_assert_eq!(written, full_len, "the body is not as wide as its declared length");
@@ -197,9 +186,16 @@ where
         copy_bytes(output, body)?;
         Ok(())
     }
+}
 
+impl<'de, T, Len, Body, Tails, const BASE_LEN: usize> FieldDecode<'de, T> for TrailingLengthFrame<Len, Body, Tails, BASE_LEN>
+where
+    Len: crate::field::LengthSpec,
+    Body: FieldDecode<'de, T>,
+    Tails: TrailingTails,
+{
     #[inline(always)]
-    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
+    fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<T, CompositeError> {
         const { assert!(Len::STATES_LEN, "a trailing-length frame needs a declared length") };
         let logical_len = Len::decode(input, scratch)?.unwrap_or_default();
         if logical_len < BASE_LEN {
@@ -218,7 +214,7 @@ where
         Tails::validate_omitted(tails, tail_len, scratch)?;
 
         let mut body_input = body;
-        let value = Body::decode(&mut body_input, scratch)?;
+        let value = Body::decode_field(&mut body_input, scratch)?;
         if !body_input.is_empty() {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());
@@ -227,34 +223,32 @@ where
     }
 }
 
-impl<T, Inner, Absent, const N: usize> CompositeFmt<Option<T>> for OptionalAbsent<T, Inner, Absent, N>
-where
-    Inner: CompositeFmt<T>,
-    Absent: AbsentFmt,
-{
-    type Decoded<'de> = Option<Inner::Decoded<'de>>;
-
+impl<T, Inner: FieldEncode<T>, Absent: AbsentFmt, const N: usize> FieldEncode<Option<T>> for OptionalAbsent<Inner, Absent, N> {
     #[inline(always)]
-    fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &Option<T>) -> Result<(), CompositeError> {
+    fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &Option<T>) -> Result<(), CompositeError> {
         const { assert!(N != 0, "an OptionalAbsent area must be at least one byte wide") };
         let available = output.len();
         match value {
             None => Absent::encode_absent(output, scratch, N)?,
-            Some(value) => Inner::encode(output, scratch, value)?,
+            Some(value) => Inner::encode_field(output, scratch, value)?,
         }
         debug_assert_eq!(available - output.len(), N, "the value is not as wide as its OptionalAbsent area");
         Ok(())
     }
+}
 
+impl<'de, T, Inner: FieldDecode<'de, T>, Absent: AbsentFmt, const N: usize> FieldDecode<'de, Option<T>>
+    for OptionalAbsent<Inner, Absent, N>
+{
     #[inline(always)]
-    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
+    fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Option<T>, CompositeError> {
         const { assert!(N != 0, "an OptionalAbsent area must be at least one byte wide") };
         let area = take_bytes(input, N)?;
         if Absent::is_absent(area, scratch)? {
             return Ok(None);
         }
         let mut area_input = area;
-        let value = Inner::decode(&mut area_input, scratch)?;
+        let value = Inner::decode_field(&mut area_input, scratch)?;
         if !area_input.is_empty() {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());
@@ -276,16 +270,16 @@ impl<const BYTE: u8> AbsentFmt for ByteFill<BYTE> {
     }
 }
 
-impl<T: Default> CompositeFmt<T> for Empty<T> {
-    type Decoded<'de> = T;
-
+impl<T: ?Sized> FieldEncode<T> for Empty {
     #[inline(always)]
-    fn encode(_output: &mut &mut [u8], _scratch: &mut [u8], _value: &T) -> Result<(), CompositeError> {
+    fn encode_field(_output: &mut &mut [u8], _scratch: &mut [u8], _value: &T) -> Result<(), CompositeError> {
         Ok(())
     }
+}
 
+impl<T: Default> FieldDecode<'_, T> for Empty {
     #[inline(always)]
-    fn decode<'a>(_input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<Self::Decoded<'a>, CompositeError> {
+    fn decode_field(_input: &mut &[u8], _scratch: &mut &mut [u8]) -> Result<T, CompositeError> {
         Ok(T::default())
     }
 }
@@ -293,7 +287,7 @@ impl<T: Default> CompositeFmt<T> for Empty<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Ascii, DirectScalar, Ebcdic037, Field, Fixed};
+    use crate::{Ascii, Ebcdic037, Field, Fixed};
 
     type A3 = Field<Ascii<3, 3>, Fixed<3>>;
     crate::absent_format! {
@@ -304,11 +298,11 @@ mod tests {
 
     #[test]
     fn a_value_narrower_than_its_area_writes_only_its_own_bytes() {
-        type Short = OptionalAbsent<String, crate::SerdeScalar<Field<Ascii<1, 3>, crate::Rest>>, ByteFill, 3>;
+        type Short = OptionalAbsent<Field<Ascii<1, 3>, crate::Rest>, ByteFill, 3>;
         let result = std::panic::catch_unwind(|| {
             let mut output = [0xEE; 4];
             let mut out = &mut output[..];
-            Short::encode(&mut out, &mut [0; 8], &Some("AB".into())).unwrap();
+            Short::encode_field(&mut out, &mut [0; 8], &Some(String::from("AB"))).unwrap();
             let left = out.len();
             (output, left)
         });
@@ -336,15 +330,15 @@ mod tests {
             assert_eq!(workspace.as_ptr(), start);
         }
 
-        type Text = DirectScalar<Field<Ascii<3, 3>, Fixed<3>, Ebcdic037>, &'static str>;
-        type OptionalText = OptionalAbsent<&'static str, Text, Dashes, 3>;
+        type Text = Field<Ascii<3, 3>, Fixed<3>, Ebcdic037>;
+        type OptionalText = OptionalAbsent<Text, Dashes, 3>;
         for capacity in [3, 32] {
             let mut scratch = [0; 32];
             let start = scratch.as_ptr();
             let mut workspace = &mut scratch[..capacity];
             let mut input = &b"---\xC1\xC2\xC3TAIL"[..];
-            assert_eq!(OptionalText::decode(&mut input, &mut workspace), Ok(None));
-            let text = OptionalText::decode(&mut input, &mut workspace).unwrap().unwrap();
+            assert_eq!(OptionalText::decode_field(&mut input, &mut workspace), Ok(None::<&str>));
+            let text: &str = OptionalText::decode_field(&mut input, &mut workspace).unwrap().unwrap();
             assert_eq!(text, "ABC");
             assert_eq!(text.as_ptr(), start);
             assert_eq!(workspace.len(), capacity - 3);

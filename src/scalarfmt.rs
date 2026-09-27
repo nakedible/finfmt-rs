@@ -41,7 +41,7 @@ use crate::utils::{cold_path, length_as_invalid};
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a scalar field format",
     label = "this type does not implement `ScalarFmt`",
-    note = "bare fields in composite macros use the serde scalar path; use `Composite<Fmt>` for nested composites or `DirectScalar<Fmt>` for manual scalar values"
+    note = "field formats are scalar formats or composite formats; both implement `FieldEncode`/`FieldDecode`"
 )]
 pub trait ScalarFmt {
     /// Calculate the encoded wire length in bytes for a given user input.

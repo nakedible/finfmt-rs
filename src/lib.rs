@@ -12,9 +12,11 @@ mod utils;
 
 pub use bitmap::{Bitmap, BitmapLayout, decode_bitmap, encode_bitmap};
 pub use composite::{
-    AbsentFmt, BerTlvExtras, BerTlvList, BoundedList, ByteFill, Composite, CompositeFmt, ContextFmt, DirectScalar, Empty, FixedAreaList,
-    Frame, NoTrailingFields, OptionalAbsent, ScalarValue, Separator, SerdeScalar, TrailingField, TrailingLengthFrame, decode, encode,
+    AbsentFmt, BerTlvExtras, BoundedList, ByteFill, ContextDecode, ContextEncode, Empty, FieldDecode, FieldEncode, FixedAreaList, Frame,
+    NoTrailingFields, OptionalAbsent, ScalarDecode, ScalarEncode, Separator, TrailingField, TrailingLengthFrame, decode, encode,
 };
+#[cfg(feature = "serde")]
+pub use composite::{BerTlvList, SerdeScalar};
 pub use field::{
     Alpha, Alphanum, Ascii, AsciiLength, AsciiPrintable, Bcd, BcdBytes, Bcdz, Binary, BlankableEbcdicLength, Check, Count, DecodeCheck,
     Ebcdic037, Ebcdic037Ascii, Ebcdic1142, Ebcdic1142Text, EbcdicLength, EbcdicPrintable, Field, Fixed, FixedBinaryBe, FixedComp3,
@@ -36,10 +38,19 @@ pub mod __private {
     }
 
     #[inline(always)]
+    pub fn encode_variant<T: ?Sized, F: crate::composite::FieldEncode<T>>(
+        output: &mut &mut [u8],
+        scratch: &mut [u8],
+        value: &T,
+    ) -> Result<(), CompositeError> {
+        crate::composite::encode_variant::<T, F>(output, scratch, value)
+    }
+
+    #[inline(always)]
     pub fn decode_variant<'a, T, E, F, W>(input: &mut &'a [u8], scratch: &mut &'a mut [u8], wrap: W) -> Result<E, CompositeError>
     where
-        F: crate::composite::CompositeFmt<T>,
-        W: FnOnce(<F as crate::composite::CompositeFmt<T>>::Decoded<'a>) -> E,
+        F: crate::composite::FieldDecode<'a, T>,
+        W: FnOnce(T) -> E,
     {
         crate::composite::decode_variant::<T, E, F, W>(input, scratch, wrap)
     }

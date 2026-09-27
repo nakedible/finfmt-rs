@@ -51,75 +51,22 @@ macro_rules! __finfmt_bitmap_reject_unknown {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __finfmt_bitmap_encode_field {
-    ($value:expr, $output:expr, $scratch:expr, $field:ident : Option<Composite<$fmt:ty>>) => {{
-        if let Some(inner) = $value.$field.as_ref() {
-            <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::encode($output, $scratch, inner)
-                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
-        } else {
-            $crate::__private::cold_path();
-            Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)))
-        }
-    }};
-    ($value:expr, $output:expr, $scratch:expr, $field:ident : Option<Composite<$fmt:ty> >) => {{
-        if let Some(inner) = $value.$field.as_ref() {
-            <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::encode($output, $scratch, inner)
-                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
-        } else {
-            $crate::__private::cold_path();
-            Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)))
-        }
-    }};
-    ($value:expr, $output:expr, $scratch:expr, $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>>) => {{
-        if let Some(inner) = $value.$field.as_ref() {
-            <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::encode($output, $scratch, inner)
-                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
-        } else {
-            $crate::__private::cold_path();
-            Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)))
-        }
-    }};
-    ($value:expr, $output:expr, $scratch:expr, $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> >) => {{
-        if let Some(inner) = $value.$field.as_ref() {
-            <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::encode($output, $scratch, inner)
-                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
-        } else {
-            $crate::__private::cold_path();
-            Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)))
-        }
-    }};
     ($value:expr, $output:expr, $scratch:expr, $field:ident : Option<$fmt:ty>) => {{
         if let Some(inner) = $value.$field.as_ref() {
-            $crate::composite::encode_serde_scalar::<_, $fmt>(inner, $output, $scratch)
-                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
-        } else {
-            $crate::__private::cold_path();
-            Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)))
+            <$fmt as $crate::composite::FieldEncode<_>>::encode_field($output, $scratch, inner)
+                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
         }
     }};
-    ($value:expr, $output:expr, $scratch:expr, $field:ident : Composite<$fmt:ty>) => {{
-        $crate::composite::encode_nested_value::<_, $crate::composite::Composite<$fmt>>(&$value.$field, $output, $scratch)
-            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
-    }};
-    ($value:expr, $output:expr, $scratch:expr, $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?>) => {{
-        <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::encode($output, $scratch, &$value.$field)
-            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
-    }};
     ($value:expr, $output:expr, $scratch:expr, $field:ident : $fmt:ty) => {{
-        $crate::composite::encode_serde_scalar::<_, $fmt>(&$value.$field, $output, $scratch)
-            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))
+        <$fmt as $crate::composite::FieldEncode<_>>::encode_field($output, $scratch, &$value.$field)
+            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
     }};
 }
 
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __finfmt_bitmap_field_present {
-    ($value:expr, $field:ident : Option<Composite<$fmt:ty>>) => {{ $value.$field.is_some() }};
-    ($value:expr, $field:ident : Option<Composite<$fmt:ty> >) => {{ $value.$field.is_some() }};
-    ($value:expr, $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>>) => {{ $value.$field.is_some() }};
-    ($value:expr, $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> >) => {{ $value.$field.is_some() }};
     ($value:expr, $field:ident : Option<$fmt:ty>) => {{ $value.$field.is_some() }};
-    ($value:expr, $field:ident : Composite<$fmt:ty>) => {{ true }};
-    ($value:expr, $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?>) => {{ true }};
     ($value:expr, $field:ident : $fmt:ty) => {{ true }};
 }
 
@@ -127,52 +74,14 @@ macro_rules! __finfmt_bitmap_field_present {
 #[doc(hidden)]
 macro_rules! __finfmt_bitmap_set_fields {
     ($bitmap:expr, $value:expr;) => {};
-    ($bitmap:expr, $value:expr; $id:literal => $field:ident : Option<Composite<$fmt:ty>> $(, $($rest:tt)*)?) => {{
-        if $crate::__finfmt_bitmap_field_present!($value, $field : Option<Composite<$fmt>>) {
-            $bitmap.set($id, true);
-        }
-        $crate::__finfmt_bitmap_set_fields!($bitmap, $value; $($($rest)*)?);
-    }};
-    ($bitmap:expr, $value:expr; $id:literal => $field:ident : Option<Composite<$fmt:ty> > $(, $($rest:tt)*)?) => {{
-        if $crate::__finfmt_bitmap_field_present!($value, $field : Option<Composite<$fmt> >) {
-            $bitmap.set($id, true);
-        }
-        $crate::__finfmt_bitmap_set_fields!($bitmap, $value; $($($rest)*)?);
-    }};
-    ($bitmap:expr, $value:expr; $id:literal => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>> $(, $($rest:tt)*)?) => {{
-        if $crate::__finfmt_bitmap_field_present!($value, $field : Option<DirectScalar<$fmt $(, $value_ty)?>>) {
-            $bitmap.set($id, true);
-        }
-        $crate::__finfmt_bitmap_set_fields!($bitmap, $value; $($($rest)*)?);
-    }};
-    ($bitmap:expr, $value:expr; $id:literal => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> > $(, $($rest:tt)*)?) => {{
-        if $crate::__finfmt_bitmap_field_present!($value, $field : Option<DirectScalar<$fmt $(, $value_ty)?> >) {
-            $bitmap.set($id, true);
-        }
-        $crate::__finfmt_bitmap_set_fields!($bitmap, $value; $($($rest)*)?);
-    }};
     ($bitmap:expr, $value:expr; $id:literal => $field:ident : Option<$fmt:ty> $(, $($rest:tt)*)?) => {{
         if $crate::__finfmt_bitmap_field_present!($value, $field : Option<$fmt>) {
             $bitmap.set($id, true);
         }
         $crate::__finfmt_bitmap_set_fields!($bitmap, $value; $($($rest)*)?);
     }};
-    ($bitmap:expr, $value:expr; $id:literal => $field:ident : Composite<$fmt:ty> $(, $($rest:tt)*)?) => {{
-        if $crate::__finfmt_bitmap_field_present!($value, $field : Composite<$fmt>) {
-            $bitmap.set($id, true);
-        }
-        $crate::__finfmt_bitmap_set_fields!($bitmap, $value; $($($rest)*)?);
-    }};
-    ($bitmap:expr, $value:expr; $id:literal => $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?> $(, $($rest:tt)*)?) => {{
-        if $crate::__finfmt_bitmap_field_present!($value, $field : DirectScalar<$fmt $(, $value_ty)?>) {
-            $bitmap.set($id, true);
-        }
-        $crate::__finfmt_bitmap_set_fields!($bitmap, $value; $($($rest)*)?);
-    }};
     ($bitmap:expr, $value:expr; $id:literal => $field:ident : $fmt:ty $(, $($rest:tt)*)?) => {{
-        if $crate::__finfmt_bitmap_field_present!($value, $field : $fmt) {
-            $bitmap.set($id, true);
-        }
+        $bitmap.set($id, true);
         $crate::__finfmt_bitmap_set_fields!($bitmap, $value; $($($rest)*)?);
     }};
 }
@@ -181,52 +90,12 @@ macro_rules! __finfmt_bitmap_set_fields {
 #[doc(hidden)]
 macro_rules! __finfmt_bitmap_encode_fields {
     ($value:expr, $output:expr, $scratch:expr;) => {};
-    ($value:expr, $output:expr, $scratch:expr; $id:literal => $field:ident : Option<Composite<$fmt:ty>> $(, $($rest:tt)*)?) => {{
-        if $crate::__finfmt_bitmap_field_present!($value, $field : Option<Composite<$fmt>>) {
-            $crate::__finfmt_bitmap_encode_field!($value, $output, $scratch, $field : Option<Composite<$fmt>>)?;
-        }
-        $crate::__finfmt_bitmap_encode_fields!($value, $output, $scratch; $($($rest)*)?);
-    }};
-    ($value:expr, $output:expr, $scratch:expr; $id:literal => $field:ident : Option<Composite<$fmt:ty> > $(, $($rest:tt)*)?) => {{
-        if $crate::__finfmt_bitmap_field_present!($value, $field : Option<Composite<$fmt> >) {
-            $crate::__finfmt_bitmap_encode_field!($value, $output, $scratch, $field : Option<Composite<$fmt> >)?;
-        }
-        $crate::__finfmt_bitmap_encode_fields!($value, $output, $scratch; $($($rest)*)?);
-    }};
-    ($value:expr, $output:expr, $scratch:expr; $id:literal => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>> $(, $($rest:tt)*)?) => {{
-        if $crate::__finfmt_bitmap_field_present!($value, $field : Option<DirectScalar<$fmt $(, $value_ty)?>>) {
-            $crate::__finfmt_bitmap_encode_field!($value, $output, $scratch, $field : Option<DirectScalar<$fmt $(, $value_ty)?>>)?;
-        }
-        $crate::__finfmt_bitmap_encode_fields!($value, $output, $scratch; $($($rest)*)?);
-    }};
-    ($value:expr, $output:expr, $scratch:expr; $id:literal => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> > $(, $($rest:tt)*)?) => {{
-        if $crate::__finfmt_bitmap_field_present!($value, $field : Option<DirectScalar<$fmt $(, $value_ty)?> >) {
-            $crate::__finfmt_bitmap_encode_field!($value, $output, $scratch, $field : Option<DirectScalar<$fmt $(, $value_ty)?> >)?;
-        }
-        $crate::__finfmt_bitmap_encode_fields!($value, $output, $scratch; $($($rest)*)?);
-    }};
     ($value:expr, $output:expr, $scratch:expr; $id:literal => $field:ident : Option<$fmt:ty> $(, $($rest:tt)*)?) => {{
-        if $crate::__finfmt_bitmap_field_present!($value, $field : Option<$fmt>) {
-            $crate::__finfmt_bitmap_encode_field!($value, $output, $scratch, $field : Option<$fmt>)?;
-        }
-        $crate::__finfmt_bitmap_encode_fields!($value, $output, $scratch; $($($rest)*)?);
-    }};
-    ($value:expr, $output:expr, $scratch:expr; $id:literal => $field:ident : Composite<$fmt:ty> $(, $($rest:tt)*)?) => {{
-        if $crate::__finfmt_bitmap_field_present!($value, $field : Composite<$fmt>) {
-            $crate::__finfmt_bitmap_encode_field!($value, $output, $scratch, $field : Composite<$fmt>)?;
-        }
-        $crate::__finfmt_bitmap_encode_fields!($value, $output, $scratch; $($($rest)*)?);
-    }};
-    ($value:expr, $output:expr, $scratch:expr; $id:literal => $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?> $(, $($rest:tt)*)?) => {{
-        if $crate::__finfmt_bitmap_field_present!($value, $field : DirectScalar<$fmt $(, $value_ty)?>) {
-            $crate::__finfmt_bitmap_encode_field!($value, $output, $scratch, $field : DirectScalar<$fmt $(, $value_ty)?>)?;
-        }
+        $crate::__finfmt_bitmap_encode_field!($value, $output, $scratch, $field : Option<$fmt>);
         $crate::__finfmt_bitmap_encode_fields!($value, $output, $scratch; $($($rest)*)?);
     }};
     ($value:expr, $output:expr, $scratch:expr; $id:literal => $field:ident : $fmt:ty $(, $($rest:tt)*)?) => {{
-        if $crate::__finfmt_bitmap_field_present!($value, $field : $fmt) {
-            $crate::__finfmt_bitmap_encode_field!($value, $output, $scratch, $field : $fmt)?;
-        }
+        $crate::__finfmt_bitmap_encode_field!($value, $output, $scratch, $field : $fmt);
         $crate::__finfmt_bitmap_encode_fields!($value, $output, $scratch; $($($rest)*)?);
     }};
 }
@@ -335,11 +204,9 @@ macro_rules! bitmap_format {
         $(#[$attr])*
         $vis struct $name;
 
-        impl<$lt> $crate::composite::CompositeFmt<$ty<$lt>> for $name {
-            type Decoded<'de> = $ty<'de>;
-
+        impl<$lt> $crate::composite::FieldEncode<$ty<$lt>> for $name {
             #[inline(always)]
-            fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
+            fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 $crate::__finfmt_concat_encode_fields!(value, output, scratch; $($head)*);
 
                 let mut bitmap = $crate::bitmap::Bitmap::new();
@@ -348,10 +215,12 @@ macro_rules! bitmap_format {
                 $crate::__finfmt_bitmap_encode_fields!(value, output, scratch; $($fields)*);
                 Ok(())
             }
+        }
 
+        impl<'de> $crate::composite::FieldDecode<'de, $ty<'de>> for $name {
             #[inline(always)]
-            fn decode<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
-                $crate::__finfmt_bitmap_decode_construct_as!(input, scratch, $layout, $bitmap_word, $ty<'de>, $ty; { $($head)* } $($fields)*)
+            fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<$ty<'de>, $crate::CompositeError> {
+                $crate::__finfmt_bitmap_decode_head_build!(input, scratch, $layout, $bitmap_word, $ty<'de>, $ty; []; { $($head)* } $($fields)*)
             }
         }
     };
@@ -381,11 +250,9 @@ macro_rules! bitmap_format {
         $(#[$attr])*
         $vis struct $name;
 
-        impl $crate::composite::CompositeFmt<$ty> for $name {
-            type Decoded<'de> = $ty;
-
+        impl $crate::composite::FieldEncode<$ty> for $name {
             #[inline(always)]
-            fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
+            fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 $crate::__finfmt_concat_encode_fields!(value, output, scratch; $($head)*);
 
                 let mut bitmap = $crate::bitmap::Bitmap::new();
@@ -394,10 +261,12 @@ macro_rules! bitmap_format {
                 $crate::__finfmt_bitmap_encode_fields!(value, output, scratch; $($fields)*);
                 Ok(())
             }
+        }
 
+        impl<'de> $crate::composite::FieldDecode<'de, $ty> for $name {
             #[inline(always)]
-            fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
-                $crate::__finfmt_bitmap_decode_construct!(input, scratch, $layout, $bitmap_word, $ty; { $($head)* } $($fields)*)
+            fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<$ty, $crate::CompositeError> {
+                $crate::__finfmt_bitmap_decode_head_build!(input, scratch, $layout, $bitmap_word, $ty, $ty; []; { $($head)* } $($fields)*)
             }
         }
     };
@@ -419,22 +288,6 @@ macro_rules! bitmap_format {
 
 #[macro_export]
 #[doc(hidden)]
-macro_rules! __finfmt_bitmap_decode_construct {
-    ($input:expr, $scratch:expr, $layout:expr, $bitmap_word:ty, $ty:path; { $($head:tt)* } $($fields:tt)*) => {{
-        $crate::__finfmt_bitmap_decode_construct_as!($input, $scratch, $layout, $bitmap_word, $ty, $ty; { $($head)* } $($fields)*)
-    }};
-}
-
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __finfmt_bitmap_decode_construct_as {
-    ($input:expr, $scratch:expr, $layout:expr, $bitmap_word:ty, $result_ty:ty, $ctor:path; { $($head:tt)* } $($fields:tt)*) => {{
-        $crate::__finfmt_bitmap_decode_head_build!($input, $scratch, $layout, $bitmap_word, $result_ty, $ctor; []; { $($head)* } $($fields)*)
-    }};
-}
-
-#[macro_export]
-#[doc(hidden)]
 macro_rules! __finfmt_bitmap_decode_head_build {
     ($input:expr, $scratch:expr, $layout:expr, $bitmap_word:ty, $result_ty:ty, $ctor:path; [$($built:tt)*]; { } $($fields:tt)*) => {{
         let bitmap = $crate::bitmap::decode_bitmap::<$bitmap_word>($input, &mut **$scratch, $layout).map_err($crate::CompositeError::from)?;
@@ -449,38 +302,8 @@ macro_rules! __finfmt_bitmap_decode_head_build {
     ($input:expr, $scratch:expr, $layout:expr, $bitmap_word:ty, $result_ty:ty, $ctor:path; [$($built:tt)*]; { $field:ident : Option<$fmt:ty> $(, $($rest:tt)*)? } $($fields:tt)*) => {{
         compile_error!("bitmap head fields cannot use container Option; use an explicit OptionalAbsent format");
     }};
-    ($input:expr, $scratch:expr, $layout:expr, $bitmap_word:ty, $result_ty:ty, $ctor:path; [$($built:tt)*]; { $field:ident : Composite<$fmt:ty> $(, $($rest:tt)*)? } $($fields:tt)*) => {{
-        let $field = <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::decode($input, $scratch)
-            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
-        $crate::__finfmt_bitmap_decode_head_build!(
-            $input,
-            $scratch,
-            $layout,
-            $bitmap_word,
-            $result_ty,
-            $ctor;
-            [$($built)* $field: $field,];
-            { $($($rest)*)? }
-            $($fields)*
-        )
-    }};
-    ($input:expr, $scratch:expr, $layout:expr, $bitmap_word:ty, $result_ty:ty, $ctor:path; [$($built:tt)*]; { $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?> $(, $($rest:tt)*)? } $($fields:tt)*) => {{
-        let $field = <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode($input, $scratch)
-            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
-        $crate::__finfmt_bitmap_decode_head_build!(
-            $input,
-            $scratch,
-            $layout,
-            $bitmap_word,
-            $result_ty,
-            $ctor;
-            [$($built)* $field: $field,];
-            { $($($rest)*)? }
-            $($fields)*
-        )
-    }};
     ($input:expr, $scratch:expr, $layout:expr, $bitmap_word:ty, $result_ty:ty, $ctor:path; [$($built:tt)*]; { $field:ident : $fmt:ty $(, $($rest:tt)*)? } $($fields:tt)*) => {{
-        let $field = $crate::composite::decode_serde_scalar::<_, $fmt>($input, $scratch)
+        let $field = <$fmt as $crate::composite::FieldDecode<'_, _>>::decode_field($input, $scratch)
             .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
         $crate::__finfmt_bitmap_decode_head_build!(
             $input,
@@ -502,84 +325,20 @@ macro_rules! __finfmt_bitmap_decode_body_build {
     ($bitmap:expr, $input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*];) => {
         Ok::<$result_ty, $crate::CompositeError>({ $ctor { $($built)* } })
     };
-    ($bitmap:expr, $input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $id:literal => $field:ident : Option<Composite<$fmt:ty>> $(, $($rest:tt)*)?) => {{
-        let $field = if $bitmap.get($id) {
-            Some(
-                <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::decode($input, $scratch)
-                    .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
-            )
-        } else {
-            None
-        };
-        $crate::__finfmt_bitmap_decode_body_build!($bitmap, $input, $scratch, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
-    }};
-    ($bitmap:expr, $input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $id:literal => $field:ident : Option<Composite<$fmt:ty> > $(, $($rest:tt)*)?) => {{
-        let $field = if $bitmap.get($id) {
-            Some(
-                <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::decode($input, $scratch)
-                    .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
-            )
-        } else {
-            None
-        };
-        $crate::__finfmt_bitmap_decode_body_build!($bitmap, $input, $scratch, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
-    }};
-    ($bitmap:expr, $input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $id:literal => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>> $(, $($rest:tt)*)?) => {{
-        let $field = if $bitmap.get($id) {
-            Some(
-                <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode($input, $scratch)
-                    .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
-            )
-        } else {
-            None
-        };
-        $crate::__finfmt_bitmap_decode_body_build!($bitmap, $input, $scratch, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
-    }};
-    ($bitmap:expr, $input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $id:literal => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> > $(, $($rest:tt)*)?) => {{
-        let $field = if $bitmap.get($id) {
-            Some(
-                <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode($input, $scratch)
-                    .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
-            )
-        } else {
-            None
-        };
-        $crate::__finfmt_bitmap_decode_body_build!($bitmap, $input, $scratch, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
-    }};
     ($bitmap:expr, $input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $id:literal => $field:ident : Option<$fmt:ty> $(, $($rest:tt)*)?) => {{
         let $field = if $bitmap.get($id) {
             Some(
-                $crate::composite::decode_serde_scalar::<_, $fmt>($input, $scratch)
+                <$fmt as $crate::composite::FieldDecode<'_, _>>::decode_field($input, $scratch)
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
             )
         } else {
             None
-        };
-        $crate::__finfmt_bitmap_decode_body_build!($bitmap, $input, $scratch, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
-    }};
-    ($bitmap:expr, $input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $id:literal => $field:ident : Composite<$fmt:ty> $(, $($rest:tt)*)?) => {{
-        let $field = if $bitmap.get($id) {
-            <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::decode($input, $scratch)
-                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?
-        } else {
-            $crate::__private::cold_path();
-            return Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)));
-        };
-        $crate::__finfmt_bitmap_decode_body_build!($bitmap, $input, $scratch, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
-    }};
-    ($bitmap:expr, $input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $id:literal => $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?> $(, $($rest:tt)*)?) => {{
-        let $field = if $bitmap.get($id) {
-            <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode($input, $scratch)
-                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?
-        } else {
-            $crate::__private::cold_path();
-            return Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)));
         };
         $crate::__finfmt_bitmap_decode_body_build!($bitmap, $input, $scratch, $result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
     ($bitmap:expr, $input:expr, $scratch:expr, $result_ty:ty, $ctor:path; [$($built:tt)*]; $id:literal => $field:ident : $fmt:ty $(, $($rest:tt)*)?) => {{
         let $field = if $bitmap.get($id) {
-            $crate::composite::decode_serde_scalar::<_, $fmt>($input, $scratch)
+            <$fmt as $crate::composite::FieldDecode<'_, _>>::decode_field($input, $scratch)
                 .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?
         } else {
             $crate::__private::cold_path();

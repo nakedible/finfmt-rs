@@ -1,54 +1,16 @@
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __finfmt_ber_tlv_encode_field {
-    ($value:expr, $output:expr, $scratch:expr, $tag:expr, $field:ident : Option<Composite<$fmt:ty>>) => {{
-        if let Some(inner) = $value.$field.as_ref() {
-            $crate::composite::encode_ber_tlv_field($output, $scratch, $tag, stringify!($field), |value_out, scratch| {
-                <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::encode(value_out, scratch, inner)
-            })?;
-        }
-    }};
-    ($value:expr, $output:expr, $scratch:expr, $tag:expr, $field:ident : Option<Composite<$fmt:ty> >) => {{
-        if let Some(inner) = $value.$field.as_ref() {
-            $crate::composite::encode_ber_tlv_field($output, $scratch, $tag, stringify!($field), |value_out, scratch| {
-                <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::encode(value_out, scratch, inner)
-            })?;
-        }
-    }};
-    ($value:expr, $output:expr, $scratch:expr, $tag:expr, $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>>) => {{
-        if let Some(inner) = $value.$field.as_ref() {
-            $crate::composite::encode_ber_tlv_field($output, $scratch, $tag, stringify!($field), |value_out, scratch| {
-                <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::encode(value_out, scratch, inner)
-            })?;
-        }
-    }};
-    ($value:expr, $output:expr, $scratch:expr, $tag:expr, $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> >) => {{
-        if let Some(inner) = $value.$field.as_ref() {
-            $crate::composite::encode_ber_tlv_field($output, $scratch, $tag, stringify!($field), |value_out, scratch| {
-                <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::encode(value_out, scratch, inner)
-            })?;
-        }
-    }};
     ($value:expr, $output:expr, $scratch:expr, $tag:expr, $field:ident : Option<$fmt:ty>) => {{
         if let Some(inner) = $value.$field.as_ref() {
             $crate::composite::encode_ber_tlv_field($output, $scratch, $tag, stringify!($field), |value_out, scratch| {
-                $crate::composite::encode_serde_scalar::<_, $fmt>(inner, value_out, scratch).map_err($crate::CompositeError::from)
+                <$fmt as $crate::composite::FieldEncode<_>>::encode_field(value_out, scratch, inner)
             })?;
         }
     }};
-    ($value:expr, $output:expr, $scratch:expr, $tag:expr, $field:ident : Composite<$fmt:ty>) => {{
-        $crate::composite::encode_ber_tlv_field($output, $scratch, $tag, stringify!($field), |value_out, scratch| {
-            $crate::composite::encode_nested_value::<_, $crate::composite::Composite<$fmt>>(&$value.$field, value_out, scratch)
-        })?;
-    }};
-    ($value:expr, $output:expr, $scratch:expr, $tag:expr, $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?>) => {{
-        $crate::composite::encode_ber_tlv_field($output, $scratch, $tag, stringify!($field), |value_out, scratch| {
-            <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::encode(value_out, scratch, &$value.$field)
-        })?;
-    }};
     ($value:expr, $output:expr, $scratch:expr, $tag:expr, $field:ident : $fmt:ty) => {{
         $crate::composite::encode_ber_tlv_field($output, $scratch, $tag, stringify!($field), |value_out, scratch| {
-            $crate::composite::encode_serde_scalar::<_, $fmt>(&$value.$field, value_out, scratch).map_err($crate::CompositeError::from)
+            <$fmt as $crate::composite::FieldEncode<_>>::encode_field(value_out, scratch, &$value.$field)
         })?;
     }};
 }
@@ -67,32 +29,8 @@ macro_rules! __finfmt_ber_tlv_init_fields {
 #[doc(hidden)]
 macro_rules! __finfmt_ber_tlv_encode_fields {
     ($value:expr, $output:expr, $scratch:expr;) => {};
-    ($value:expr, $output:expr, $scratch:expr; $tag:expr => $field:ident : Option<Composite<$fmt:ty>> $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_ber_tlv_encode_field!($value, $output, $scratch, $tag, $field : Option<Composite<$fmt>>);
-        $crate::__finfmt_ber_tlv_encode_fields!($value, $output, $scratch; $($($rest)*)?);
-    }};
-    ($value:expr, $output:expr, $scratch:expr; $tag:expr => $field:ident : Option<Composite<$fmt:ty> > $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_ber_tlv_encode_field!($value, $output, $scratch, $tag, $field : Option<Composite<$fmt> >);
-        $crate::__finfmt_ber_tlv_encode_fields!($value, $output, $scratch; $($($rest)*)?);
-    }};
-    ($value:expr, $output:expr, $scratch:expr; $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>> $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_ber_tlv_encode_field!($value, $output, $scratch, $tag, $field : Option<DirectScalar<$fmt $(, $value_ty)?>>);
-        $crate::__finfmt_ber_tlv_encode_fields!($value, $output, $scratch; $($($rest)*)?);
-    }};
-    ($value:expr, $output:expr, $scratch:expr; $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> > $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_ber_tlv_encode_field!($value, $output, $scratch, $tag, $field : Option<DirectScalar<$fmt $(, $value_ty)?> >);
-        $crate::__finfmt_ber_tlv_encode_fields!($value, $output, $scratch; $($($rest)*)?);
-    }};
     ($value:expr, $output:expr, $scratch:expr; $tag:expr => $field:ident : Option<$fmt:ty> $(, $($rest:tt)*)?) => {{
         $crate::__finfmt_ber_tlv_encode_field!($value, $output, $scratch, $tag, $field : Option<$fmt>);
-        $crate::__finfmt_ber_tlv_encode_fields!($value, $output, $scratch; $($($rest)*)?);
-    }};
-    ($value:expr, $output:expr, $scratch:expr; $tag:expr => $field:ident : Composite<$fmt:ty> $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_ber_tlv_encode_field!($value, $output, $scratch, $tag, $field : Composite<$fmt>);
-        $crate::__finfmt_ber_tlv_encode_fields!($value, $output, $scratch; $($($rest)*)?);
-    }};
-    ($value:expr, $output:expr, $scratch:expr; $tag:expr => $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?> $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_ber_tlv_encode_field!($value, $output, $scratch, $tag, $field : DirectScalar<$fmt $(, $value_ty)?>);
         $crate::__finfmt_ber_tlv_encode_fields!($value, $output, $scratch; $($($rest)*)?);
     }};
     ($value:expr, $output:expr, $scratch:expr; $tag:expr => $field:ident : $fmt:ty $(, $($rest:tt)*)?) => {{
@@ -104,110 +42,8 @@ macro_rules! __finfmt_ber_tlv_encode_fields {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __finfmt_ber_tlv_match_field {
-    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident, $tag:expr => $field:ident : Option<Composite<$fmt:ty>>) => {{
-        if !$matched {
-            $matched = $crate::composite::decode_ber_tlv_field(
-                $tag_bytes,
-                $tag,
-                $value_input,
-                $scratch,
-                &mut $field,
-                stringify!($field),
-                |value_input, scratch| {
-                    <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::decode(value_input, scratch)
-                },
-            )?;
-        }
-    }};
-    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident, $tag:expr => $field:ident : Option<Composite<$fmt:ty> >) => {{
-        if !$matched {
-            $matched = $crate::composite::decode_ber_tlv_field(
-                $tag_bytes,
-                $tag,
-                $value_input,
-                $scratch,
-                &mut $field,
-                stringify!($field),
-                |value_input, scratch| {
-                    <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::decode(value_input, scratch)
-                },
-            )?;
-        }
-    }};
-    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident, $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>>) => {{
-        if !$matched {
-            $matched = $crate::composite::decode_ber_tlv_field(
-                $tag_bytes,
-                $tag,
-                $value_input,
-                $scratch,
-                &mut $field,
-                stringify!($field),
-                |value_input, scratch| {
-                    <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode(value_input, scratch)
-                },
-            )?;
-        }
-    }};
-    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident, $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> >) => {{
-        if !$matched {
-            $matched = $crate::composite::decode_ber_tlv_field(
-                $tag_bytes,
-                $tag,
-                $value_input,
-                $scratch,
-                &mut $field,
-                stringify!($field),
-                |value_input, scratch| {
-                    <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode(value_input, scratch)
-                },
-            )?;
-        }
-    }};
     ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident, $tag:expr => $field:ident : Option<$fmt:ty>) => {{
-        if !$matched {
-            $matched = $crate::composite::decode_ber_tlv_field(
-                $tag_bytes,
-                $tag,
-                $value_input,
-                $scratch,
-                &mut $field,
-                stringify!($field),
-                |value_input, scratch| {
-                    $crate::composite::decode_serde_scalar::<_, $fmt>(value_input, scratch).map_err($crate::CompositeError::from)
-                },
-            )?;
-        }
-    }};
-    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident, $tag:expr => $field:ident : Composite<$fmt:ty>) => {{
-        if !$matched {
-            $matched = $crate::composite::decode_ber_tlv_field(
-                $tag_bytes,
-                $tag,
-                $value_input,
-                $scratch,
-                &mut $field,
-                stringify!($field),
-                |value_input, scratch| {
-                    <$crate::composite::Composite<$fmt> as $crate::composite::CompositeFmt<_>>::decode(value_input, scratch)
-                },
-            )?;
-        }
-    }};
-    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident, $tag:expr => $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?>) => {{
-        if !$matched {
-            $matched = $crate::composite::decode_ber_tlv_field(
-                $tag_bytes,
-                $tag,
-                $value_input,
-                $scratch,
-                &mut $field,
-                stringify!($field),
-                |value_input, scratch| {
-                    <$crate::composite::DirectScalar<$fmt $(, $value_ty)?> as $crate::composite::CompositeFmt<_>>::decode(value_input, scratch)
-                },
-            )?;
-        }
+        $crate::__finfmt_ber_tlv_match_field!($tag_bytes, $value_input, $scratch, $matched, $tag => $field : $fmt)
     }};
     ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident, $tag:expr => $field:ident : $fmt:ty) => {{
         if !$matched {
@@ -218,9 +54,7 @@ macro_rules! __finfmt_ber_tlv_match_field {
                 $scratch,
                 &mut $field,
                 stringify!($field),
-                |value_input, scratch| {
-                    $crate::composite::decode_serde_scalar::<_, $fmt>(value_input, scratch).map_err($crate::CompositeError::from)
-                },
+                |value_input, scratch| <$fmt as $crate::composite::FieldDecode<'_, _>>::decode_field(value_input, scratch),
             )?;
         }
     }};
@@ -230,32 +64,8 @@ macro_rules! __finfmt_ber_tlv_match_field {
 #[doc(hidden)]
 macro_rules! __finfmt_ber_tlv_match_fields {
     ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident;) => {};
-    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident; $tag:expr => $field:ident : Option<Composite<$fmt:ty>> $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_ber_tlv_match_field!($tag_bytes, $value_input, $scratch, $matched, $tag => $field : Option<Composite<$fmt>>);
-        $crate::__finfmt_ber_tlv_match_fields!($tag_bytes, $value_input, $scratch, $matched; $($($rest)*)?);
-    }};
-    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident; $tag:expr => $field:ident : Option<Composite<$fmt:ty> > $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_ber_tlv_match_field!($tag_bytes, $value_input, $scratch, $matched, $tag => $field : Option<Composite<$fmt> >);
-        $crate::__finfmt_ber_tlv_match_fields!($tag_bytes, $value_input, $scratch, $matched; $($($rest)*)?);
-    }};
-    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident; $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>> $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_ber_tlv_match_field!($tag_bytes, $value_input, $scratch, $matched, $tag => $field : Option<DirectScalar<$fmt $(, $value_ty)?>>);
-        $crate::__finfmt_ber_tlv_match_fields!($tag_bytes, $value_input, $scratch, $matched; $($($rest)*)?);
-    }};
-    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident; $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> > $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_ber_tlv_match_field!($tag_bytes, $value_input, $scratch, $matched, $tag => $field : Option<DirectScalar<$fmt $(, $value_ty)?> >);
-        $crate::__finfmt_ber_tlv_match_fields!($tag_bytes, $value_input, $scratch, $matched; $($($rest)*)?);
-    }};
     ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident; $tag:expr => $field:ident : Option<$fmt:ty> $(, $($rest:tt)*)?) => {{
         $crate::__finfmt_ber_tlv_match_field!($tag_bytes, $value_input, $scratch, $matched, $tag => $field : Option<$fmt>);
-        $crate::__finfmt_ber_tlv_match_fields!($tag_bytes, $value_input, $scratch, $matched; $($($rest)*)?);
-    }};
-    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident; $tag:expr => $field:ident : Composite<$fmt:ty> $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_ber_tlv_match_field!($tag_bytes, $value_input, $scratch, $matched, $tag => $field : Composite<$fmt>);
-        $crate::__finfmt_ber_tlv_match_fields!($tag_bytes, $value_input, $scratch, $matched; $($($rest)*)?);
-    }};
-    ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident; $tag:expr => $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?> $(, $($rest:tt)*)?) => {{
-        $crate::__finfmt_ber_tlv_match_field!($tag_bytes, $value_input, $scratch, $matched, $tag => $field : DirectScalar<$fmt $(, $value_ty)?>);
         $crate::__finfmt_ber_tlv_match_fields!($tag_bytes, $value_input, $scratch, $matched; $($($rest)*)?);
     }};
     ($tag_bytes:expr, $value_input:expr, $scratch:expr, $matched:ident; $tag:expr => $field:ident : $fmt:ty $(, $($rest:tt)*)?) => {{
@@ -270,44 +80,8 @@ macro_rules! __finfmt_ber_tlv_finish_fields_as {
     ($result_ty:ty, $ctor:path; [$($built:tt)*];) => {
         Ok::<$result_ty, $crate::CompositeError>({ $ctor { $($built)* } })
     };
-    ($result_ty:ty, $ctor:path; [$($built:tt)*]; $tag:expr => $field:ident : Option<Composite<$fmt:ty>> $(, $($rest:tt)*)?) => {{
-        let $field = $field;
-        $crate::__finfmt_ber_tlv_finish_fields_as!($result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
-    }};
-    ($result_ty:ty, $ctor:path; [$($built:tt)*]; $tag:expr => $field:ident : Option<Composite<$fmt:ty> > $(, $($rest:tt)*)?) => {{
-        let $field = $field;
-        $crate::__finfmt_ber_tlv_finish_fields_as!($result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
-    }};
-    ($result_ty:ty, $ctor:path; [$($built:tt)*]; $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?>> $(, $($rest:tt)*)?) => {{
-        let $field = $field;
-        $crate::__finfmt_ber_tlv_finish_fields_as!($result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
-    }};
-    ($result_ty:ty, $ctor:path; [$($built:tt)*]; $tag:expr => $field:ident : Option<DirectScalar<$fmt:ty $(, $value_ty:ty)?> > $(, $($rest:tt)*)?) => {{
-        let $field = $field;
-        $crate::__finfmt_ber_tlv_finish_fields_as!($result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
-    }};
     ($result_ty:ty, $ctor:path; [$($built:tt)*]; $tag:expr => $field:ident : Option<$fmt:ty> $(, $($rest:tt)*)?) => {{
         let $field = $field;
-        $crate::__finfmt_ber_tlv_finish_fields_as!($result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
-    }};
-    ($result_ty:ty, $ctor:path; [$($built:tt)*]; $tag:expr => $field:ident : Composite<$fmt:ty> $(, $($rest:tt)*)?) => {{
-        let $field = match $field {
-            Some(value) => value,
-            None => {
-                $crate::__private::cold_path();
-                return Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)));
-            }
-        };
-        $crate::__finfmt_ber_tlv_finish_fields_as!($result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
-    }};
-    ($result_ty:ty, $ctor:path; [$($built:tt)*]; $tag:expr => $field:ident : DirectScalar<$fmt:ty $(, $value_ty:ty)?> $(, $($rest:tt)*)?) => {{
-        let $field = match $field {
-            Some(value) => value,
-            None => {
-                $crate::__private::cold_path();
-                return Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)));
-            }
-        };
         $crate::__finfmt_ber_tlv_finish_fields_as!($result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
     }};
     ($result_ty:ty, $ctor:path; [$($built:tt)*]; $tag:expr => $field:ident : $fmt:ty $(, $($rest:tt)*)?) => {{
@@ -319,17 +93,6 @@ macro_rules! __finfmt_ber_tlv_finish_fields_as {
             }
         };
         $crate::__finfmt_ber_tlv_finish_fields_as!($result_ty, $ctor; [$($built)* $field: $field,]; $($($rest)*)?)
-    }};
-}
-
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __finfmt_ber_tlv_decode_construct {
-    ($input:expr, $scratch:expr, $padding:expr, $ty:path; extras: $extras:ident, $($fields:tt)*) => {{
-        $crate::__finfmt_ber_tlv_decode_construct_as!($input, $scratch, $padding, $ty, $ty; extras: $extras, $($fields)*)
-    }};
-    ($input:expr, $scratch:expr, $padding:expr, $ty:path; $($fields:tt)*) => {{
-        $crate::__finfmt_ber_tlv_decode_construct_as!($input, $scratch, $padding, $ty, $ty; $($fields)*)
     }};
 }
 
@@ -486,19 +249,19 @@ macro_rules! ber_tlv_format {
         $(#[$attr])*
         $vis struct $name;
 
-        impl<$lt> $crate::composite::CompositeFmt<$ty<$lt>> for $name {
-            type Decoded<'de> = $ty<'de>;
-
+        impl<$lt> $crate::composite::FieldEncode<$ty<$lt>> for $name {
             #[inline(always)]
-            fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
+            fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_encode_fields!(value, output, scratch; $($fields)*);
                 $crate::composite::BerTlvExtras::encode_unknowns(&value.$extras, output, scratch, $crate::__finfmt_ber_tlv_known_tags!($($fields)*))
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($extras)))?;
                 Ok(())
             }
+        }
 
+        impl<'de> $crate::composite::FieldDecode<'de, $ty<'de>> for $name {
             #[inline(always)]
-            fn decode<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
+            fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<$ty<'de>, $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_decode_construct_as!(input, scratch, false $(|| $padding)?, $ty<'de>, $ty; extras: $extras, $($fields)*)
             }
         }
@@ -514,17 +277,17 @@ macro_rules! ber_tlv_format {
         $(#[$attr])*
         $vis struct $name;
 
-        impl<$lt> $crate::composite::CompositeFmt<$ty<$lt>> for $name {
-            type Decoded<'de> = $ty<'de>;
-
+        impl<$lt> $crate::composite::FieldEncode<$ty<$lt>> for $name {
             #[inline(always)]
-            fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
+            fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty<$lt>) -> Result<(), $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_encode_fields!(value, output, scratch; $($fields)*);
                 Ok(())
             }
+        }
 
+        impl<'de> $crate::composite::FieldDecode<'de, $ty<'de>> for $name {
             #[inline(always)]
-            fn decode<'de>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self::Decoded<'de>, $crate::CompositeError> {
+            fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<$ty<'de>, $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_decode_construct_as!(input, scratch, false $(|| $padding)?, $ty<'de>, $ty; $($fields)*)
             }
         }
@@ -541,20 +304,20 @@ macro_rules! ber_tlv_format {
         $(#[$attr])*
         $vis struct $name;
 
-        impl $crate::composite::CompositeFmt<$ty> for $name {
-            type Decoded<'de> = $ty;
-
+        impl $crate::composite::FieldEncode<$ty> for $name {
             #[inline(always)]
-            fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
+            fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_encode_fields!(value, output, scratch; $($fields)*);
                 $crate::composite::BerTlvExtras::encode_unknowns(&value.$extras, output, scratch, $crate::__finfmt_ber_tlv_known_tags!($($fields)*))
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($extras)))?;
                 Ok(())
             }
+        }
 
+        impl<'de> $crate::composite::FieldDecode<'de, $ty> for $name {
             #[inline(always)]
-            fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
-                $crate::__finfmt_ber_tlv_decode_construct!(input, scratch, false $(|| $padding)?, $ty; extras: $extras, $($fields)*)
+            fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<$ty, $crate::CompositeError> {
+                $crate::__finfmt_ber_tlv_decode_construct_as!(input, scratch, false $(|| $padding)?, $ty, $ty; extras: $extras, $($fields)*)
             }
         }
     };
@@ -569,18 +332,18 @@ macro_rules! ber_tlv_format {
         $(#[$attr])*
         $vis struct $name;
 
-        impl $crate::composite::CompositeFmt<$ty> for $name {
-            type Decoded<'de> = $ty;
-
+        impl $crate::composite::FieldEncode<$ty> for $name {
             #[inline(always)]
-            fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
+            fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &$ty) -> Result<(), $crate::CompositeError> {
                 $crate::__finfmt_ber_tlv_encode_fields!(value, output, scratch; $($fields)*);
                 Ok(())
             }
+        }
 
+        impl<'de> $crate::composite::FieldDecode<'de, $ty> for $name {
             #[inline(always)]
-            fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<$ty, $crate::CompositeError> {
-                $crate::__finfmt_ber_tlv_decode_construct!(input, scratch, false $(|| $padding)?, $ty; $($fields)*)
+            fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<$ty, $crate::CompositeError> {
+                $crate::__finfmt_ber_tlv_decode_construct_as!(input, scratch, false $(|| $padding)?, $ty, $ty; $($fields)*)
             }
         }
     };

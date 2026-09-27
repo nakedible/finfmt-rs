@@ -20,12 +20,16 @@ include = [
 ]
 
 [features]
+default = ["serde"]
 asm-inspect = []
+compact_str = ["dep:compact_str"]
 no-panic = ["dep:no-panic"]
+serde = ["dep:serde"]
 
 [dependencies]
+compact_str = { version = "0.9.1", optional = true }
 no-panic = { version = "0.1.36", optional = true }
-serde = { version = "1.0.228", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"], optional = true }
 
 [dev-dependencies]
 compact_str = { version = "0.9.1", features = ["serde"] }
@@ -81,6 +85,11 @@ required-features = ["asm-inspect"]
 [[bench]]
 name = "message"
 harness = false
+required-features = ["compact_str"]
+
+[[example]]
+name = "nibss"
+required-features = ["compact_str"]
 
 [profile.release]
 lto = true
