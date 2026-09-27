@@ -42,7 +42,7 @@ impl Step for Ebcdic037 {
     }
 
     #[inline(always)]
-    fn encode_in_place(buf: &mut [u8]) -> Result<(), Error> {
+    fn encode_in_place(buf: &mut [u8], _input_len: usize) -> Result<(), Error> {
         translate_bytes_inplace(buf, &ASCII_TO_EBCDIC_037);
         Ok(())
     }

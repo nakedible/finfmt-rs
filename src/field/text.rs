@@ -25,7 +25,7 @@ impl Step for Identity {
     }
 
     #[inline(always)]
-    fn encode_in_place(_buf: &mut [u8]) -> Result<(), Error> {
+    fn encode_in_place(_buf: &mut [u8], _input_len: usize) -> Result<(), Error> {
         Ok(())
     }
 }
@@ -42,6 +42,8 @@ impl Step for Identity {
 pub struct PadRight<const PAD_TO: usize, const CHAR: u8 = b' ', const MIN_LEN: usize = 0>;
 
 impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadRight<PAD_TO, CHAR, MIN_LEN> {
+    const ENCODE_APPENDING: bool = true;
+
     #[inline(always)]
     fn encoded_len(input_len: usize) -> Result<usize, Error> {
         Ok(input_len.max(PAD_TO))
@@ -50,6 +52,12 @@ impl<const PAD_TO: usize, const CHAR: u8, const MIN_LEN: usize> Step for PadRigh
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         encode_padded(output, input, PAD_TO, false, CHAR)
+    }
+
+    #[inline(always)]
+    fn encode_in_place(buf: &mut [u8], input_len: usize) -> Result<(), Error> {
+        buf.get_mut(input_len..).unwrap_or_default().fill(CHAR);
+        Ok(())
     }
 
     #[inline(always)]

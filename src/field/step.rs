@@ -21,6 +21,13 @@ pub trait Step {
     /// encode without scratch, though callers always provide scratch.
     const ENCODE_IN_PLACE: bool = false;
 
+    /// Encoding can finish in place by transforming the bytes where they are
+    /// and writing more after them, as `PadRight` does. A `Chain` ending in
+    /// such a step lets the earlier steps write straight into output too, but
+    /// it costs a little more than [`Step::ENCODE_IN_PLACE`], which it
+    /// includes.
+    const ENCODE_APPENDING: bool = Self::ENCODE_IN_PLACE;
+
     /// Encoding copies the input unchanged, so a `Chain` starting with this
     /// step skips staging its output.
     const ENCODE_UNCHANGED: bool = false;
@@ -67,8 +74,11 @@ pub trait Step {
         Self::decode(input, scratch, None)
     }
 
+    /// Finish encoding in place: `buf` is the step's whole output,
+    /// `encoded_len(input_len)` bytes, starting with the `input_len` input
+    /// bytes. Only for steps with [`Step::ENCODE_APPENDING`].
     #[inline(always)]
-    fn encode_in_place(_buf: &mut [u8]) -> Result<(), Error> {
+    fn encode_in_place(_buf: &mut [u8], _input_len: usize) -> Result<(), Error> {
         cold_path();
         Err(Error::Internal)
     }
@@ -125,13 +135,14 @@ impl Step for Count {
     }
 
     #[inline(always)]
-    fn encode_in_place(_buf: &mut [u8]) -> Result<(), Error> {
+    fn encode_in_place(_buf: &mut [u8], _input_len: usize) -> Result<(), Error> {
         Ok(())
     }
 }
 
 impl<First: Step, Rest: Step> Step for Chain<First, Rest> {
     const ENCODE_IN_PLACE: bool = First::ENCODE_IN_PLACE && Rest::ENCODE_IN_PLACE;
+    const ENCODE_APPENDING: bool = First::ENCODE_APPENDING && Rest::ENCODE_APPENDING;
     const ENCODE_UNCHANGED: bool = First::ENCODE_UNCHANGED && Rest::ENCODE_UNCHANGED;
     const HAS_COUNT: bool = {
         assert!(!(First::HAS_COUNT && Rest::HAS_COUNT), "a step chain has at most one Count marker");
@@ -168,7 +179,25 @@ impl<First: Step, Rest: Step> Step for Chain<First, Rest> {
         }
         if Rest::ENCODE_IN_PLACE {
             let buf = First::encode(output, scratch, input)?;
-            Rest::encode_in_place(buf)?;
+            let len = buf.len();
+            Rest::encode_in_place(buf, len)?;
+            return Ok(buf);
+        }
+        if Rest::ENCODE_APPENDING {
+            // `First` writes at the start of the output, and `Rest` finishes
+            // there. Its written length decides the area: for UTF-8 input to
+            // `Ebcdic1142`, `encoded_len` is only a bound.
+            let area = core::mem::take(output);
+            let written = {
+                let mut first_out = &mut *area;
+                First::encode(&mut first_out, scratch, input)?.len()
+            };
+            let Some((buf, rest)) = area.split_at_mut_checked(Rest::encoded_len(written)?) else {
+                cold_path();
+                return Err(Error::BufferOverflow);
+            };
+            *output = rest;
+            Rest::encode_in_place(buf, written)?;
             return Ok(buf);
         }
         let mid_len = First::encoded_len(input.len())?;
@@ -203,14 +232,18 @@ impl<First: Step, Rest: Step> Step for Chain<First, Rest> {
     }
 
     #[inline(always)]
-    fn encode_in_place(buf: &mut [u8]) -> Result<(), Error> {
-        First::encode_in_place(buf)?;
-        Rest::encode_in_place(buf)
+    fn encode_in_place(buf: &mut [u8], input_len: usize) -> Result<(), Error> {
+        let mid_len = First::encoded_len(input_len)?;
+        let area = buf.get_mut(..mid_len);
+        debug_assert!(area.is_some(), "step output is shorter than its input");
+        First::encode_in_place(area.unwrap_or_default(), input_len)?;
+        Rest::encode_in_place(buf, mid_len)
     }
 }
 
 impl<S: Step, C: Check> Step for DecodeCheck<S, C> {
     const ENCODE_IN_PLACE: bool = S::ENCODE_IN_PLACE;
+    const ENCODE_APPENDING: bool = S::ENCODE_APPENDING;
     const ENCODE_UNCHANGED: bool = S::ENCODE_UNCHANGED;
     const HAS_COUNT: bool = S::HAS_COUNT;
 
@@ -247,14 +280,15 @@ impl<S: Step, C: Check> Step for DecodeCheck<S, C> {
     }
 
     #[inline(always)]
-    fn encode_in_place(buf: &mut [u8]) -> Result<(), Error> {
-        S::encode_in_place(buf)
+    fn encode_in_place(buf: &mut [u8], input_len: usize) -> Result<(), Error> {
+        S::encode_in_place(buf, input_len)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::Chain;
+    use crate::primitive::nibble::UpperHexDigits;
     use crate::*;
 
     fn encode_without_scratch<F: ScalarFmt>(input: &[u8], expected: &[u8]) {
@@ -273,6 +307,15 @@ mod tests {
         encode_without_scratch::<Field<Ascii<0, 8>, Fixed<8>, Chain<PadRight<8>, Ebcdic037>>>(
             b"ABC",
             &[0xC1, 0xC2, 0xC3, 0x40, 0x40, 0x40, 0x40, 0x40],
+        );
+        // Padding after a transform fills around what the transform wrote.
+        encode_without_scratch::<Field<Ascii<3, 3>, Fixed<3>, crate::chain!(Ebcdic037, Count, PadRight<5>)>>(b"ABC", b"\xC1\xC2\xC3  ");
+        encode_without_scratch::<Field<Ebcdic1142Text<0, 3>, Fixed<4>, crate::chain!(Ebcdic1142, PadRight<4, 0x40>)>>(
+            "Æ".as_bytes(),
+            b"\x7B\x40\x40\x40",
+        );
+        encode_without_scratch::<Field<Binary<0, 2>, Fixed<5>, crate::chain!(UnpackNibbles<UpperHexDigits>, PadRight<5, b'0'>)>>(
+            b"\x0A", b"0A000",
         );
     }
 
