@@ -270,7 +270,8 @@ as flattening and optional field handling do not map cleanly to bitmap-driven,
 delimiter-driven, fixed-layout, or variant wire formats. Those are represented
 by explicit field format implementations and macros. Serde attributes on a
 value type describe its JSON form; they reach the wire only through an explicit
-`SerdeScalar<F>`.
+`SerdeScalar<F>`, and never for enums: the adapter rejects them, because an
+enum's wire mapping is its own `ScalarEncode`/`ScalarDecode` implementation.
 
 ## Composite Semantics
 
