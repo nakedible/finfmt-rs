@@ -21,7 +21,7 @@ fn decimal_prefix_len(value: usize, width: usize) -> Result<usize, Error> {
 /// The length is a number of units of the framed data. A [`crate::Field`]
 /// counts at its [`crate::Count`] marker, or its wire bytes without one; a
 /// [`crate::composite::BoundedList`] counts items. The spec holds the number's
-/// codec and its arithmetic ([`Offset`]), the same for every consumer.
+/// codec and its arithmetic ([`Offset`], [`Per`]), the same for every consumer.
 pub trait LengthSpec {
     /// The framing states a length. Only [`Rest`] does not: it takes whatever
     /// input the enclosing format supplies.
@@ -182,6 +182,43 @@ impl<L: LengthSpec, const K: usize> LengthSpec for Offset<L, K> {
     }
 }
 
+/// A length whose prefix `L` counts groups of `D` units: binary data carried
+/// as hex text, counted in bytes, is `Per<L, 2>` over the hex digits. Encoding
+/// a length that is not a multiple of `D` is a composition mistake, asserted
+/// in debug builds; the value's check must rule it out. A stated count whose
+/// length overflows is `Invalid`.
+pub struct Per<L, const D: usize>(PhantomData<L>);
+
+impl<L: LengthSpec, const D: usize> LengthSpec for Per<L, D> {
+    const STATES_LEN: bool = L::STATES_LEN;
+
+    #[inline(always)]
+    fn encoded_len(len: usize) -> Result<usize, Error> {
+        const { assert!(D != 0, "a Per length needs a nonzero group size") };
+        debug_assert!(len.is_multiple_of(D), "the length is not a whole number of groups");
+        L::encoded_len(len / D)
+    }
+
+    #[inline(always)]
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], len: usize) -> Result<(), Error> {
+        const { assert!(D != 0, "a Per length needs a nonzero group size") };
+        debug_assert!(len.is_multiple_of(D), "the length is not a whole number of groups");
+        L::encode(output, scratch, len / D)
+    }
+
+    #[inline(always)]
+    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Option<usize>, Error> {
+        const { assert!(D != 0, "a Per length needs a nonzero group size") };
+        let Some(groups) = L::decode(input, scratch)? else {
+            return Ok(None);
+        };
+        groups.checked_mul(D).map(Some).ok_or_else(|| {
+            cold_path();
+            Error::Invalid
+        })
+    }
+}
+
 /// Consume the entire remaining input supplied by the enclosing format.
 /// A following sibling requires an enclosing frame that bounds this input.
 pub struct Rest;
@@ -207,7 +244,9 @@ impl LengthSpec for Rest {
 
 #[cfg(test)]
 mod tests {
-    use super::{AsciiLength, BlankableEbcdicLength, EbcdicLength, Fixed, Length, LengthSpec, Offset, Rest, encode_ascii_decimal_fixed};
+    use super::{
+        AsciiLength, BlankableEbcdicLength, EbcdicLength, Fixed, Length, LengthSpec, Offset, Per, Rest, encode_ascii_decimal_fixed,
+    };
     use crate::field::{Ascii, Field, FixedBinaryBe};
     use crate::{Error, ScalarFmt};
 
@@ -248,6 +287,28 @@ mod tests {
         Record::encode(&mut &mut output[..], &mut [], b"\0\0AB").unwrap();
         assert_eq!(output[..6], *b"\x00\x06\0\0AB");
         assert_eq!(Record::decode(&mut &output[..6], &mut &mut [][..]), Ok(&b"\0\0AB"[..]));
+    }
+
+    #[test]
+    fn per_prefixes_count_groups() {
+        type Bytes = Per<AsciiLength<2>, 2>;
+        assert_eq!(encode_length::<Bytes>(8).unwrap(), b"04");
+        assert_eq!(decode_length::<Bytes>(b"04"), Ok(Some(8)));
+        assert_eq!(
+            decode_length::<Per<Length<FixedBinaryBe<8>>, 2>>(&u64::MAX.to_be_bytes()),
+            Err(Error::Invalid)
+        );
+        assert_eq!(decode_length::<Per<Rest, 2>>(b""), Ok(None));
+        // Inside `Per`, the offset is in groups; outside, in the counted units.
+        type Groups = Per<Offset<AsciiLength<2>, 1>, 2>;
+        assert_eq!(encode_length::<Groups>(8).unwrap(), b"05");
+        assert_eq!(decode_length::<Groups>(b"05"), Ok(Some(8)));
+        type Units = Offset<Per<AsciiLength<2>, 2>, 2>;
+        assert_eq!(encode_length::<Units>(8).unwrap(), b"05");
+        assert_eq!(decode_length::<Units>(b"05"), Ok(Some(8)));
+        if cfg!(debug_assertions) {
+            assert!(std::panic::catch_unwind(|| encode_length::<Bytes>(3)).is_err());
+        }
     }
 
     #[test]

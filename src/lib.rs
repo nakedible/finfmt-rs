@@ -20,7 +20,7 @@ pub use field::{
     Ebcdic037, Ebcdic037Ascii, Ebcdic1142, Ebcdic1142Text, EbcdicLength, EbcdicPrintable, Field, Fixed, FixedBinaryBe, FixedComp3,
     FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedEbcdic, Hex, HexEven, Identity, ImpliedDecimal, Iso88591,
     Length, LengthSpec, LowerHex, LowerHexEven, MinusPrefix, Numeric, Offset, PackNibbles, PackNibblesLeft, PackNibblesRight, PadLeft,
-    PadLeftEven, PadRight, PadRightEven, Rest, SignPrefix, Step, Track2, Truncate, UnpackNibbles, UpperAlpha, UpperAlphanum,
+    PadLeftEven, PadRight, PadRightEven, Per, Rest, SignPrefix, Step, Track2, Truncate, UnpackNibbles, UpperAlpha, UpperAlphanum,
     UpperAsciiPrintable, UpperHex, UpperHexEven,
 };
 pub use scalarfmt::ScalarFmt;

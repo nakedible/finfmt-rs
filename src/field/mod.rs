@@ -26,7 +26,7 @@ pub use check::{
 };
 pub use ebcdic::{Ebcdic037, Ebcdic1142};
 pub use format::Field;
-pub use length::{AsciiLength, BlankableEbcdicLength, EbcdicLength, Fixed, Length, LengthSpec, Offset, Rest};
+pub use length::{AsciiLength, BlankableEbcdicLength, EbcdicLength, Fixed, Length, LengthSpec, Offset, Per, Rest};
 pub use nibble::{PackNibbles, PackNibblesLeft, PackNibblesRight, UnpackNibbles};
 pub use numeric::{
     FixedBinaryBe, FixedComp3, FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedEbcdic, ImpliedDecimal, MinusPrefix,
