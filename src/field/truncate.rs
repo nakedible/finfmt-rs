@@ -7,7 +7,8 @@ use crate::{Error, ScalarFmt};
 /// prediction and encoding. Keeps the left end, or the right end when
 /// `KEEP_RIGHT` is true; padding and framing remain the inner format's job.
 ///
-/// `MAX_LEN` is in the field's length unit. String values are cut by characters
+/// `MAX_LEN` is in the value's own units, not what a length prefix counts.
+/// String values are cut by characters
 /// and never split a character; wire text is single-byte, so a character is one
 /// wire byte. Byte values are cut by bytes. Discarded input is not validated.
 ///
