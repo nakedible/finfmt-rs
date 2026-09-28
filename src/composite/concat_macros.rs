@@ -73,38 +73,6 @@ macro_rules! concat_format {
 }
 
 #[macro_export]
-macro_rules! absent_format {
-    (
-        $(#[$attr:meta])*
-        $vis:vis struct $name:ident {
-            $($fields:tt)*
-        }
-    ) => {
-        $(#[$attr])*
-        $vis struct $name;
-
-        impl $crate::composite::AbsentFmt for $name {
-            #[inline(always)]
-            fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8], len: usize) -> Result<(), $crate::Error> {
-                let available = output.len();
-                $crate::absent_format!(@encode output, scratch; $($fields)*);
-                debug_assert_eq!(available - output.len(), len, "the absent pattern is not as wide as its area");
-                Ok(())
-            }
-        }
-    };
-    (@encode $output:expr, $scratch:expr;) => {};
-    (@encode $output:expr, $scratch:expr; _: $fmt:ty = $bytes:expr $(, $($rest:tt)*)?) => {{
-        let expected: &[u8] = $bytes;
-        <$fmt as $crate::ScalarFmt>::encode($output, $scratch, expected)?;
-        $crate::absent_format!(@encode $output, $scratch; $($($rest)*)?);
-    }};
-    (@encode $output:expr, $scratch:expr; $($unexpected:tt)+) => {
-        compile_error!("absent_format! only supports `_ : Fmt = bytes` entries")
-    };
-}
-
-#[macro_export]
 #[doc(hidden)]
 macro_rules! __finfmt_concat_encode_fields {
     ($value:expr, $output:expr, $scratch:expr;) => {};

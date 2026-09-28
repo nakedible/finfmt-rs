@@ -44,6 +44,10 @@ use crate::utils::{cold_path, length_as_invalid};
     note = "field formats are scalar formats or composite formats; both implement `FieldEncode`/`FieldDecode`"
 )]
 pub trait ScalarFmt {
+    /// The format consumes all remaining input, as a [`crate::Rest`] length
+    /// does.
+    const TAKES_REST: bool = false;
+
     /// Calculate the encoded wire length in bytes for a given user input.
     ///
     /// Returns the exact number of bytes that `encode` would write for this input.

@@ -44,6 +44,8 @@ impl<T: ?Sized + ScalarEncode, F: ScalarFmt> FieldEncode<T> for F {
 }
 
 impl<'de, T: ScalarDecode<'de>, F: ScalarFmt> FieldDecode<'de, T> for F {
+    const TAKES_REST: bool = F::TAKES_REST;
+
     #[inline]
     fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<T, CompositeError> {
         Ok(T::decode_scalar::<F>(input, scratch)?)

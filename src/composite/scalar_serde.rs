@@ -653,6 +653,8 @@ impl<T: ?Sized + Serialize, F: ScalarFmt> FieldEncode<T> for SerdeScalar<F> {
 }
 
 impl<'de, T: Deserialize<'de>, F: ScalarFmt> FieldDecode<'de, T> for SerdeScalar<F> {
+    const TAKES_REST: bool = F::TAKES_REST;
+
     #[inline(always)]
     fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<T, CompositeError> {
         Ok(decode_serde_scalar::<T, F>(input, scratch)?)

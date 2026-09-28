@@ -1,6 +1,7 @@
 //! Composable field operations.
 
 mod check;
+mod constant;
 mod ebcdic;
 mod format;
 mod length;
@@ -24,6 +25,7 @@ pub use check::{
     Alpha, Alphanum, Ascii, AsciiPrintable, Bcd, BcdBytes, Bcdz, Binary, Check, Ebcdic037Ascii, Ebcdic1142Text, EbcdicPrintable, Hex,
     HexEven, Iso88591, LowerHex, LowerHexEven, Numeric, Track2, UpperAlpha, UpperAlphanum, UpperAsciiPrintable, UpperHex, UpperHexEven,
 };
+pub use constant::{ConstBytes, Fill};
 pub use ebcdic::{Ebcdic037, Ebcdic1142};
 pub use format::Field;
 pub use length::{AsciiLength, BlankableEbcdicLength, EbcdicLength, Fixed, Length, LengthSpec, Offset, Per, Rest};

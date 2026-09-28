@@ -12,17 +12,17 @@ mod utils;
 
 pub use bitmap::{Bitmap, BitmapLayout, decode_bitmap, encode_bitmap};
 pub use composite::{
-    AbsentFmt, BerTlvExtras, BoundedList, ByteFill, ContextDecode, ContextEncode, Empty, FieldDecode, FieldEncode, FixedAreaList, Frame,
-    NoTrailingFields, OptionalAbsent, ScalarDecode, ScalarEncode, Separator, TrailingField, TrailingLengthFrame, decode, encode,
+    AbsentBytes, AbsentFmt, BerTlvExtras, BoundedList, ContextDecode, ContextEncode, Empty, FieldDecode, FieldEncode, FixedAreaList, Frame,
+    NoTrailingFields, OptionAs, ScalarDecode, ScalarEncode, Separator, TrailingField, TrailingLengthFrame, decode, encode,
 };
 #[cfg(feature = "serde")]
 pub use composite::{BerTlvList, SerdeScalar};
 pub use field::{
-    Alpha, Alphanum, Ascii, AsciiLength, AsciiPrintable, Bcd, BcdBytes, Bcdz, Binary, BlankableEbcdicLength, Check, Count, DecodeCheck,
-    Ebcdic037, Ebcdic037Ascii, Ebcdic1142, Ebcdic1142Text, EbcdicLength, EbcdicPrintable, Field, Fixed, FixedBinaryBe, FixedComp3,
-    FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedEbcdic, Hex, HexEven, Identity, ImpliedDecimal, Iso88591,
-    Length, LengthSpec, LowerHex, LowerHexEven, MinusPrefix, Numeric, Offset, PackNibbles, PackNibblesLeft, PackNibblesRight, PadLeft,
-    PadLeftEven, PadRight, PadRightEven, Per, Rest, SignPrefix, Step, Track2, Truncate, UnpackNibbles, UpperAlpha, UpperAlphanum,
+    Alpha, Alphanum, Ascii, AsciiLength, AsciiPrintable, Bcd, BcdBytes, Bcdz, Binary, BlankableEbcdicLength, Check, ConstBytes, Count,
+    DecodeCheck, Ebcdic037, Ebcdic037Ascii, Ebcdic1142, Ebcdic1142Text, EbcdicLength, EbcdicPrintable, Field, Fill, Fixed, FixedBinaryBe,
+    FixedComp3, FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedEbcdic, Hex, HexEven, Identity, ImpliedDecimal,
+    Iso88591, Length, LengthSpec, LowerHex, LowerHexEven, MinusPrefix, Numeric, Offset, PackNibbles, PackNibblesLeft, PackNibblesRight,
+    PadLeft, PadLeftEven, PadRight, PadRightEven, Per, Rest, SignPrefix, Step, Track2, Truncate, UnpackNibbles, UpperAlpha, UpperAlphanum,
     UpperAsciiPrintable, UpperHex, UpperHexEven,
 };
 pub use scalarfmt::ScalarFmt;

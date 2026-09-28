@@ -83,6 +83,8 @@ where
     Item: FieldDecode<'de, T>,
     Sep: ListSeparatorPolicy,
 {
+    const TAKES_REST: bool = !L::STATES_LEN;
+
     #[inline(always)]
     fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Vec<T>, CompositeError> {
         let values = match L::decode(input, scratch)? {
@@ -165,53 +167,6 @@ fn decode_uncounted<'a, T, Item: FieldDecode<'a, T>, Sep: ListSeparatorPolicy, c
     Ok(values)
 }
 
-mod sealed {
-    pub trait FixedAreaSlotSealed {}
-}
-
-/// A slot of a [`FixedAreaList`]: its width, the format of present values,
-/// and how unused slots are written and recognised.
-#[doc(hidden)]
-pub trait FixedAreaSlot: sealed::FixedAreaSlotSealed {
-    /// The format of a present slot's value.
-    type Inner;
-
-    const WIRE_LEN: usize;
-
-    fn encode_absent_slots(output: &mut &mut [u8], scratch: &mut [u8], count: usize) -> Result<(), CompositeError>;
-    fn validate_absent_slots(input: &[u8], scratch: &mut &mut [u8]) -> Result<(), CompositeError>;
-}
-
-impl<Inner, Absent: AbsentFmt, const N: usize> sealed::FixedAreaSlotSealed for OptionalAbsent<Inner, Absent, N> {}
-
-impl<Inner, Absent: AbsentFmt, const N: usize> FixedAreaSlot for OptionalAbsent<Inner, Absent, N> {
-    type Inner = Inner;
-
-    const WIRE_LEN: usize = N;
-
-    #[inline(always)]
-    fn encode_absent_slots(output: &mut &mut [u8], scratch: &mut [u8], count: usize) -> Result<(), CompositeError> {
-        for _ in 0..count {
-            Absent::encode_absent(output, scratch, N)?;
-        }
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn validate_absent_slots(input: &[u8], scratch: &mut &mut [u8]) -> Result<(), CompositeError> {
-        if input.is_empty() {
-            return Ok(());
-        }
-        for slot in input.as_chunks::<N>().0 {
-            if !Absent::is_absent(slot, &mut &mut **scratch)? {
-                crate::utils::cold_path();
-                return Err(Error::Invalid.into());
-            }
-        }
-        Ok(())
-    }
-}
-
 #[inline(always)]
 fn fixed_area_lens(slot_len: usize, max: usize) -> Result<usize, Error> {
     slot_len.checked_mul(max).ok_or_else(|| {
@@ -220,15 +175,15 @@ fn fixed_area_lens(slot_len: usize, max: usize) -> Result<usize, Error> {
     })
 }
 
-impl<T, Len, Slot, const MAX: usize> FieldEncode<Vec<T>> for FixedAreaList<Len, Slot, MAX>
+impl<T, Len, Inner, Absent, const WIDTH: usize, const MAX: usize> FieldEncode<Vec<T>> for FixedAreaList<Len, Inner, Absent, WIDTH, MAX>
 where
     Len: LengthSpec,
-    Slot: FixedAreaSlot,
-    Slot::Inner: FieldEncode<T>,
+    Inner: FieldEncode<T>,
+    Absent: AbsentFmt,
 {
     #[inline(always)]
     fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &Vec<T>) -> Result<(), CompositeError> {
-        const { assert!(Slot::WIRE_LEN != 0, "fixed-area slots must be at least one byte wide") };
+        const { assert!(WIDTH != 0, "fixed-area slots must be at least one byte wide") };
         const { assert!(Len::STATES_LEN, "a fixed area needs a declared used extent") };
         if value.len() > MAX {
             crate::utils::cold_path();
@@ -239,46 +194,55 @@ where
         // Write each slot in turn, so nothing is reserved and filled later.
         for (index, item) in value.iter().enumerate() {
             let available = output.len();
-            Slot::Inner::encode_field(output, scratch, item).map_err(|error| error.with_index(index))?;
-            debug_assert_eq!(available - output.len(), Slot::WIRE_LEN, "the value is not as wide as its slot");
+            Inner::encode_field(output, scratch, item).map_err(|error| error.with_index(index))?;
+            debug_assert_eq!(available - output.len(), WIDTH, "the value is not as wide as its slot");
         }
-        Slot::encode_absent_slots(output, scratch, MAX - value.len())?;
+        for _ in value.len()..MAX {
+            let available = output.len();
+            Absent::encode_absent(output, scratch)?;
+            debug_assert_eq!(available - output.len(), WIDTH, "the absent encoding is not as wide as its slot");
+        }
         Ok(())
     }
 }
 
-impl<'de, T, Len, Slot, const MAX: usize> FieldDecode<'de, Vec<T>> for FixedAreaList<Len, Slot, MAX>
+impl<'de, T, Len, Inner, Absent, const WIDTH: usize, const MAX: usize> FieldDecode<'de, Vec<T>>
+    for FixedAreaList<Len, Inner, Absent, WIDTH, MAX>
 where
     Len: LengthSpec,
-    Slot: FixedAreaSlot,
-    Slot::Inner: FieldDecode<'de, T>,
+    Inner: FieldDecode<'de, T>,
+    Absent: AbsentFmt,
 {
     #[inline(always)]
     fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Vec<T>, CompositeError> {
-        const { assert!(Slot::WIRE_LEN != 0, "fixed-area slots must be at least one byte wide") };
+        const { assert!(WIDTH != 0, "fixed-area slots must be at least one byte wide") };
         const { assert!(Len::STATES_LEN, "a fixed area needs a declared used extent") };
         let count = Len::decode(input, scratch)?.unwrap_or_default();
         if count > MAX {
             crate::utils::cold_path();
             return Err(Error::Invalid.into());
         }
-        let area_len = fixed_area_lens(Slot::WIRE_LEN, MAX)?;
-        let area = take_bytes(input, area_len)?;
+        let area = take_bytes(input, fixed_area_lens(WIDTH, MAX)?)?;
+        let (used, unused) = area.as_chunks::<WIDTH>();
+        debug_assert!(unused.is_empty(), "a fixed area is a whole number of slots");
         let mut values = Vec::with_capacity(count);
-        let mut slots = area;
-        for index in 0..count {
-            let mut slot = slots.split_off(..Slot::WIRE_LEN).ok_or_else(|| {
-                crate::utils::cold_path();
-                CompositeError::from(Error::Internal)
-            })?;
-            let value = Slot::Inner::decode_field(&mut slot, scratch).map_err(|error| error.with_index(index))?;
-            if !slot.is_empty() {
-                crate::utils::cold_path();
-                return Err(CompositeError::from(Error::Invalid).with_index(index));
+        for (index, slot) in used.iter().enumerate() {
+            if index < count {
+                let mut slot_in = &slot[..];
+                let value = Inner::decode_field(&mut slot_in, scratch).map_err(|error| error.with_index(index))?;
+                if !slot_in.is_empty() {
+                    crate::utils::cold_path();
+                    return Err(CompositeError::from(Error::Invalid).with_index(index));
+                }
+                values.push(value);
+            } else {
+                let mut slot_in = &slot[..];
+                if !(Absent::decode_absent(&mut slot_in, scratch)? && slot_in.is_empty()) {
+                    crate::utils::cold_path();
+                    return Err(CompositeError::from(Error::Invalid).with_index(index));
+                }
             }
-            values.push(value);
         }
-        Slot::validate_absent_slots(slots, scratch)?;
         Ok(values)
     }
 }
@@ -345,7 +309,7 @@ mod tests {
             "[1]: value length not accepted by the field"
         );
         type Two = Field<Ascii<2, 2>, Fixed<2>>;
-        type Area = FixedAreaList<AsciiLength<1>, OptionalAbsent<Two, ByteFill, 2>, 3>;
+        type Area = FixedAreaList<AsciiLength<1>, Two, AbsentBytes<crate::Fill<b' ', 2>>, 2, 3>;
         assert_eq!(
             error(Area::decode_field(&mut &b"2AB\xff\xff  "[..], &mut &mut [][..])),
             "[1]: invalid data"
@@ -502,21 +466,24 @@ mod tests {
     struct SpacesOrZeros;
 
     impl AbsentFmt for SpacesOrZeros {
-        fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8], len: usize) -> Result<(), Error> {
-            ByteFill::<b' '>::encode_absent(output, scratch, len)
+        fn encode_absent(output: &mut &mut [u8], _scratch: &mut [u8]) -> Result<(), Error> {
+            crate::primitive::bytes::copy_bytes(output, b"  ").map(|_| ())
         }
 
-        fn is_absent(input: &[u8], _scratch: &mut &mut [u8]) -> Result<bool, Error> {
-            use crate::primitive::bytes::is_filled;
-            Ok(is_filled(input, b' ') || is_filled(input, b'0'))
+        fn decode_absent(input: &mut &[u8], _scratch: &mut [u8]) -> Result<bool, Error> {
+            let absent = input.starts_with(b"  ") || input.starts_with(b"00");
+            if absent {
+                *input = &input[2..];
+            }
+            Ok(absent)
         }
     }
 
     #[test]
     fn unused_fixed_area_slots_use_the_absent_matcher() {
         type Two = Field<Ascii<2, 2>, Fixed<2>>;
-        type Optional = OptionalAbsent<Two, SpacesOrZeros, 2>;
-        type Area = FixedAreaList<AsciiLength<1>, Optional, 3>;
+        type Optional = OptionAs<Two, SpacesOrZeros>;
+        type Area = FixedAreaList<AsciiLength<1>, Two, SpacesOrZeros, 2, 3>;
         assert_eq!(Optional::decode_field(&mut &b"00"[..], &mut &mut [][..]), Ok(None::<String>));
         // The counting prefix counts used slots.
         for (wire, expected) in [
@@ -547,22 +514,23 @@ mod tests {
 
     #[test]
     fn unused_slot_checks_preserve_borrowed_values_and_workspace() {
+        // The default comparison encodes the pattern into the workspace.
         struct Canonical;
         impl AbsentFmt for Canonical {
-            fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8], len: usize) -> Result<(), Error> {
-                ByteFill::<b'_'>::encode_absent(output, scratch, len)
+            fn encode_absent(output: &mut &mut [u8], _scratch: &mut [u8]) -> Result<(), Error> {
+                crate::primitive::bytes::copy_bytes(output, b"_").map(|_| ())
             }
         }
         type Borrowed = Field<Ascii<1, 1>, Fixed<1>, Ebcdic037>;
-        type Area = FixedAreaList<AsciiLength<1>, OptionalAbsent<Borrowed, Canonical, 1>, 4>;
+        type Area = FixedAreaList<AsciiLength<1>, Borrowed, Canonical, 1, 4>;
         let mut input = &b"1\xC1___TAIL"[..];
-        let mut scratch = [0; 2];
+        let mut scratch = [0; 3];
         let start = scratch.as_ptr();
         let mut workspace = scratch.as_mut_slice();
         let values: Vec<&str> = Area::decode_field(&mut input, &mut workspace).unwrap();
         assert_eq!(values, ["A"]);
         assert_eq!(values[0].as_ptr(), start);
-        assert_eq!(workspace.len(), 1);
+        assert_eq!(workspace.len(), 2);
         assert_eq!(input, b"TAIL");
     }
 }

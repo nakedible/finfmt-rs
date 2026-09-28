@@ -1265,6 +1265,8 @@ impl<T: ?Sized + Serialize, const ALLOW_ZERO_PADDING: bool> FieldEncode<T> for B
 }
 
 impl<'de, T: DeserializeOwned, const ALLOW_ZERO_PADDING: bool> FieldDecode<'de, T> for BerTlvList<ALLOW_ZERO_PADDING> {
+    const TAKES_REST: bool = true;
+
     #[inline(always)]
     fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<T, CompositeError> {
         let value = decode_ber_tlv_serde::<T, ALLOW_ZERO_PADDING>(input, scratch)?;

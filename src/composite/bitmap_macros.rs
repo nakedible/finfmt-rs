@@ -105,7 +105,7 @@ macro_rules! __finfmt_bitmap_encode_fields {
 /// Fields must fit the configured words and their decoded width, and must not
 /// be word flags. Unknown incoming fields are rejected before
 /// any body field is decoded. Header slots are always physically present; use
-/// an explicit `OptionalAbsent` format for a header absence pattern.
+/// an explicit `OptionAs` format for a header absence pattern.
 ///
 /// An out-of-range field is a declaration error.
 ///
@@ -300,7 +300,7 @@ macro_rules! __finfmt_bitmap_decode_head_build {
         $crate::__finfmt_bitmap_decode_head_build!($input, $scratch, $layout, $bitmap_word, $result_ty, $ctor; [$($built)*]; { $($($rest)*)? } $($fields)*)
     }};
     ($input:expr, $scratch:expr, $layout:expr, $bitmap_word:ty, $result_ty:ty, $ctor:path; [$($built:tt)*]; { $field:ident : Option<$fmt:ty> $(, $($rest:tt)*)? } $($fields:tt)*) => {{
-        compile_error!("bitmap head fields cannot use container Option; use an explicit OptionalAbsent format");
+        compile_error!("bitmap head fields cannot use container Option; use an explicit OptionAs format");
     }};
     ($input:expr, $scratch:expr, $layout:expr, $bitmap_word:ty, $result_ty:ty, $ctor:path; [$($built:tt)*]; { $field:ident : $fmt:ty $(, $($rest:tt)*)? } $($fields:tt)*) => {{
         let $field = <$fmt as $crate::composite::FieldDecode<'_, _>>::decode_field($input, $scratch)

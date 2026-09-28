@@ -280,12 +280,16 @@ decide which fields are present. If a field is absent, the corresponding Rust
 field must be represented by the composite format shape, usually as an optional
 field or through a defined absent, optional, or union representation.
 
-Pattern-based absence must be explicit. A format may define bytes that mean an
-optional value is absent, for example a blank-filled fixed area, an impossible
-length prefix, or a structured pattern matching a legacy initialized area. The
-present-side format should normally be unable to encode those bytes. If
-`Some(value)` and `None` encode identically, the mapping is lossy and should be
-a deliberate domain decision, not a generic default-derived rule.
+Pattern-based absence must be explicit. A value whose bytes are always on the
+wire can still be absent: a blank-filled fixed area, a zero date, COBOL
+low-values. `OptionAs<Inner, Absent>` maps `Option<T>` onto such a field: the
+`Absent` encoding (an `AbsentFmt`, such as `AbsentBytes<Fill<b' ', 8>>`) is
+wire bytes, matched before `Inner` sees the input, because `Inner` often cannot
+represent them; anything else decodes through `Inner`, whose errors are
+returned rather than read as absence. Usually the present-side format cannot
+encode the absent bytes. When it can, as with a zero amount, `Some(value)` and
+`None` encode identically and the value reads back as absent: that is the
+format's definition, not a generic rule.
 
 BER-TLV named-field formats reject duplicate known tags. Unknown tags are
 rejected by default. Formats with an extras path preserve unknown tags as

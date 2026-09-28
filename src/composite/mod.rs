@@ -20,12 +20,12 @@
 //! segment decodes to `None`. In bitmap and BER-TLV formats, absence is
 //! controlled by the bitmap bit or tag presence. If bytes are always present but
 //! a pattern inside those bytes means "no value", express that in the field
-//! format, for example with `OptionalAbsent`, not by wrapping the macro field in
+//! format, for example with `OptionAs`, not by wrapping the macro field in
 //! `Option<...>`.
 
 use core::marker::PhantomData;
 
-use crate::primitive::bytes::{copy_bytes, reserve_bytes, take_delimited};
+use crate::primitive::bytes::{copy_bytes, take_delimited};
 use crate::utils::split_scratch;
 use crate::{CompositeError, Error, ScalarFmt};
 
@@ -54,6 +54,11 @@ pub trait FieldEncode<T: ?Sized> {
     note = "scalar formats decode strings and integers; use `SerdeScalar<Fmt>` for a serde value, or implement `ScalarDecode` for your own type"
 )]
 pub trait FieldDecode<'de, T> {
+    /// The format consumes all remaining input, as a [`crate::Rest`] length
+    /// does. An absent pattern for such a field must match the whole
+    /// remainder.
+    const TAKES_REST: bool = false;
+
     fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<T, CompositeError>;
 }
 
@@ -90,27 +95,63 @@ pub trait ContextDecode<'de, T, C: ?Sized> {
     fn decode_with(input: &mut &'de [u8], scratch: &mut &'de mut [u8], context: &C) -> Result<T, CompositeError>;
 }
 
-/// Canonical bytes used by wrapper formats to represent an absent value.
+/// The wire encoding of a value that is absent although its bytes are on the
+/// wire: a blank-filled amount, a zero date, COBOL low-values.
 ///
-/// This is separate from the field traits: some wrappers only need an explicit
-/// absent byte encoding, not a meaningful semantic value.
-///
-/// Formats using this for `Option<T>` should choose a present-side format that
-/// cannot encode the absent bytes unless that lossy mapping is intentional.
+/// Absent encodings are wire bytes, matched before the value's format sees the
+/// input: that format often cannot represent them. A present value that
+/// encodes to the same bytes reads back as absent, which is the format's
+/// definition when the pattern is a valid value, such as a zero amount.
 pub trait AbsentFmt {
-    /// Write the absent encoding of a `len`-byte area, advancing `output`.
-    fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8], len: usize) -> Result<(), Error>;
+    /// Write the absent encoding, advancing `output`.
+    fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error>;
 
-    /// Match the canonical absent bytes, or override to accept additional encodings.
+    /// Whether `input` starts with an absent encoding. If so, advance `input`
+    /// past it, which may be no bytes at all. `scratch` is a workspace for this
+    /// call only.
+    ///
+    /// The default writes the absent encoding into the first half of scratch,
+    /// with the second half as its workspace, and compares it with the input.
+    /// Override it to accept other spellings.
+    #[inline]
+    fn decode_absent(input: &mut &[u8], scratch: &mut [u8]) -> Result<bool, Error> {
+        let (area, workspace) = scratch.split_at_mut(scratch.len() / 2);
+        let written = {
+            let mut out = &mut *area;
+            let available = out.len();
+            Self::encode_absent(&mut out, workspace)?;
+            available - out.len()
+        };
+        Ok(match_prefix(input, area.get(..written).unwrap_or_default()))
+    }
+}
+
+/// Advance `input` past `prefix` if it starts with it.
+#[inline(always)]
+fn match_prefix(input: &mut &[u8], prefix: &[u8]) -> bool {
+    match input.strip_prefix(prefix) {
+        Some(rest) => {
+            *input = rest;
+            true
+        }
+        None => false,
+    }
+}
+
+/// An absent value encoded as the constant bytes of `P`, for example
+/// `AbsentBytes<Fill<0x40, 12>>` for twelve EBCDIC spaces.
+pub struct AbsentBytes<P>(PhantomData<P>);
+
+impl<P: crate::ConstBytes> AbsentFmt for AbsentBytes<P> {
     #[inline(always)]
-    fn is_absent(input: &[u8], scratch: &mut &mut [u8]) -> Result<bool, Error> {
-        let mut workspace = &mut **scratch;
-        let absent = reserve_bytes(&mut workspace, input.len())?;
-        let mut absent_out = &mut absent[..];
-        Self::encode_absent(&mut absent_out, workspace, input.len())?;
-        let written = input.len() - absent_out.len();
-        debug_assert_eq!(written, input.len(), "the absent encoding is not as wide as its area");
-        Ok(absent.get(..written) == Some(input))
+    fn encode_absent(output: &mut &mut [u8], _scratch: &mut [u8]) -> Result<(), Error> {
+        copy_bytes(output, P::BYTES)?;
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn decode_absent(input: &mut &[u8], _scratch: &mut [u8]) -> Result<bool, Error> {
+        Ok(match_prefix(input, P::BYTES))
     }
 }
 
@@ -124,7 +165,9 @@ pub struct Frame<F, S>(PhantomData<(F, S)>);
 /// wire. The declared extent must end at a field boundary, and excluded fields
 /// must match their absent encoding.
 pub struct TrailingLengthFrame<Len, Body, Tails, const BASE_LEN: usize>(PhantomData<(Len, Body, Tails)>);
-pub struct TrailingField<Field, Rest = NoTrailingFields>(PhantomData<(Field, Rest)>);
+/// A trailing field `WIDTH` bytes wide whose absence the `Absent` encoding
+/// shows, followed by the `Rest` of the trailing fields.
+pub struct TrailingField<Absent, const WIDTH: usize, Rest = NoTrailingFields>(PhantomData<(Absent, Rest)>);
 pub struct NoTrailingFields;
 /// Encode nothing, and decode the value's `Default`.
 pub struct Empty;
@@ -158,24 +201,27 @@ pub struct BerTlvList<const ALLOW_ZERO_PADDING: bool = false>;
 /// ambiguous. Item checks must keep separators out of values; debug builds
 /// assert it.
 pub struct BoundedList<L, Item, Sep, const MIN: usize, const MAX: usize>(PhantomData<(L, Item, Sep)>);
-/// Encode `None` as an explicit absent byte encoding and decode matching bytes
-/// back to `None`. Both encodings are exactly `N` bytes, and `N` must be nonzero:
-///
-/// ```compile_fail
-/// # use finfmt::composite::{ByteFill, Empty, FieldDecode, OptionalAbsent};
-/// type ZeroWidth = OptionalAbsent<Empty, ByteFill, 0>;
-/// let _ = <ZeroWidth as FieldDecode<'_, Option<()>>>::decode_field(&mut &b""[..], &mut &mut [][..]);
-/// ```
-pub struct OptionalAbsent<Inner, Absent, const N: usize>(PhantomData<(Inner, Absent)>);
-/// Fill the provided absent area with one byte.
-pub struct ByteFill<const BYTE: u8 = b' '>;
-/// A fixed physical area of `MAX` slots with a separately declared used extent.
+/// An `Option` whose value is always on the wire: `Some` is encoded by
+/// `Inner`, and `None` by the `Absent` encoding, which decoding matches first.
+/// If it does not match, `Inner` decodes and its errors are returned, never
+/// read as absent. For an `Inner` that takes the rest of the input, the absent
+/// encoding must match all of it.
+pub struct OptionAs<Inner, Absent>(PhantomData<(Inner, Absent)>);
+/// A fixed physical area of `MAX` slots of `WIDTH` bytes each, with a
+/// separately declared used extent.
 ///
 /// `Len` states the number of used slots. [`crate::Rest`] cannot recover it and
-/// fails to build.
-/// Slots inside that extent decode as present values. Remaining slots encode
-/// canonically and decode through their [`AbsentFmt::is_absent`] matcher.
-pub struct FixedAreaList<Len, Slot, const MAX: usize>(PhantomData<(Len, Slot)>);
+/// fails to build. Slots inside that extent hold values encoded by `Inner`;
+/// each remaining slot holds exactly one `Absent` encoding. `WIDTH` must be
+/// nonzero:
+///
+/// ```compile_fail
+/// # use finfmt::composite::{AbsentBytes, Empty, FieldDecode, FixedAreaList};
+/// # use finfmt::{Fill, Fixed};
+/// type ZeroWidth = FixedAreaList<Fixed<0>, Empty, AbsentBytes<Fill<b' ', 0>>, 0, 1>;
+/// let _ = <ZeroWidth as FieldDecode<'_, Vec<()>>>::decode_field(&mut &b""[..], &mut &mut [][..]);
+/// ```
+pub struct FixedAreaList<Len, Inner, Absent, const WIDTH: usize, const MAX: usize>(PhantomData<(Len, Inner, Absent)>);
 pub struct Separator<const BYTE: u8>;
 
 mod bertlv;
@@ -361,7 +407,8 @@ mod tests {
 
     type FramedFixedTailFmt = Frame<Field<Ascii<0, 12>, AsciiLength<2>>, FixedTailFmt>;
     type FramedHexFixedTailFmt = Frame<Field<Binary<0, 12>, AsciiLength<2>, UnpackNibbles<UpperHexDigits>>, FixedTailFmt>;
-    type OptionalA3SpaceFmt = OptionalAbsent<A3, ByteFill<b' '>, 3>;
+    type Blank3 = AbsentBytes<crate::Fill<b' ', 3>>;
+    type OptionalA3SpaceFmt = OptionAs<A3, Blank3>;
 
     #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     struct FramedConcat {
@@ -408,7 +455,7 @@ mod tests {
         }
     }
 
-    type TrailingLengthTails = TrailingField<OptionalA3SpaceFmt, TrailingField<OptionalA3SpaceFmt>>;
+    type TrailingLengthTails = TrailingField<Blank3, 3, TrailingField<Blank3, 3>>;
     type TrailingLengthDataFmt = TrailingLengthFrame<AsciiLength<2>, TrailingLengthBodyFmt, TrailingLengthTails, 2>;
 
     #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -967,18 +1014,20 @@ mod tests {
     #[serde(transparent)]
     struct NoDefaultAbsentValue(String);
 
-    type OptionalNoDefaultAbsentFmt = OptionalAbsent<SerdeScalar<A4>, ByteFill<b' '>, 4>;
-    type RepeatedNoDefaultByteFillFmt = FixedAreaList<EbcdicLength<1>, OptionalAbsent<SerdeScalar<A4>, ByteFill<b' '>, 4>, 2>;
+    type Blank4 = AbsentBytes<crate::Fill<b' ', 4>>;
+    type OptionalNoDefaultAbsentFmt = OptionAs<SerdeScalar<A4>, Blank4>;
+    type RepeatedNoDefaultByteFillFmt = FixedAreaList<EbcdicLength<1>, SerdeScalar<A4>, Blank4, 4, 2>;
 
-    crate::absent_format! {
-        #[doc = "Test format for an explicit literal absent encoding."]
-        struct NoDefaultLiteralAbsentFmt {
-            _: A4 = b"NONE",
+    /// An absent encoding given as a value through the field's format.
+    struct NoDefaultLiteralAbsentFmt;
+    impl AbsentFmt for NoDefaultLiteralAbsentFmt {
+        fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
+            <A4 as FieldEncode<str>>::encode_field(output, scratch, "NONE").map_err(|error| error.kind)
         }
     }
 
-    type OptionalNoDefaultLiteralAbsentFmt = OptionalAbsent<SerdeScalar<A4>, NoDefaultLiteralAbsentFmt, 4>;
-    type RepeatedNoDefaultAbsentFmt = FixedAreaList<EbcdicLength<1>, OptionalAbsent<SerdeScalar<A4>, NoDefaultLiteralAbsentFmt, 4>, 2>;
+    type OptionalNoDefaultLiteralAbsentFmt = OptionAs<SerdeScalar<A4>, NoDefaultLiteralAbsentFmt>;
+    type RepeatedNoDefaultAbsentFmt = FixedAreaList<EbcdicLength<1>, SerdeScalar<A4>, NoDefaultLiteralAbsentFmt, 4, 2>;
 
     #[test]
     fn test_whole_message_entry_points() {

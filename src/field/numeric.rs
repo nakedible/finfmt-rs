@@ -134,6 +134,8 @@ impl<F, const POS: u8, const NEG: u8> SignPrefix<F, POS, NEG> {
 }
 
 impl<F: ScalarFmt, const POS: u8, const NEG: u8> ScalarFmt for SignPrefix<F, POS, NEG> {
+    const TAKES_REST: bool = F::TAKES_REST;
+
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
         Self::assert_distinct_signs();
@@ -212,6 +214,8 @@ impl<F: ScalarFmt, const POS: u8, const NEG: u8> ScalarFmt for SignPrefix<F, POS
 }
 
 impl<F: ScalarFmt, const NEG: u8> ScalarFmt for MinusPrefix<F, NEG> {
+    const TAKES_REST: bool = F::TAKES_REST;
+
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
         let (negative, digits) = split_wrapped_sign(input)?;

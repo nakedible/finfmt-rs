@@ -25,6 +25,8 @@ use crate::{Error, ScalarFmt};
 pub struct Truncate<F, const MAX_LEN: usize, const KEEP_RIGHT: bool = false>(PhantomData<F>);
 
 impl<F: ScalarFmt, const MAX_LEN: usize, const KEEP_RIGHT: bool> ScalarFmt for Truncate<F, MAX_LEN, KEEP_RIGHT> {
+    const TAKES_REST: bool = F::TAKES_REST;
+
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
         F::encoded_len(truncate_bytes(input, MAX_LEN, KEEP_RIGHT))

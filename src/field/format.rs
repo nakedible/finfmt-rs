@@ -84,6 +84,8 @@ fn decoded_text(semantic: &[u8]) -> Result<&str, Error> {
 }
 
 impl<C: Check, L: LengthSpec, S: Step> ScalarFmt for Field<C, L, S> {
+    const TAKES_REST: bool = !L::STATES_LEN;
+
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
         Self::total_len(C::validate(input)?)
