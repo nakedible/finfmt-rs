@@ -35,6 +35,10 @@
 ///   accepts `00` bytes before, between and after entries; encoding never
 ///   writes them.
 ///
+/// An `Option` field is recognized by its spelling: `Option<T>`, or a path
+/// such as `std::option::Option<T>`; a type alias for one is a required
+/// field.
+///
 /// Fields take at most one `#[wire(...)]` attribute:
 ///
 /// - `fmt = F`: the field's format. Without it, the field's type must be a
@@ -338,8 +342,9 @@ macro_rules! __finfmt_wire_item {
     };
 }
 
-/// Parse one field per step into `{ [kept attributes] (vis) name (type) kind
-/// (default format) [wire arguments] }`. Doc comments are taken in the same
+/// Parse one field per step into `{ [kept attributes] (vis) name (position)
+/// (type) kind (default format) [wire arguments] }`. `Option` may be spelled
+/// as a `std::option` or `core::option` path. Doc comments are taken in the same
 /// step; other attributes before the `#[wire]` one move into the field's kept
 /// list one per step.
 #[macro_export]
@@ -349,10 +354,10 @@ macro_rules! __finfmt_wire_fields {
         $crate::__finfmt_wire_emit! { $layout $kept $vis $name $lt $de [$($done)*] }
     };
     (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*] [$($pos:tt)*]) [$($fkept:tt)*];
-        $(#[doc = $doc:tt])* #[wire($($args:tt)*)] $(#[$($attr:tt)*])* $fvis:vis $field:ident : Option<$inner:ty> $(, $($rest:tt)*)?) => {
+        $(#[doc = $doc:tt])* #[wire($($args:tt)*)] $(#[$($attr:tt)*])* $fvis:vis $field:ident : $(::)? $(std::option::)? $(core::option::)? Option<$inner:ty> $(, $($rest:tt)*)?) => {
         $crate::__finfmt_wire_fields! {
             ($layout $kept $vis $name $lt $de [$($done)* {
-                [$($fkept)* $(#[doc = $doc])* $(#[$($attr)*])*] ($fvis) $field ($($pos)*) (Option<$inner>) opt ($inner) [$($args)*]
+                [$($fkept)* $(#[doc = $doc])* $(#[$($attr)*])*] ($fvis) $field ($($pos)*) (::core::option::Option<$inner>) opt ($inner) [$($args)*]
             }] [$($pos)* + 1]) [];
             $($($rest)*)?
         }
@@ -367,10 +372,10 @@ macro_rules! __finfmt_wire_fields {
         }
     };
     (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*] [$($pos:tt)*]) [$($fkept:tt)*];
-        $(#[doc = $doc:tt])* $fvis:vis $field:ident : Option<$inner:ty> $(, $($rest:tt)*)?) => {
+        $(#[doc = $doc:tt])* $fvis:vis $field:ident : $(::)? $(std::option::)? $(core::option::)? Option<$inner:ty> $(, $($rest:tt)*)?) => {
         $crate::__finfmt_wire_fields! {
             ($layout $kept $vis $name $lt $de [$($done)* {
-                [$($fkept)* $(#[doc = $doc])*] ($fvis) $field ($($pos)*) (Option<$inner>) opt ($inner) []
+                [$($fkept)* $(#[doc = $doc])*] ($fvis) $field ($($pos)*) (::core::option::Option<$inner>) opt ($inner) []
             }] [$($pos)* + 1]) [];
             $($($rest)*)?
         }
@@ -1989,6 +1994,32 @@ mod tests {
             #[wire(absent_value = Child { code: "0" })]
             child: Option<Child<'a>>,
         }
+    }
+
+    crate::wire_type! {
+        #[derive(Debug, Default, PartialEq)]
+        #[wire(concat)]
+        struct OptionPaths {
+            #[wire(fmt = A1)]
+            std: std::option::Option<String>,
+            #[wire(fmt = A1)]
+            core: ::core::option::Option<String>,
+        }
+    }
+
+    #[test]
+    fn option_paths_are_option_fields() {
+        let mut scratch = [0; 64];
+        assert_eq!(
+            crate::decode::<OptionPaths, OptionPaths>(b"", &mut scratch),
+            Ok(OptionPaths::default())
+        );
+        let some = OptionPaths {
+            std: Some("A".into()),
+            core: Some("B".into()),
+        };
+        let mut scratch = [0; 64];
+        assert_eq!(crate::decode::<OptionPaths, OptionPaths>(b"AB", &mut scratch), Ok(some));
     }
 
     #[test]
