@@ -197,6 +197,14 @@ pub struct FixedBytes<P>(PhantomData<P>);
 /// accept. `MIN` and `MAX` bound the inner encoding, before the steps, for a
 /// limit a specification states beyond what the inner format and `L` imply. A
 /// frame padded to an area sets `MAX` to its width, as padding does not cut.
+/// A step counting characters rather than bytes, such as `Ebcdic1142`, is
+/// rejected at compile time: the frame has only its body's byte length.
+///
+/// ```compile_fail
+/// use finfmt::{AsciiLength, Binary, Ebcdic1142, Field, Frame, Rest};
+/// type Text = Field<Binary<0, 30>, Rest>;
+/// let _ = finfmt::encode::<Frame<AsciiLength<1>, Text, Ebcdic1142>, _>(&mut [0; 8], &mut [0; 32], "A");
+/// ```
 ///
 /// Encoding stages the inner value with [`encode_staged`]. A body outside
 /// `MIN..=MAX`, or one `L` cannot state, is `InvalidValueLength`: the value is

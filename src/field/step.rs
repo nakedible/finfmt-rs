@@ -36,6 +36,11 @@ pub trait Step {
     /// wrap others set it.
     const HAS_COUNT: bool = false;
 
+    /// Input lengths count Unicode scalar values rather than bytes, as for
+    /// `Ebcdic1142`. A field's check supplies such a count; a `Frame` has only
+    /// its body's byte length, so it rejects these steps.
+    const INPUT_IN_CHARS: bool = false;
+
     /// Exact encoded byte count from logical input length. Built-in steps use
     /// bytes, except `Ebcdic1142`, which uses Unicode scalar values.
     fn encoded_len(input_len: usize) -> Result<usize, Error>;
@@ -144,6 +149,7 @@ impl<First: Step, Rest: Step> Step for Chain<First, Rest> {
     const ENCODE_IN_PLACE: bool = First::ENCODE_IN_PLACE && Rest::ENCODE_IN_PLACE;
     const ENCODE_APPENDING: bool = First::ENCODE_APPENDING && Rest::ENCODE_APPENDING;
     const ENCODE_UNCHANGED: bool = First::ENCODE_UNCHANGED && Rest::ENCODE_UNCHANGED;
+    const INPUT_IN_CHARS: bool = First::INPUT_IN_CHARS;
     const HAS_COUNT: bool = {
         assert!(!(First::HAS_COUNT && Rest::HAS_COUNT), "a step chain has at most one Count marker");
         First::HAS_COUNT || Rest::HAS_COUNT
@@ -246,6 +252,7 @@ impl<S: Step, C: Check> Step for DecodeCheck<S, C> {
     const ENCODE_APPENDING: bool = S::ENCODE_APPENDING;
     const ENCODE_UNCHANGED: bool = S::ENCODE_UNCHANGED;
     const HAS_COUNT: bool = S::HAS_COUNT;
+    const INPUT_IN_CHARS: bool = S::INPUT_IN_CHARS;
 
     #[inline(always)]
     fn encoded_len(input_len: usize) -> Result<usize, Error> {

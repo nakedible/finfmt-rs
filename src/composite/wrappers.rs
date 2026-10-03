@@ -12,7 +12,13 @@ where
 {
     #[inline(always)]
     fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
-        const { assert!(MIN <= MAX, "a frame's MIN exceeds its MAX") };
+        const {
+            assert!(MIN <= MAX, "a frame's MIN exceeds its MAX");
+            assert!(
+                !Steps::INPUT_IN_CHARS,
+                "a frame counts its body in bytes; a step counting characters, such as Ebcdic1142, cannot follow it"
+            );
+        };
         let (body, scratch) = encode_staged(scratch, |out, workspace| Inner::encode_field(out, workspace, value))?;
         if body.len() < MIN || body.len() > MAX {
             cold_path();

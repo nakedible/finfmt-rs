@@ -49,6 +49,8 @@ impl Step for Ebcdic037 {
 }
 
 impl Step for Ebcdic1142 {
+    const INPUT_IN_CHARS: bool = true;
+
     #[inline(always)]
     fn encoded_len(input_len: usize) -> Result<usize, Error> {
         Ok(input_len)
