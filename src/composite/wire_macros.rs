@@ -57,6 +57,19 @@
 ///   take a `bit` or `tag` like any field, and may be `Option<()>`. A
 ///   mismatch is `Invalid` with the field's name in the error path. Mark them
 ///   `#[serde(skip)]` when the struct is also serialized.
+/// - `absent_bytes = [b' '; 12]`, `absent_value = "000000"` or
+///   `absent = A`: on an `Option<T>` field whose bytes are always on the
+///   wire, the encoding of `None`, through [`OptionAs`](crate::OptionAs).
+///   `absent_bytes` gives raw wire bytes (a byte string, array or constant)
+///   with [`AbsentBytes`](crate::AbsentBytes); `absent_value` a value encoded
+///   through the field's format, typed like any field value (`0u64` or
+///   `"000000"`), compared after encoding it per decode; `absent` a custom
+///   [`AbsentFmt`](crate::AbsentFmt). Decoding matches the pattern first and
+///   otherwise decodes with the format, whose errors are returned. A present
+///   value that encodes like the pattern reads back as `None`. The field is
+///   required by its container: a bitmap sets its bit and BER-TLV writes its
+///   tag even for `None`, and in a concat record it is not part of the
+///   optional tail.
 /// - `extras`: in a BER-TLV record, the field collecting unknown tags, such as
 ///   a `BTreeMap<String, String>` of uppercase hex keyed like `t9F03_unknown`.
 ///   At most one; it takes no `fmt` or `tag` and is written at its declared
@@ -278,12 +291,12 @@ macro_rules! __finfmt_wire_emit {
             concat!(
                 "wire_type!: in the concat record `",
                 stringify!($name),
-                "`, only Option fields may follow an Option field"
+                "`, only fields that may be omitted (Option without an absent form) may follow one"
             )
         );
 
         const _: () = {
-            // Generated constants for fixed fields, and the format impls.
+            // Generated constants for fixed and absent fields, and the format impls.
             $($crate::__finfmt_wire_args! { {__finfmt_wire_consts @consts concat} $kind $field ($default); [] [] [] [] [] []; $($args)* })*
 
             impl $(<$lt>)? $crate::composite::FieldEncode<$name $(<$lt>)?> for $name $(<$lt>)? {
@@ -321,7 +334,7 @@ macro_rules! __finfmt_wire_emit {
         }
 
         const _: () = {
-            // Generated constants for fixed fields, and the format impls.
+            // Generated constants for fixed and absent fields, and the format impls.
             $($crate::__finfmt_wire_args! { {__finfmt_wire_consts @consts delimited} $kind $field ($default); [] [] [] [] [] []; $($args)* })*
 
             impl $(<$lt>)? $crate::composite::FieldEncode<$name $(<$lt>)?> for $name $(<$lt>)? {
@@ -378,7 +391,7 @@ macro_rules! __finfmt_wire_emit {
         };
 
         const _: () = {
-            // Generated constants for fixed fields, and the format impls.
+            // Generated constants for fixed and absent fields, and the format impls.
             $($crate::__finfmt_wire_args! { {__finfmt_wire_consts @consts bitmap} $kind $field ($default); [] [] [] [] [] []; $($args)* })*
 
             impl $(<$lt>)? $crate::composite::FieldEncode<$name $(<$lt>)?> for $name $(<$lt>)? {
@@ -443,7 +456,7 @@ macro_rules! __finfmt_wire_emit {
         };
 
         const _: () = {
-            // Generated constants for fixed fields, and the format impls.
+            // Generated constants for fixed and absent fields, and the format impls.
             $($crate::__finfmt_wire_args! { {__finfmt_wire_consts @consts ber_tlv} $kind $field ($default); [] [] [] [] [] []; $($args)* })*
 
             impl $(<$lt>)? $crate::composite::FieldEncode<$name $(<$lt>)?> for $name $(<$lt>)? {
@@ -505,6 +518,8 @@ macro_rules! __finfmt_wire_decoded {
 /// `$target!` with one phase of its layout's code. The slots are
 /// `[fmt] [bit] [tag] [extras] [fixed] [absent]`.
 ///
+/// An absent form makes an `Option<T>` field required by its container, with
+/// `OptionAs` deciding presence from the bytes.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __finfmt_wire_args {
@@ -513,9 +528,12 @@ macro_rules! __finfmt_wire_args {
         $crate::$target! { $($phase)* $kind $field (()) [] [] [extras] [] }
     };
     ($phase:tt $kind:ident $field:ident $default:tt; $fmt:tt $bit:tt $tag:tt [extras] $fixed:tt $absent:tt;) => {
-        compile_error!("wire_type!: an `extras` field takes no `fmt`, `bit`, `tag` or fixed value")
+        compile_error!("wire_type!: an `extras` field takes no `fmt`, `bit`, `tag`, fixed value or absent form")
     };
     // Fixed fields.
+    ($phase:tt $kind:ident $field:ident $default:tt; $fmt:tt $bit:tt $tag:tt [] [$($fixed:tt)+] [$($absent:tt)+];) => {
+        compile_error!("wire_type!: a fixed field has no absent form")
+    };
     ({$target:ident $($phase:tt)*} $kind:ident $field:ident ($default:ty); [$fmt:ty] $bit:tt $tag:tt [] [value $value:expr] [];) => {
         $crate::$target! { $($phase)* $kind $field ($crate::FixedValue<$fmt, $field>) $bit $tag [] [fixed_value $value] }
     };
@@ -527,6 +545,23 @@ macro_rules! __finfmt_wire_args {
     };
     ($phase:tt $kind:ident $field:ident $default:tt; [$fmt:ty] $bit:tt $tag:tt [] [$bytes:ident $value:tt] [];) => {
         compile_error!("wire_type!: `fixed_bytes` takes no `fmt`")
+    };
+    // Absent forms: `Option<T>` through `OptionAs`, with the field's format
+    // (or `T`) for present values.
+    ($phase:tt req $field:ident $default:tt; $fmt:tt $bit:tt $tag:tt [] [] [$($absent:tt)+];) => {
+        compile_error!("wire_type!: an absent form needs an `Option` field")
+    };
+    ($phase:tt opt $field:ident ($default:ty); [] $bit:tt $tag:tt [] [] [$($absent:tt)+];) => {
+        $crate::__finfmt_wire_args! { $phase opt $field ($default); [$default] $bit $tag [] [] [$($absent)+]; }
+    };
+    ({$target:ident $($phase:tt)*} opt $field:ident ($default:ty); [$fmt:ty] $bit:tt $tag:tt [] [] [type $absent:ty];) => {
+        $crate::$target! { $($phase)* req $field ($crate::OptionAs<$fmt, $absent>) $bit $tag [] [] }
+    };
+    ({$target:ident $($phase:tt)*} opt $field:ident ($default:ty); [$fmt:ty] $bit:tt $tag:tt [] [] [value $value:expr];) => {
+        $crate::$target! { $($phase)* req $field ($crate::OptionAs<$fmt, $field>) $bit $tag [] [absent_value ($fmt) $value] }
+    };
+    ({$target:ident $($phase:tt)*} opt $field:ident ($default:ty); [$fmt:ty] $bit:tt $tag:tt [] [] [$bytes:ident $value:tt];) => {
+        $crate::$target! { $($phase)* req $field ($crate::OptionAs<$fmt, $crate::AbsentBytes<$field>>) $bit $tag [] [absent_bytes $bytes $value] }
     };
     // Plain fields.
     ({$target:ident $($phase:tt)*} $kind:ident $field:ident ($default:ty); [$fmt:ty] $bit:tt $tag:tt [] [] [];) => {
@@ -563,6 +598,22 @@ macro_rules! __finfmt_wire_args {
     ($phase:tt $kind:ident $field:ident $default:tt; $fmt:tt $bit:tt $tag:tt $extras:tt [] $absent:tt;
         fixed_bytes = $value:expr $(, $($rest:tt)*)?) => {
         $crate::__finfmt_wire_args! { $phase $kind $field $default; $fmt $bit $tag $extras [borrowed $value] $absent; $($($rest)*)? }
+    };
+    ($phase:tt $kind:ident $field:ident $default:tt; $fmt:tt $bit:tt $tag:tt $extras:tt $fixed:tt [];
+        absent_bytes = $value:literal $(, $($rest:tt)*)?) => {
+        $crate::__finfmt_wire_args! { $phase $kind $field $default; $fmt $bit $tag $extras $fixed [literal $value]; $($($rest)*)? }
+    };
+    ($phase:tt $kind:ident $field:ident $default:tt; $fmt:tt $bit:tt $tag:tt $extras:tt $fixed:tt [];
+        absent_bytes = $value:expr $(, $($rest:tt)*)?) => {
+        $crate::__finfmt_wire_args! { $phase $kind $field $default; $fmt $bit $tag $extras $fixed [borrowed $value]; $($($rest)*)? }
+    };
+    ($phase:tt $kind:ident $field:ident $default:tt; $fmt:tt $bit:tt $tag:tt $extras:tt $fixed:tt [];
+        absent_value = $value:expr $(, $($rest:tt)*)?) => {
+        $crate::__finfmt_wire_args! { $phase $kind $field $default; $fmt $bit $tag $extras $fixed [value $value]; $($($rest)*)? }
+    };
+    ($phase:tt $kind:ident $field:ident $default:tt; $fmt:tt $bit:tt $tag:tt $extras:tt $fixed:tt [];
+        absent = $absent:ty $(, $($rest:tt)*)?) => {
+        $crate::__finfmt_wire_args! { $phase $kind $field $default; $fmt $bit $tag $extras $fixed [type $absent]; $($($rest)*)? }
     };
     ($phase:tt $kind:ident $field:ident $default:tt; $fmt:tt $bit:tt $tag:tt $extras:tt $fixed:tt $absent:tt; $($args:tt)+) => {
         compile_error!(concat!("wire_type!: unsupported or repeated #[wire] field arguments: ", stringify!($($args)+)))
@@ -629,6 +680,16 @@ macro_rules! __finfmt_wire_consts {
         struct $field {}
         impl $crate::ConstBytes for $field {
             const BYTES: &'static [u8] = &$value;
+        }
+    };
+    (@item $field:ident absent_value ($fmt:ty) $value:expr) => {
+        #[allow(non_camel_case_types)]
+        struct $field {}
+        impl $crate::AbsentFmt for $field {
+            #[inline(always)]
+            fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), $crate::Error> {
+                <$fmt as $crate::composite::FieldEncode<_>>::encode_field(output, scratch, &$value).map_err(|error| error.kind)
+            }
         }
     };
 }
@@ -1402,6 +1463,150 @@ mod tests {
         let mut scratch = [0; 64];
         let error = crate::decode::<FixedBer, FixedBer>(b"\x9F\x35\x01\x21\x9F\x02\x02\x01\x00", &mut scratch).unwrap_err();
         assert_eq!(error.path(), &[PathSegment::Field("terminal_type")]);
+    }
+
+    type N6 = Field<Numeric<6, 6>, Fixed<6>>;
+    type Amount = Field<Numeric<1, 6>, Fixed<6>, crate::PadLeft<6, b'0', 1>>;
+    const BLANKS: [u8; 6] = [b' '; 6];
+
+    crate::wire_type! {
+        #[derive(Debug, Default, PartialEq)]
+        #[wire(concat)]
+        struct Absent {
+            #[wire(fmt = Amount, absent_bytes = b"      ")]
+            literal: Option<u64>,
+            #[wire(fmt = Amount, absent_bytes = BLANKS)]
+            constant: Option<u64>,
+            #[wire(absent_value = 0u64, fmt = Amount)]
+            zero: Option<u64>,
+            #[wire(fmt = N6, absent_value = "999999")]
+            text: Option<String>,
+            #[wire(fmt = Amount, absent = crate::AbsentBytes<crate::Fill<b'*', 6>>)]
+            custom: Option<u64>,
+            #[wire(fmt = N2)]
+            tail: Option<String>,
+        }
+
+        #[derive(Debug, Default, PartialEq)]
+        #[wire(delimited = b'|')]
+        struct AbsentDelimited {
+            #[wire(fmt = N2, absent_bytes = b"--")]
+            first: Option<String>,
+            #[wire(fmt = N2)]
+            second: Option<String>,
+        }
+
+        #[derive(Debug, Default, PartialEq)]
+        #[wire(bitmap = HexBitmap)]
+        struct AbsentBitmap {
+            #[wire(bit = 3, fmt = N6, absent_bytes = BLANKS)]
+            amount: Option<u64>,
+        }
+
+        #[derive(Debug, Default, PartialEq)]
+        #[wire(ber_tlv)]
+        struct AbsentBer {
+            #[wire(tag = "9F02", fmt = Field<Ascii<0, 6>, crate::Rest>, absent_bytes = b"")]
+            amount: Option<String>,
+        }
+    }
+
+    // The same concat fields as explicit `OptionAs` formats.
+    #[derive(Debug, Default, PartialEq)]
+    struct OldAbsent {
+        literal: Option<u64>,
+        custom: Option<u64>,
+    }
+
+    crate::concat_format! {
+        struct OldAbsentFmt for OldAbsent {
+            literal: crate::OptionAs<Amount, crate::AbsentBytes<crate::Fill<b' ', 6>>>,
+            custom: crate::OptionAs<Amount, crate::AbsentBytes<crate::Fill<b'*', 6>>>,
+        }
+    }
+
+    #[test]
+    fn absent_forms_map_option_onto_wire_patterns() {
+        // Absent fields are always on the wire, so a later `Option` tail still works.
+        let none = Absent::default();
+        let wire = b"            000000999999******";
+        assert_eq!(encode::<Absent, _>(&none).as_deref(), Ok(&wire[..]));
+        let mut scratch = [0; 64];
+        assert_eq!(crate::decode::<Absent, Absent>(wire, &mut scratch), Ok(none));
+        let some = Absent {
+            literal: Some(1),
+            constant: Some(2),
+            zero: Some(3),
+            text: Some("000004".into()),
+            custom: Some(5),
+            tail: Some("06".into()),
+        };
+        let wire = b"00000100000200000300000400000506";
+        assert_eq!(encode::<Absent, _>(&some).as_deref(), Ok(&wire[..]));
+        let mut scratch = [0; 64];
+        assert_eq!(crate::decode::<Absent, Absent>(wire, &mut scratch), Ok(some));
+        // A present value that encodes like the pattern reads back as absent.
+        let zero = Absent {
+            zero: Some(0),
+            ..Default::default()
+        };
+        let mut scratch = [0; 64];
+        let wire = encode::<Absent, _>(&zero).unwrap();
+        assert_eq!(
+            crate::decode::<Absent, Absent>(&wire, &mut scratch).map(|value| value.zero),
+            Ok(None)
+        );
+        // Anything else decodes through the field's format, whose errors are returned.
+        let mut scratch = [0; 64];
+        let error = crate::decode::<Absent, Absent>(b"  x         000000999999******", &mut scratch).unwrap_err();
+        assert_eq!((error.kind, error.path()), (Error::Invalid, &[PathSegment::Field("literal")][..]));
+        // Same bytes as explicit `OptionAs` formats.
+        for (literal, custom) in [(None, None), (Some(7), None), (None, Some(8))] {
+            let new = Absent {
+                literal,
+                constant: literal,
+                zero: literal,
+                text: None,
+                custom,
+                tail: None,
+            };
+            let old = OldAbsent { literal, custom };
+            let new_wire = encode::<Absent, _>(&new).unwrap();
+            let old_wire = encode::<OldAbsentFmt, _>(&old).unwrap();
+            assert_eq!((&new_wire[..6], &new_wire[24..30]), (&old_wire[..6], &old_wire[6..]));
+        }
+
+        // In the other layouts the field is required by its container.
+        let mut scratch = [0; 64];
+        assert_eq!(
+            encode::<AbsentDelimited, _>(&AbsentDelimited::default()).as_deref(),
+            Ok(&b"--|"[..])
+        );
+        assert_eq!(
+            crate::decode::<AbsentDelimited, AbsentDelimited>(b"--|", &mut scratch),
+            Ok(AbsentDelimited::default())
+        );
+        let wire = encode::<AbsentBitmap, _>(&AbsentBitmap::default()).unwrap();
+        assert_eq!(wire, b"2000000000000000      ");
+        let mut scratch = [0; 64];
+        assert_eq!(
+            crate::decode::<AbsentBitmap, AbsentBitmap>(&wire, &mut scratch),
+            Ok(AbsentBitmap::default())
+        );
+        let mut scratch = [0; 64];
+        assert_eq!(
+            crate::decode::<AbsentBitmap, AbsentBitmap>(b"0000000000000000", &mut scratch).map_err(|error| error.kind),
+            Err(Error::Invalid)
+        );
+        let wire = encode::<AbsentBer, _>(&AbsentBer::default()).unwrap();
+        assert_eq!(wire, b"\x9F\x02\x00");
+        let mut scratch = [0; 64];
+        assert_eq!(crate::decode::<AbsentBer, AbsentBer>(&wire, &mut scratch), Ok(AbsentBer::default()));
+        let mut scratch = [0; 64];
+        assert_eq!(
+            crate::decode::<AbsentBer, AbsentBer>(b"", &mut scratch).map_err(|error| error.kind),
+            Err(Error::Invalid)
+        );
     }
 
     #[test]
