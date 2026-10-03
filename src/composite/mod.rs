@@ -2965,6 +2965,73 @@ const fn const_bytes_eq(a: &[u8], b: &[u8]) -> bool {
     true
 }
 
+/// Check an enum's wire names: none may repeat, and at most one variant is the
+/// fallback (`None`). `wire_type!` evaluates this at compile time and reports
+/// the message.
+#[doc(hidden)]
+pub const fn check_variant_names(names: &[Option<&str>]) -> Result<(), &'static str> {
+    let mut other = false;
+    let mut rest = names;
+    while let [name, later @ ..] = rest {
+        match *name {
+            None if other => return Err("an enum has at most one `other` variant"),
+            None => other = true,
+            Some(name) => {
+                let mut others = later;
+                while let [next, after @ ..] = others {
+                    if let Some(next) = *next
+                        && const_bytes_eq(name.as_bytes(), next.as_bytes())
+                    {
+                        return Err("duplicate variant name in an enum");
+                    }
+                    others = after;
+                }
+            }
+        }
+        rest = later;
+    }
+    Ok(())
+}
+
+/// Check an enum's numeric codes: none may repeat. `wire_type!` evaluates
+/// this at compile time and reports the message.
+#[doc(hidden)]
+pub const fn check_variant_codes(codes: &[u64]) -> Result<(), &'static str> {
+    let mut rest = codes;
+    while let [code, later @ ..] = rest {
+        let mut others = later;
+        while let [next, after @ ..] = others {
+            if *code == *next {
+                return Err("duplicate variant code in an enum");
+            }
+            others = after;
+        }
+        rest = later;
+    }
+    Ok(())
+}
+
+/// Decode text with `F` into a temporary view of scratch and map it to a
+/// value; the text's scratch is not kept. Text `map` rejects is `Invalid`.
+#[inline(always)]
+#[doc(hidden)]
+pub fn decode_mapped_text<'de, F: ScalarFmt, T>(
+    input: &mut &'de [u8],
+    scratch: &mut &'de mut [u8],
+    map: impl FnOnce(&str) -> Option<T>,
+) -> Result<T, Error> {
+    let source = *input;
+    let mut rest = source;
+    let mut workspace = &mut **scratch;
+    let text = F::decode_str(&mut rest, &mut workspace)?;
+    let value = map(text).ok_or_else(|| {
+        crate::utils::cold_path();
+        Error::Invalid
+    })?;
+    advance_input(input, source.len() - rest.len())?;
+    Ok(value)
+}
+
 /// Whether no required field follows an optional one.
 #[doc(hidden)]
 pub const fn optional_fields_trail(optional: &[bool]) -> bool {
