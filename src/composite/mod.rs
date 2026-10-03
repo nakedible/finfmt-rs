@@ -272,6 +272,7 @@ mod repeated;
 mod scalar;
 #[cfg(feature = "serde")]
 mod scalar_serde;
+mod wire_macros;
 pub use scalar::{ScalarDecode, ScalarEncode};
 #[cfg(test)]
 mod tests {
@@ -2817,6 +2818,21 @@ pub fn advance_input(input: &mut &[u8], consumed: usize) -> Result<(), Error> {
 #[inline]
 pub fn encode_delimiter(output: &mut &mut [u8], byte: u8) -> Result<(), Error> {
     copy_bytes(output, &[byte]).map(|_| ())
+}
+
+/// Whether no required field follows an optional one.
+#[doc(hidden)]
+pub const fn optional_fields_trail(optional: &[bool]) -> bool {
+    let mut seen = false;
+    let mut rest = optional;
+    while let [first, tail @ ..] = rest {
+        if seen && !*first {
+            return false;
+        }
+        seen |= *first;
+        rest = tail;
+    }
+    true
 }
 
 #[inline(always)]

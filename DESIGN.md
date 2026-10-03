@@ -39,6 +39,12 @@ unions, and absent/filler wrappers. Composite code may route data
 between scalar formats and primitives, but byte-level conversion still belongs
 in `primitive`.
 
+Records are described by `#[wire(...)]` attributes on ordinary structs inside
+`wire_type!`, which makes each one its own format. The macro reads only those
+attributes and emits new items, so a derive could replace it without changing
+them. Every record states its layout. The older `*_format!` macros stay until
+`wire_type!` covers their layouts; both implement the same traits and nest.
+
 `src/bitmap.rs` frames presence bitmaps: word layouts and flags, with each
 word's representation a `Step`. It is the public home of `Bitmap`, whose bit
 storage is a crate-internal primitive.
