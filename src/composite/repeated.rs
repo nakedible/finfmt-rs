@@ -10,13 +10,15 @@ impl<const BYTE: u8> ListSeparatorPolicy for Separator<BYTE> {
     const BYTE: Option<u8> = Some(BYTE);
 }
 
-/// `MAX` bounds the list's length, so a prefix that cannot hold it means the
-/// list is written wrong. Debug builds catch it; release passes the error through.
+/// `MIN..=MAX` bounds the list's length, so a length its framing cannot state
+/// means the list is written wrong: a prefix too narrow for `MAX`, or a fixed
+/// count the bounds do not pin. Debug builds catch it; release passes the
+/// error through.
 #[inline(always)]
 fn framed(result: Result<(), Error>) -> Result<(), Error> {
     debug_assert!(
-        !matches!(result, Err(Error::Invalid)),
-        "the list's MAX exceeds what its length prefix can hold"
+        !matches!(result, Err(Error::Invalid | Error::InvalidValueLength)),
+        "the list's bounds admit a length its framing cannot state"
     );
     result
 }
@@ -461,6 +463,9 @@ mod tests {
         // A MAX the count prefix cannot hold is a miswritten list.
         type TooWide = BoundedList<AsciiLength<1>, One, (), 0, 12>;
         assert!(std::panic::catch_unwind(|| encode::<TooWide>(&["A"; 10])).is_err() == cfg!(debug_assertions));
+        // So are bounds a fixed count does not pin.
+        type Loose = BoundedList<Fixed<2>, One, (), 0, 2>;
+        assert!(std::panic::catch_unwind(|| encode::<Loose>(&["A"])).is_err() == cfg!(debug_assertions));
     }
 
     struct SpacesOrZeros;
