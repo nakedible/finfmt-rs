@@ -54,9 +54,9 @@ pub trait FieldEncode<T: ?Sized> {
     note = "scalar formats decode strings and integers; use `SerdeScalar<Fmt>` for a serde value, or implement `ScalarDecode` for your own type"
 )]
 pub trait FieldDecode<'de, T> {
-    /// The format consumes all remaining input, as a [`crate::Rest`] length
-    /// does. An absent pattern for such a field must match the whole
-    /// remainder.
+    /// The format may consume all remaining input, as a [`crate::Rest`]
+    /// length does, or a record whose last field does. An absent pattern for
+    /// such a field must match the whole remainder.
     const TAKES_REST: bool = false;
 
     fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<T, CompositeError>;
@@ -118,6 +118,10 @@ pub trait ContextEncode<T: ?Sized, C: ?Sized> {
 
 /// Decode a value using an already available context value.
 pub trait ContextDecode<'de, T, C: ?Sized> {
+    /// The format may consume all remaining input; see
+    /// [`FieldDecode::TAKES_REST`].
+    const TAKES_REST: bool = false;
+
     fn decode_with(input: &mut &'de [u8], scratch: &mut &'de mut [u8], context: &C) -> Result<T, CompositeError>;
 }
 

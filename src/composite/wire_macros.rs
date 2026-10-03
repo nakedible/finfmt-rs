@@ -262,7 +262,7 @@
 #[macro_export]
 macro_rules! wire_type {
     ($($(#[$($attr:tt)*])* $vis:vis $kw:ident $name:ident $(<$lt:lifetime>)? { $($body:tt)* })*) => {
-        $($crate::__finfmt_wire_item! { [] []; $(#[$($attr)*])*; $vis $kw $name [$($lt)?] { $($body)* } })*
+        $($crate::__finfmt_wire_item! { [] []; $(#[$($attr)*])*; $vis $kw $name [$($lt)?] [$($lt)? '__finfmt_de] { $($body)* } })*
     };
 }
 
@@ -277,23 +277,23 @@ macro_rules! __finfmt_wire_item {
     ([$($kept:tt)*] $wire:tt; #[$($attr:tt)*] $(#[$($rest:tt)*])*; $($item:tt)*) => {
         $crate::__finfmt_wire_item! { [$($kept)* #[$($attr)*]] $wire; $(#[$($rest)*])*; $($item)* }
     };
-    ($kept:tt [concat ,]; ; $vis:vis struct $name:ident $lt:tt { $($body:tt)* }) => {
-        $crate::__finfmt_wire_fields! { (concat $kept $vis $name $lt []) []; $($body)* }
+    ($kept:tt [concat ,]; ; $vis:vis struct $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
+        $crate::__finfmt_wire_fields! { (concat $kept $vis $name $lt $de []) []; $($body)* }
     };
-    ($kept:tt [delimited = $separator:expr ,]; ; $vis:vis struct $name:ident $lt:tt { $($body:tt)* }) => {
-        $crate::__finfmt_wire_fields! { ([delimited $separator] $kept $vis $name $lt []) []; $($body)* }
+    ($kept:tt [delimited = $separator:expr ,]; ; $vis:vis struct $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
+        $crate::__finfmt_wire_fields! { ([delimited $separator] $kept $vis $name $lt $de []) []; $($body)* }
     };
-    ($kept:tt [bitmap = $format:ty ,]; ; $vis:vis struct $name:ident $lt:tt { $($body:tt)* }) => {
-        $crate::__finfmt_wire_fields! { ([bitmap $format] $kept $vis $name $lt []) []; $($body)* }
+    ($kept:tt [bitmap = $format:ty ,]; ; $vis:vis struct $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
+        $crate::__finfmt_wire_fields! { ([bitmap $format] $kept $vis $name $lt $de []) []; $($body)* }
     };
-    ($kept:tt [ber_tlv ,]; ; $vis:vis struct $name:ident $lt:tt { $($body:tt)* }) => {
-        $crate::__finfmt_wire_fields! { ([ber_tlv false] $kept $vis $name $lt []) []; $($body)* }
+    ($kept:tt [ber_tlv ,]; ; $vis:vis struct $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
+        $crate::__finfmt_wire_fields! { ([ber_tlv false] $kept $vis $name $lt $de []) []; $($body)* }
     };
-    ($kept:tt [ber_tlv(allow_zero_padding) ,]; ; $vis:vis struct $name:ident $lt:tt { $($body:tt)* }) => {
-        $crate::__finfmt_wire_fields! { ([ber_tlv true] $kept $vis $name $lt []) []; $($body)* }
+    ($kept:tt [ber_tlv(allow_zero_padding) ,]; ; $vis:vis struct $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
+        $crate::__finfmt_wire_fields! { ([ber_tlv true] $kept $vis $name $lt $de []) []; $($body)* }
     };
-    ($kept:tt [$kind:ident ,]; ; $vis:vis enum $name:ident $lt:tt { $($body:tt)* }) => {
-        $crate::__finfmt_wire_variants! { ($kind $kept $vis $name $lt []) []; $($body)* }
+    ($kept:tt [$kind:ident ,]; ; $vis:vis enum $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
+        $crate::__finfmt_wire_variants! { ($kind $kept $vis $name $lt $de []) []; $($body)* }
     };
     ($kept:tt []; ; $vis:vis enum $name:ident $($rest:tt)*) => {
         compile_error!(concat!(
@@ -317,40 +317,40 @@ macro_rules! __finfmt_wire_item {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __finfmt_wire_fields {
-    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt [$($done:tt)*]) [];) => {
-        $crate::__finfmt_wire_emit! { $layout $kept $vis $name $lt [$($done)*] }
+    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*]) [];) => {
+        $crate::__finfmt_wire_emit! { $layout $kept $vis $name $lt $de [$($done)*] }
     };
-    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt [$($done:tt)*]) [$($fkept:tt)*];
+    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*]) [$($fkept:tt)*];
         $(#[doc = $doc:tt])* #[wire($($args:tt)*)] $(#[$($attr:tt)*])* $fvis:vis $field:ident : Option<$inner:ty> $(, $($rest:tt)*)?) => {
         $crate::__finfmt_wire_fields! {
-            ($layout $kept $vis $name $lt [$($done)* {
+            ($layout $kept $vis $name $lt $de [$($done)* {
                 [$($fkept)* $(#[doc = $doc])* $(#[$($attr)*])*] ($fvis) $field (Option<$inner>) opt ($inner) [$($args)*]
             }]) [];
             $($($rest)*)?
         }
     };
-    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt [$($done:tt)*]) [$($fkept:tt)*];
+    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*]) [$($fkept:tt)*];
         $(#[doc = $doc:tt])* #[wire($($args:tt)*)] $(#[$($attr:tt)*])* $fvis:vis $field:ident : $ty:ty $(, $($rest:tt)*)?) => {
         $crate::__finfmt_wire_fields! {
-            ($layout $kept $vis $name $lt [$($done)* {
+            ($layout $kept $vis $name $lt $de [$($done)* {
                 [$($fkept)* $(#[doc = $doc])* $(#[$($attr)*])*] ($fvis) $field ($ty) req ($ty) [$($args)*]
             }]) [];
             $($($rest)*)?
         }
     };
-    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt [$($done:tt)*]) [$($fkept:tt)*];
+    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*]) [$($fkept:tt)*];
         $(#[doc = $doc:tt])* $fvis:vis $field:ident : Option<$inner:ty> $(, $($rest:tt)*)?) => {
         $crate::__finfmt_wire_fields! {
-            ($layout $kept $vis $name $lt [$($done)* {
+            ($layout $kept $vis $name $lt $de [$($done)* {
                 [$($fkept)* $(#[doc = $doc])*] ($fvis) $field (Option<$inner>) opt ($inner) []
             }]) [];
             $($($rest)*)?
         }
     };
-    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt [$($done:tt)*]) [$($fkept:tt)*];
+    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*]) [$($fkept:tt)*];
         $(#[doc = $doc:tt])* $fvis:vis $field:ident : $ty:ty $(, $($rest:tt)*)?) => {
         $crate::__finfmt_wire_fields! {
-            ($layout $kept $vis $name $lt [$($done)* { [$($fkept)* $(#[doc = $doc])*] ($fvis) $field ($ty) req ($ty) [] }]) [];
+            ($layout $kept $vis $name $lt $de [$($done)* { [$($fkept)* $(#[doc = $doc])*] ($fvis) $field ($ty) req ($ty) [] }]) [];
             $($($rest)*)?
         }
     };
@@ -365,8 +365,8 @@ macro_rules! __finfmt_wire_fields {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __finfmt_wire_variants {
-    (($kind:ident $kept:tt $vis:vis $name:ident $lt:tt [$($done:tt)*]) [];) => {
-        $crate::__finfmt_wire_enum! { $kind $kept $vis $name $lt [$($done)*] }
+    (($kind:ident $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*]) [];) => {
+        $crate::__finfmt_wire_enum! { $kind $kept $vis $name $lt $de [$($done)*] }
     };
     ($state:tt [$($vkept:tt)*]; $(#[doc = $doc:tt])* #[wire($($args:tt)*)] $(#[$($attr:tt)*])* $variant:ident
         (#[wire(fmt = $fmt:ty)] $payload:ty $(,)?) $(, $($rest:tt)*)?) => {
@@ -397,8 +397,8 @@ macro_rules! __finfmt_wire_variants {
     ($state:tt [$($vkept:tt)*]; #[$($attr:tt)*] $($rest:tt)*) => {
         $crate::__finfmt_wire_variants! { $state [$($vkept)* #[$($attr)*]]; $($rest)* }
     };
-    (@push ($kind:ident $kept:tt $vis:vis $name:ident $lt:tt [$($done:tt)*]) $entry:tt; $($rest:tt)*) => {
-        $crate::__finfmt_wire_variants! { ($kind $kept $vis $name $lt [$($done)* $entry]) []; $($rest)* }
+    (@push ($kind:ident $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*]) $entry:tt; $($rest:tt)*) => {
+        $crate::__finfmt_wire_variants! { ($kind $kept $vis $name $lt $de [$($done)* $entry]) []; $($rest)* }
     };
 }
 
@@ -407,7 +407,7 @@ macro_rules! __finfmt_wire_variants {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __finfmt_wire_enum {
-    ($kind:ident [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?]
+    ($kind:ident [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
         [$({ [$($vkept:tt)*] $variant:ident [$($args:tt)*] [$(($payload:ty) ($fmt:ty) $bind:ident)?] })*]) => {
         $($kept)*
         $vis enum $name $(<$lt>)? {
@@ -416,12 +416,13 @@ macro_rules! __finfmt_wire_enum {
 
         const _: () = {
             $($crate::__finfmt_wire_variant! { {@check $kind} $variant [$(($fmt) $bind)?]; [] [] []; $($args)* })*
-            $crate::__finfmt_wire_enum! { @impl $kind $name [$($lt)?]
-                [$({ $variant [$($args)*] [$(($fmt) $bind)?] })*] }
+            $crate::__finfmt_wire_enum! { @impl $kind $name [$($lt)?] [$de]
+                [$({ $variant [$($args)*] [$(($fmt) $bind)?] })*]
+                (false $($(|| <$fmt as $crate::composite::FieldDecode<$de, $payload>>::TAKES_REST)?)*) }
         };
     };
 
-    (@impl names $name:ident [$($lt:lifetime)?] [$({ $variant:ident $args:tt $payload:tt })*]) => {
+    (@impl names $name:ident [$($lt:lifetime)?] [$de:lifetime] [$({ $variant:ident $args:tt $payload:tt })*] $takes_rest:tt) => {
         const _: () = if let Err(message) = $crate::composite::check_variant_names(&[
             $(Some($crate::__finfmt_wire_variant! { {@name} $variant $payload; [] [] []; $args })),*
         ]) {
@@ -448,7 +449,7 @@ macro_rules! __finfmt_wire_enum {
         }
     };
 
-    (@impl codes $name:ident [$($lt:lifetime)?] [$({ $variant:ident $args:tt $payload:tt })*]) => {
+    (@impl codes $name:ident [$($lt:lifetime)?] [$de:lifetime] [$({ $variant:ident $args:tt $payload:tt })*] $takes_rest:tt) => {
         const _: () = if let Err(message) = $crate::composite::check_variant_codes(&[
             $($crate::__finfmt_wire_variant! { {@code} $variant $payload; [] [] []; $args }),*
         ]) {
@@ -475,7 +476,8 @@ macro_rules! __finfmt_wire_enum {
         }
     };
 
-    (@impl selected $name:ident [$($lt:lifetime)?] [$({ $variant:ident $args:tt [$(($fmt:ty) $bind:ident)?] })*]) => {
+    (@impl selected $name:ident [$($lt:lifetime)?] [$de:lifetime] [$({ $variant:ident $args:tt [$(($fmt:ty) $bind:ident)?] })*]
+        ($($takes_rest:tt)*)) => {
         const _: () = if let Err(message) = $crate::composite::check_variant_names(&[
             $($crate::__finfmt_wire_variant! { {@selected_name} $variant [$(($fmt) $bind)?]; [] [] []; $args }),*
         ]) {
@@ -505,16 +507,17 @@ macro_rules! __finfmt_wire_enum {
             }
         }
 
-        impl<$($lt,)? '__finfmt_de> $crate::composite::ContextDecode<'__finfmt_de, $crate::__finfmt_wire_decoded!($name ['__finfmt_de] [$($lt)?]), str>
-            for $name $(<$lt>)?
-        {
+        impl<$de> $crate::composite::ContextDecode<$de, $name $(<$lt>)?, str> for $name $(<$lt>)? {
+            // Any variant's body may take the rest.
+            const TAKES_REST: bool = $($takes_rest)*;
+
             #[inline(always)]
             #[allow(unreachable_code)]
             fn decode_with(
-                input: &mut &'__finfmt_de [u8],
-                scratch: &mut &'__finfmt_de mut [u8],
+                input: &mut &$de [u8],
+                scratch: &mut &$de mut [u8],
                 key: &str,
-            ) -> Result<$crate::__finfmt_wire_decoded!($name ['__finfmt_de] [$($lt)?]), $crate::CompositeError> {
+            ) -> Result<Self, $crate::CompositeError> {
                 let _ = (&input, &scratch);
                 $($crate::__finfmt_wire_variant! { {@decode input, scratch, key, $name} $variant [$(($fmt) $bind)?]; [] [] []; $args })*
                 $($crate::__finfmt_wire_variant! { {@other input, scratch, $name} $variant [$(($fmt) $bind)?]; [] [] []; $args })*
@@ -638,7 +641,7 @@ macro_rules! __finfmt_wire_variant {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __finfmt_wire_emit {
-    (concat [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?]
+    (concat [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
         [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]) => {
         $($kept)*
         $vis struct $name $(<$lt>)? {
@@ -669,15 +672,21 @@ macro_rules! __finfmt_wire_emit {
                 }
             }
 
-            impl<$($lt,)? '__finfmt_de> $crate::composite::FieldDecode<'__finfmt_de, $crate::__finfmt_wire_decoded!($name ['__finfmt_de] [$($lt)?])>
-                for $name $(<$lt>)?
-            {
+            impl<$de> $crate::composite::FieldDecode<$de, $name $(<$lt>)?> for $name $(<$lt>)? {
+                // The last field decides.
+                const TAKES_REST: bool = match <[bool]>::last(&[
+                    $($crate::__finfmt_wire_args! { {__finfmt_wire_consts @rest concat $de ($ty) ($default)} $kind $field ($default); [] [] [] [] [] [] []; $($args)* }),*
+                ]) {
+                    Some(last) => *last,
+                    None => false,
+                };
+
                 #[inline(always)]
                 #[allow(unused_assignments, unused_mut, unused_variables)]
                 fn decode_field(
-                    input: &mut &'__finfmt_de [u8],
-                    scratch: &mut &'__finfmt_de mut [u8],
-                ) -> Result<$crate::__finfmt_wire_decoded!($name ['__finfmt_de] [$($lt)?]), $crate::CompositeError> {
+                    input: &mut &$de [u8],
+                    scratch: &mut &$de mut [u8],
+                ) -> Result<Self, $crate::CompositeError> {
                     let _ = (&input, &scratch);
                     $($crate::__finfmt_wire_args! { {__finfmt_wire_concat @decode input, scratch;} $kind $field ($default); [] [] [] [] [] [] []; $($args)* })*
                     Ok($name { $($field),* })
@@ -685,7 +694,7 @@ macro_rules! __finfmt_wire_emit {
             }
         };
     };
-    ([delimited $separator:expr] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?]
+    ([delimited $separator:expr] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
         [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]) => {
         $($kept)*
         $vis struct $name $(<$lt>)? {
@@ -712,15 +721,16 @@ macro_rules! __finfmt_wire_emit {
                 }
             }
 
-            impl<$($lt,)? '__finfmt_de> $crate::composite::FieldDecode<'__finfmt_de, $crate::__finfmt_wire_decoded!($name ['__finfmt_de] [$($lt)?])>
-                for $name $(<$lt>)?
-            {
+            impl<$de> $crate::composite::FieldDecode<$de, $name $(<$lt>)?> for $name $(<$lt>)? {
+                // The last field takes the rest.
+                const TAKES_REST: bool = !<[&str]>::is_empty(&[$(stringify!($field)),*]);
+
                 #[inline(always)]
                 #[allow(unused_assignments, unused_mut, unused_variables)]
                 fn decode_field(
-                    input: &mut &'__finfmt_de [u8],
-                    scratch: &mut &'__finfmt_de mut [u8],
-                ) -> Result<$crate::__finfmt_wire_decoded!($name ['__finfmt_de] [$($lt)?]), $crate::CompositeError> {
+                    input: &mut &$de [u8],
+                    scratch: &mut &$de mut [u8],
+                ) -> Result<Self, $crate::CompositeError> {
                     let _ = (&input, &scratch);
                     const SEPARATOR: u8 = $separator;
                     let count = <[&str]>::len(&[$(stringify!($field)),*]);
@@ -734,7 +744,7 @@ macro_rules! __finfmt_wire_emit {
             }
         };
     };
-    ([bitmap $format:ty] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?]
+    ([bitmap $format:ty] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
         [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]) => {
         $($kept)*
         $vis struct $name $(<$lt>)? {
@@ -773,15 +783,21 @@ macro_rules! __finfmt_wire_emit {
                 }
             }
 
-            impl<$($lt,)? '__finfmt_de> $crate::composite::FieldDecode<'__finfmt_de, $crate::__finfmt_wire_decoded!($name ['__finfmt_de] [$($lt)?])>
-                for $name $(<$lt>)?
-            {
+            impl<$de> $crate::composite::FieldDecode<$de, $name $(<$lt>)?> for $name $(<$lt>)? {
+                // The last field decides.
+                const TAKES_REST: bool = match <[bool]>::last(&[
+                    $($crate::__finfmt_wire_args! { {__finfmt_wire_consts @rest bitmap $de ($ty) ($default)} $kind $field ($default); [] [] [] [] [] [] []; $($args)* }),*
+                ]) {
+                    Some(last) => *last,
+                    None => false,
+                };
+
                 #[inline(always)]
                 #[allow(unused_assignments, unused_mut, unused_variables)]
                 fn decode_field(
-                    input: &mut &'__finfmt_de [u8],
-                    scratch: &mut &'__finfmt_de mut [u8],
-                ) -> Result<$crate::__finfmt_wire_decoded!($name ['__finfmt_de] [$($lt)?]), $crate::CompositeError> {
+                    input: &mut &$de [u8],
+                    scratch: &mut &$de mut [u8],
+                ) -> Result<Self, $crate::CompositeError> {
                     let _ = (&input, &scratch);
                     $($crate::__finfmt_wire_args! { {__finfmt_wire_bitmap @head_decode input, scratch;} $kind $field ($default); [] [] [] [] [] [] []; $($args)* })*
                     let bitmap = $crate::bitmap::decode_bitmap::<<$format as $crate::bitmap::BitmapFormat>::Word>(
@@ -803,7 +819,7 @@ macro_rules! __finfmt_wire_emit {
             }
         };
     };
-    ([ber_tlv $padding:tt] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?]
+    ([ber_tlv $padding:tt] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
         [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]) => {
         $($kept)*
         $vis struct $name $(<$lt>)? {
@@ -831,15 +847,16 @@ macro_rules! __finfmt_wire_emit {
                 }
             }
 
-            impl<$($lt,)? '__finfmt_de> $crate::composite::FieldDecode<'__finfmt_de, $crate::__finfmt_wire_decoded!($name ['__finfmt_de] [$($lt)?])>
-                for $name $(<$lt>)?
-            {
+            impl<$de> $crate::composite::FieldDecode<$de, $name $(<$lt>)?> for $name $(<$lt>)? {
+                // Entries are read until the input ends.
+                const TAKES_REST: bool = true;
+
                 #[inline(always)]
                 #[allow(unused_assignments, unused_mut, unused_variables)]
                 fn decode_field(
-                    input: &mut &'__finfmt_de [u8],
-                    scratch: &mut &'__finfmt_de mut [u8],
-                ) -> Result<$crate::__finfmt_wire_decoded!($name ['__finfmt_de] [$($lt)?]), $crate::CompositeError> {
+                    input: &mut &$de [u8],
+                    scratch: &mut &$de mut [u8],
+                ) -> Result<Self, $crate::CompositeError> {
                     let _ = (&input, &scratch);
                     $($crate::__finfmt_wire_args! { {__finfmt_wire_ber @init} $kind $field ($default); [] [] [] [] [] [] []; $($args)* })*
                     while let Some(entry) =
@@ -862,14 +879,6 @@ macro_rules! __finfmt_wire_emit {
             }
         };
     };
-}
-
-/// The struct's type with its lifetime, if any, set to `$de`.
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __finfmt_wire_decoded {
-    ($name:ident [$de:lifetime] [$lt:lifetime]) => { $name<$de> };
-    ($name:ident [$de:lifetime] []) => { $name };
 }
 
 /// Parse a field's `#[wire]` arguments, in any order, into its final kind,
@@ -1005,6 +1014,23 @@ macro_rules! __finfmt_wire_args {
 macro_rules! __finfmt_wire_consts {
     (@optional opt $($rest:tt)*) => { true };
     (@optional req $($rest:tt)*) => { false };
+
+    // Whether the field may take the rest of the input, as its format's
+    // `TAKES_REST`. A concat field the record may omit ends the record only
+    // at the end of the input, so it takes the rest.
+    (@rest $layout:ident $de:lifetime $ty:tt $inner:tt $kind:ident $field:ident $fmt:tt $bit:tt $tag:tt [extras] $($slots:tt)*) => {
+        false
+    };
+    (@rest concat $de:lifetime $ty:tt $inner:tt opt $($rest:tt)*) => { true };
+    (@rest $layout:ident $de:lifetime $ty:tt ($inner:ty) opt $field:ident ($fmt:ty) $($slots:tt)*) => {
+        <$fmt as $crate::composite::FieldDecode<$de, $inner>>::TAKES_REST
+    };
+    (@rest $layout:ident $de:lifetime ($ty:ty) $inner:tt req $field:ident ($fmt:ty) $bit:tt $tag:tt [] [$select:ident] $items:tt) => {
+        <$fmt as $crate::composite::ContextDecode<$de, $ty, str>>::TAKES_REST
+    };
+    (@rest $layout:ident $de:lifetime ($ty:ty) $inner:tt req $field:ident ($fmt:ty) $($slots:tt)*) => {
+        <$fmt as $crate::composite::FieldDecode<$de, $ty>>::TAKES_REST
+    };
 
     (@consts $layout:ident $kind:ident $field:ident ($fmt:ty) $bit:tt $tag:tt $extras:tt $select:tt [$($item:tt)*]) => {
         $crate::__finfmt_wire_consts! { @check $layout $kind $bit $tag $extras }
@@ -2020,6 +2046,128 @@ mod tests {
         assert_eq!(
             crate::decode::<AbsentBer, AbsentBer>(b"", &mut scratch).map_err(|error| error.kind),
             Err(Error::Invalid)
+        );
+    }
+
+    crate::wire_type! {
+        #[derive(Debug, PartialEq)]
+        #[wire(delimited = b'|')]
+        struct Pair {
+            #[wire(fmt = Text)]
+            a: String,
+            #[wire(fmt = Text)]
+            b: String,
+        }
+
+        #[derive(Debug, PartialEq)]
+        #[wire(ber_tlv)]
+        struct Tags {
+            #[wire(tag = "5A", fmt = Text)]
+            a: Option<String>,
+            #[wire(tag = "5B", fmt = Text)]
+            b: Option<String>,
+        }
+
+        #[derive(Debug, PartialEq)]
+        #[wire(concat)]
+        struct EndsInRest {
+            #[wire(fmt = A1)]
+            code: String,
+            #[wire(fmt = Text)]
+            text: String,
+        }
+
+        #[derive(Debug, PartialEq)]
+        #[wire(concat)]
+        struct HoldsPair {
+            #[wire(absent_bytes = b"A|B")]
+            pair: Option<Pair>,
+        }
+
+        #[derive(Debug, PartialEq)]
+        #[wire(concat)]
+        struct HoldsTags {
+            #[wire(absent_bytes = b"\x5A\x00")]
+            tags: Option<Tags>,
+        }
+
+        #[derive(Debug, PartialEq)]
+        #[wire(concat)]
+        struct HoldsRest {
+            #[wire(fmt = A1)]
+            code: String,
+            #[wire(absent_bytes = b"--")]
+            last: Option<EndsInRest>,
+        }
+    }
+
+    #[test]
+    fn absent_patterns_match_all_of_a_record_taking_the_rest() {
+        use crate::composite::{ContextDecode, FieldDecode};
+        // Records and enums whose last part may take the rest say so.
+        const {
+            assert!(<Pair as FieldDecode<Pair>>::TAKES_REST);
+            assert!(<Tags as FieldDecode<Tags>>::TAKES_REST);
+            assert!(<EndsInRest as FieldDecode<EndsInRest>>::TAKES_REST);
+            assert!(<HoldsRest as FieldDecode<HoldsRest>>::TAKES_REST);
+            // An omitted concat tail ends only at the end of the input.
+            assert!(<Record as FieldDecode<Record>>::TAKES_REST);
+            assert!(!<Inner as FieldDecode<Inner>>::TAKES_REST);
+            assert!(!<Codes as FieldDecode<Codes>>::TAKES_REST);
+            assert!(!<AbsentBitmap as FieldDecode<AbsentBitmap>>::TAKES_REST);
+            assert!(<Body as ContextDecode<Body, str>>::TAKES_REST);
+            assert!(<crate::Frame<crate::Rest, Body> as ContextDecode<Body, str>>::TAKES_REST);
+            assert!(!<crate::Frame<AsciiLength<1>, Body> as ContextDecode<Body, str>>::TAKES_REST);
+        }
+        // Only the whole remainder is absent; a longer value starting with
+        // the pattern is present.
+        let mut scratch = [0; 64];
+        assert_eq!(
+            crate::decode::<HoldsPair, HoldsPair>(b"A|B", &mut scratch),
+            Ok(HoldsPair { pair: None })
+        );
+        let pair = Pair {
+            a: "A".into(),
+            b: "BX".into(),
+        };
+        let mut scratch = [0; 64];
+        assert_eq!(
+            crate::decode::<HoldsPair, HoldsPair>(b"A|BX", &mut scratch),
+            Ok(HoldsPair { pair: Some(pair) })
+        );
+        let mut scratch = [0; 64];
+        assert_eq!(
+            crate::decode::<HoldsTags, HoldsTags>(b"\x5A\x00", &mut scratch),
+            Ok(HoldsTags { tags: None })
+        );
+        let tags = Tags {
+            a: Some("".into()),
+            b: Some("X".into()),
+        };
+        let mut scratch = [0; 64];
+        assert_eq!(
+            crate::decode::<HoldsTags, HoldsTags>(b"\x5A\x00\x5B\x01X", &mut scratch),
+            Ok(HoldsTags { tags: Some(tags) })
+        );
+        let mut scratch = [0; 64];
+        assert_eq!(
+            crate::decode::<HoldsRest, HoldsRest>(b"1--", &mut scratch),
+            Ok(HoldsRest {
+                code: "1".into(),
+                last: None
+            })
+        );
+        let last = EndsInRest {
+            code: "-".into(),
+            text: "-X".into(),
+        };
+        let mut scratch = [0; 64];
+        assert_eq!(
+            crate::decode::<HoldsRest, HoldsRest>(b"1--X", &mut scratch),
+            Ok(HoldsRest {
+                code: "1".into(),
+                last: Some(last)
+            })
         );
     }
 

@@ -57,6 +57,8 @@ where
     Inner: ContextDecode<'de, T, C>,
     Steps: Step,
 {
+    const TAKES_REST: bool = !L::STATES_LEN;
+
     #[inline(always)]
     fn decode_with(input: &mut &'de [u8], scratch: &mut &'de mut [u8], context: &C) -> Result<T, CompositeError> {
         decode_frame::<L, Steps, MIN, MAX, T>(input, scratch, |body, scratch| Inner::decode_with(body, scratch, context))

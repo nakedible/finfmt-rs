@@ -85,7 +85,9 @@ where
     Item: FieldDecode<'de, T>,
     Sep: ListSeparatorPolicy,
 {
-    const TAKES_REST: bool = !L::STATES_LEN;
+    // The last item, or the last separated segment, may take the rest even
+    // when the count is stated.
+    const TAKES_REST: bool = !L::STATES_LEN || Sep::BYTE.is_some() || Item::TAKES_REST;
 
     #[inline(always)]
     fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Vec<T>, CompositeError> {
@@ -356,6 +358,24 @@ mod tests {
         let mut output = [0; 4];
         Counted::encode_field(&mut output.as_mut_slice(), &mut [], &vec![String::from("A"), "B".into()]).unwrap();
         assert_eq!(output, *b"2A|B");
+    }
+
+    #[test]
+    fn counted_lists_take_the_rest_through_their_last_item() {
+        type Pair = BoundedList<Fixed<2>, Text, Separator<b'|'>, 2, 2>;
+        const {
+            assert!(<Pair as FieldDecode<Vec<String>>>::TAKES_REST);
+            assert!(<BoundedList<Fixed<2>, Text, (), 2, 2> as FieldDecode<Vec<String>>>::TAKES_REST);
+            assert!(!<BoundedList<Fixed<2>, One, (), 2, 2> as FieldDecode<Vec<String>>>::TAKES_REST);
+        }
+        struct Marker;
+        impl crate::ConstBytes for Marker {
+            const BYTES: &'static [u8] = b"A|B";
+        }
+        type Absent = crate::OptionAs<Pair, crate::AbsentBytes<Marker>>;
+        let decode = |wire: &[u8]| crate::decode::<Absent, Option<Vec<String>>>(wire, &mut [0; 64]).map_err(|e| e.kind);
+        assert_eq!(decode(b"A|B"), Ok(None));
+        assert_eq!(decode(b"A|BX"), Ok(Some(vec!["A".into(), "BX".into()])));
     }
 
     #[test]
