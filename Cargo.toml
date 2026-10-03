@@ -90,6 +90,7 @@ required-features = ["compact_str"]
 [[example]]
 name = "nibss"
 required-features = ["compact_str"]
+test = true
 
 [profile.release]
 lto = true

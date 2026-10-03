@@ -11,7 +11,19 @@ impl<const MIN: usize, const MAX: usize> Check for Track2Nibss<MIN, MAX> {
     }
 }
 
-type BitmapAsciiHexWord = finfmt::UnpackNibbles<finfmt::primitive::nibble::UpperHexDigits>;
+/// ISO 8583 primary and secondary bitmaps as uppercase hex text.
+pub struct NibssBitmap;
+impl finfmt::BitmapFormat for NibssBitmap {
+    const LAYOUT: finfmt::BitmapLayout = finfmt::BitmapLayout::iso(1, 2);
+    type Word = finfmt::UnpackNibbles<finfmt::primitive::nibble::UpperHexDigits>;
+}
+
+/// A primary bitmap only, as uppercase hex text.
+pub struct NibssShortBitmap;
+impl finfmt::BitmapFormat for NibssShortBitmap {
+    const LAYOUT: finfmt::BitmapLayout = finfmt::BitmapLayout::iso(1, 1);
+    type Word = finfmt::UnpackNibbles<finfmt::primitive::nibble::UpperHexDigits>;
+}
 
 pub type FixedAsciiNumeric<const N: usize> = Field<Numeric<N, N>, Fixed<N>>;
 pub type FixedAsciiAmount<const N: usize> = Field<Numeric<1, N>, Fixed<N>, PadLeft<N, b'0', 1>>;
@@ -28,182 +40,193 @@ pub type LllvarAsciiHex<const MAX: usize> = Field<UpperHexEven<0, MAX>, AsciiLen
 pub type FixedSignedAsciiAmount8 = SignPrefix<Field<Numeric<1, 8>, Fixed<8>, PadLeft<8, b'0', 1>>>;
 pub type LlvarTrack2 = Field<Track2Nibss<1, 37>, AsciiLength<2>>;
 
-/// NIBSS primary authorization request `0100`.
-///
-/// Source: <https://nibss-plc.com.ng/wp-content/uploads/2025/07/pos-interface-specification-ver-1-161.pdf>
-///
-/// This is the serde-facing logical message shape only. Tagged private fields and
-/// EMV/NFC payloads remain opaque placeholders for now.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct AuthorizationRequest0100 {
-    pub f002_primary_account_number: CompactString,
-    pub f003_processing_code: CompactString,
-    pub f004_amount_transaction: u64,
-    pub f007_transmission_date_time_utc: CompactString,
-    pub f011_systems_trace_audit_number: CompactString,
-    pub f012_time_local_transaction: CompactString,
-    pub f013_date_local_transaction: CompactString,
-    pub f014_date_expiration: CompactString,
-    pub f018_merchant_type: CompactString,
-    pub f022_pos_entry_mode: CompactString,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub f023_card_sequence_number: Option<CompactString>,
-    pub f025_pos_condition_code: CompactString,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub f026_pos_pin_capture_code: Option<CompactString>,
-    pub f028_amount_transaction_fee: i64,
-    pub f032_acquiring_institution_id_code: CompactString,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub f035_track_2_data: Option<CompactString>,
-    pub f037_retrieval_reference_number: CompactString,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub f040_service_restriction_code: Option<CompactString>,
-    pub f041_card_acceptor_terminal_id: CompactString,
-    pub f042_card_acceptor_id_code: CompactString,
-    pub f043_card_acceptor_name_location: CompactString,
-    pub f049_currency_code_transaction: CompactString,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub f052_pin_data: Option<CompactString>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub f053_security_related_control_information: Option<CompactString>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub f054_additional_amounts: Option<CompactString>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub f055_integrated_circuit_card_system_related_data: Option<CompactString>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub f056_message_reason_code: Option<CompactString>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub f059_transport_echo_data: Option<CompactString>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub f060_payment_information: Option<CompactString>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub f062_private_field_management_data_1: Option<CompactString>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub f102_account_identification_1: Option<CompactString>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub f103_account_identification_2: Option<CompactString>,
-    pub f123_pos_data_code: CompactString,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub f124_near_field_communication_data: Option<CompactString>,
-    pub f128_secondary_message_hash_value: CompactString,
-}
-
-finfmt::bitmap_format! {
-    pub struct AuthorizationRequest0100BodyFmt for AuthorizationRequest0100, finfmt::bitmap::BitmapLayout::iso(1, 2), BitmapAsciiHexWord {
-        2 => f002_primary_account_number: LlvarAsciiNumeric<1, 19>,
-        3 => f003_processing_code: FixedAsciiAlphanum<6>,
-        4 => f004_amount_transaction: FixedAsciiAmount<12>,
-        7 => f007_transmission_date_time_utc: FixedAsciiNumeric<10>,
-        11 => f011_systems_trace_audit_number: FixedAsciiNumeric<6>,
-        12 => f012_time_local_transaction: FixedAsciiNumeric<6>,
-        13 => f013_date_local_transaction: FixedAsciiNumeric<4>,
-        14 => f014_date_expiration: FixedAsciiNumeric<4>,
-        18 => f018_merchant_type: FixedAsciiNumeric<4>,
-        22 => f022_pos_entry_mode: FixedAsciiNumeric<3>,
-        23 => f023_card_sequence_number: Option<FixedAsciiNumeric<3>>,
-        25 => f025_pos_condition_code: FixedAsciiNumeric<2>,
-        26 => f026_pos_pin_capture_code: Option<FixedAsciiNumeric<2>>,
-        28 => f028_amount_transaction_fee: FixedSignedAsciiAmount8,
-        32 => f032_acquiring_institution_id_code: LlvarAsciiAlphanum<1, 11>,
-        35 => f035_track_2_data: Option<LlvarTrack2>,
-        37 => f037_retrieval_reference_number: FixedAsciiAlphanum<12>,
-        40 => f040_service_restriction_code: Option<FixedAsciiNumeric<3>>,
-        41 => f041_card_acceptor_terminal_id: FixedAscii<8>,
-        42 => f042_card_acceptor_id_code: FixedAscii<15>,
-        43 => f043_card_acceptor_name_location: FixedAscii<40>,
-        49 => f049_currency_code_transaction: FixedAsciiNumeric<3>,
-        52 => f052_pin_data: Option<FixedAsciiHex<16>>,
-        53 => f053_security_related_control_information: Option<FixedAsciiHex<96>>,
-        54 => f054_additional_amounts: Option<LllvarAscii<120>>,
-        55 => f055_integrated_circuit_card_system_related_data: Option<LllvarAsciiHex<510>>,
-        56 => f056_message_reason_code: Option<LllvarAsciiNumeric<1, 4>>,
-        59 => f059_transport_echo_data: Option<LllvarAscii<255>>,
-        60 => f060_payment_information: Option<LllvarAscii<999>>,
-        62 => f062_private_field_management_data_1: Option<LllvarAscii<999>>,
-        102 => f102_account_identification_1: Option<LlvarAscii<1, 28>>,
-        103 => f103_account_identification_2: Option<LlvarAscii<1, 28>>,
-        123 => f123_pos_data_code: Field<Alphanum<15, 15>, AsciiLength<3>>,
-        124 => f124_near_field_communication_data: Option<LlllvarAscii<9999>>,
-        128 => f128_secondary_message_hash_value: FixedAsciiHex<64>,
+finfmt::wire_type! {
+    /// NIBSS primary authorization request `0100`.
+    ///
+    /// Source: <https://nibss-plc.com.ng/wp-content/uploads/2025/07/pos-interface-specification-ver-1-161.pdf>
+    ///
+    /// This is the serde-facing logical message shape only. Tagged private fields and
+    /// EMV/NFC payloads remain opaque placeholders for now.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+    #[wire(bitmap = NibssBitmap)]
+    pub struct AuthorizationRequest0100 {
+        #[wire(fmt = LlvarAsciiNumeric<1, 19>, bit = 2)]
+        pub f002_primary_account_number: CompactString,
+        #[wire(fmt = FixedAsciiAlphanum<6>, bit = 3)]
+        pub f003_processing_code: CompactString,
+        #[wire(fmt = FixedAsciiAmount<12>, bit = 4)]
+        pub f004_amount_transaction: u64,
+        #[wire(fmt = FixedAsciiNumeric<10>, bit = 7)]
+        pub f007_transmission_date_time_utc: CompactString,
+        #[wire(fmt = FixedAsciiNumeric<6>, bit = 11)]
+        pub f011_systems_trace_audit_number: CompactString,
+        #[wire(fmt = FixedAsciiNumeric<6>, bit = 12)]
+        pub f012_time_local_transaction: CompactString,
+        #[wire(fmt = FixedAsciiNumeric<4>, bit = 13)]
+        pub f013_date_local_transaction: CompactString,
+        #[wire(fmt = FixedAsciiNumeric<4>, bit = 14)]
+        pub f014_date_expiration: CompactString,
+        #[wire(fmt = FixedAsciiNumeric<4>, bit = 18)]
+        pub f018_merchant_type: CompactString,
+        #[wire(fmt = FixedAsciiNumeric<3>, bit = 22)]
+        pub f022_pos_entry_mode: CompactString,
+        #[wire(fmt = FixedAsciiNumeric<3>, bit = 23)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub f023_card_sequence_number: Option<CompactString>,
+        #[wire(fmt = FixedAsciiNumeric<2>, bit = 25)]
+        pub f025_pos_condition_code: CompactString,
+        #[wire(fmt = FixedAsciiNumeric<2>, bit = 26)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub f026_pos_pin_capture_code: Option<CompactString>,
+        #[wire(fmt = FixedSignedAsciiAmount8, bit = 28)]
+        pub f028_amount_transaction_fee: i64,
+        #[wire(fmt = LlvarAsciiAlphanum<1, 11>, bit = 32)]
+        pub f032_acquiring_institution_id_code: CompactString,
+        #[wire(fmt = LlvarTrack2, bit = 35)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub f035_track_2_data: Option<CompactString>,
+        #[wire(fmt = FixedAsciiAlphanum<12>, bit = 37)]
+        pub f037_retrieval_reference_number: CompactString,
+        #[wire(fmt = FixedAsciiNumeric<3>, bit = 40)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub f040_service_restriction_code: Option<CompactString>,
+        #[wire(fmt = FixedAscii<8>, bit = 41)]
+        pub f041_card_acceptor_terminal_id: CompactString,
+        #[wire(fmt = FixedAscii<15>, bit = 42)]
+        pub f042_card_acceptor_id_code: CompactString,
+        #[wire(fmt = FixedAscii<40>, bit = 43)]
+        pub f043_card_acceptor_name_location: CompactString,
+        #[wire(fmt = FixedAsciiNumeric<3>, bit = 49)]
+        pub f049_currency_code_transaction: CompactString,
+        #[wire(fmt = FixedAsciiHex<16>, bit = 52)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub f052_pin_data: Option<CompactString>,
+        #[wire(fmt = FixedAsciiHex<96>, bit = 53)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub f053_security_related_control_information: Option<CompactString>,
+        #[wire(fmt = LllvarAscii<120>, bit = 54)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub f054_additional_amounts: Option<CompactString>,
+        #[wire(fmt = LllvarAsciiHex<510>, bit = 55)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub f055_integrated_circuit_card_system_related_data: Option<CompactString>,
+        #[wire(fmt = LllvarAsciiNumeric<1, 4>, bit = 56)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub f056_message_reason_code: Option<CompactString>,
+        #[wire(fmt = LllvarAscii<255>, bit = 59)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub f059_transport_echo_data: Option<CompactString>,
+        #[wire(fmt = LllvarAscii<999>, bit = 60)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub f060_payment_information: Option<CompactString>,
+        #[wire(fmt = LllvarAscii<999>, bit = 62)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub f062_private_field_management_data_1: Option<CompactString>,
+        #[wire(fmt = LlvarAscii<1, 28>, bit = 102)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub f102_account_identification_1: Option<CompactString>,
+        #[wire(fmt = LlvarAscii<1, 28>, bit = 103)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub f103_account_identification_2: Option<CompactString>,
+        #[wire(fmt = Field<Alphanum<15, 15>, AsciiLength<3>>, bit = 123)]
+        pub f123_pos_data_code: CompactString,
+        #[wire(fmt = LlllvarAscii<9999>, bit = 124)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub f124_near_field_communication_data: Option<CompactString>,
+        #[wire(fmt = FixedAsciiHex<64>, bit = 128)]
+        pub f128_secondary_message_hash_value: CompactString,
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct AuthorizationResponse0110 {
-    pub f003_processing_code: CompactString,
-    pub f004_amount_transaction: u64,
-    pub f007_transmission_date_time_utc: CompactString,
-    pub f011_systems_trace_audit_number: CompactString,
-    pub f012_time_local_transaction: CompactString,
-    pub f013_date_local_transaction: CompactString,
-    pub f037_retrieval_reference_number: CompactString,
-    pub f039_response_code: CompactString,
-    pub f041_card_acceptor_terminal_id: CompactString,
-    pub f042_card_acceptor_id_code: CompactString,
-    pub f049_currency_code_transaction: CompactString,
-    pub f123_pos_data_code: CompactString,
-    pub f128_secondary_message_hash_value: CompactString,
-}
-
-finfmt::bitmap_format! {
-    pub struct AuthorizationResponse0110BodyFmt for AuthorizationResponse0110, finfmt::bitmap::BitmapLayout::iso(1, 2), BitmapAsciiHexWord {
-        3 => f003_processing_code: FixedAsciiAlphanum<6>,
-        4 => f004_amount_transaction: FixedAsciiAmount<12>,
-        7 => f007_transmission_date_time_utc: FixedAsciiNumeric<10>,
-        11 => f011_systems_trace_audit_number: FixedAsciiNumeric<6>,
-        12 => f012_time_local_transaction: FixedAsciiNumeric<6>,
-        13 => f013_date_local_transaction: FixedAsciiNumeric<4>,
-        37 => f037_retrieval_reference_number: FixedAsciiAlphanum<12>,
-        39 => f039_response_code: FixedAsciiAlphanum<2>,
-        41 => f041_card_acceptor_terminal_id: FixedAscii<8>,
-        42 => f042_card_acceptor_id_code: FixedAscii<15>,
-        49 => f049_currency_code_transaction: FixedAsciiNumeric<3>,
-        123 => f123_pos_data_code: Field<Alphanum<15, 15>, AsciiLength<3>>,
-        128 => f128_secondary_message_hash_value: FixedAsciiHex<64>,
+finfmt::wire_type! {
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+    #[wire(bitmap = NibssBitmap)]
+    pub struct AuthorizationResponse0110 {
+        #[wire(fmt = FixedAsciiAlphanum<6>, bit = 3)]
+        pub f003_processing_code: CompactString,
+        #[wire(fmt = FixedAsciiAmount<12>, bit = 4)]
+        pub f004_amount_transaction: u64,
+        #[wire(fmt = FixedAsciiNumeric<10>, bit = 7)]
+        pub f007_transmission_date_time_utc: CompactString,
+        #[wire(fmt = FixedAsciiNumeric<6>, bit = 11)]
+        pub f011_systems_trace_audit_number: CompactString,
+        #[wire(fmt = FixedAsciiNumeric<6>, bit = 12)]
+        pub f012_time_local_transaction: CompactString,
+        #[wire(fmt = FixedAsciiNumeric<4>, bit = 13)]
+        pub f013_date_local_transaction: CompactString,
+        #[wire(fmt = FixedAsciiAlphanum<12>, bit = 37)]
+        pub f037_retrieval_reference_number: CompactString,
+        #[wire(fmt = FixedAsciiAlphanum<2>, bit = 39)]
+        pub f039_response_code: CompactString,
+        #[wire(fmt = FixedAscii<8>, bit = 41)]
+        pub f041_card_acceptor_terminal_id: CompactString,
+        #[wire(fmt = FixedAscii<15>, bit = 42)]
+        pub f042_card_acceptor_id_code: CompactString,
+        #[wire(fmt = FixedAsciiNumeric<3>, bit = 49)]
+        pub f049_currency_code_transaction: CompactString,
+        #[wire(fmt = Field<Alphanum<15, 15>, AsciiLength<3>>, bit = 123)]
+        pub f123_pos_data_code: CompactString,
+        #[wire(fmt = FixedAsciiHex<64>, bit = 128)]
+        pub f128_secondary_message_hash_value: CompactString,
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[allow(clippy::large_enum_variant)]
-pub enum NibssMessage {
-    AuthorizationRequest0100(AuthorizationRequest0100),
-    AuthorizationResponse0110(AuthorizationResponse0110),
-}
+finfmt::wire_type! {
+    /// A NIBSS message: the MTI, then the body it selects.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[wire(concat)]
+    pub struct NibssMessage {
+        #[wire(fmt = FixedAscii<4>)]
+        pub mti: CompactString,
+        #[wire(select = mti)]
+        pub body: NibssBody,
+    }
 
-finfmt::tagged_format! {
-    pub struct NibssMessageFmt for NibssMessage {
-        _: FixedAscii<4> = b"0100" => AuthorizationRequest0100(AuthorizationRequest0100BodyFmt),
-        _: FixedAscii<4> = b"0110" => AuthorizationResponse0110(AuthorizationResponse0110BodyFmt),
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    #[allow(clippy::large_enum_variant)]
+    #[wire(selected)]
+    pub enum NibssBody {
+        #[wire(rename = "0100")]
+        AuthorizationRequest0100(AuthorizationRequest0100),
+        #[wire(rename = "0110")]
+        AuthorizationResponse0110(AuthorizationResponse0110),
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[allow(dead_code)]
-pub struct FlatNibssMessage {
-    pub mti: CompactString,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub f003_processing_code: Option<CompactString>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub f011_systems_trace_audit_number: Option<CompactString>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub f041_card_acceptor_terminal_id: Option<CompactString>,
+impl NibssMessage {
+    /// A message whose MTI matches its body. Used by the tests and the bench.
+    #[allow(dead_code)]
+    pub fn new(body: NibssBody) -> Self {
+        let mti = match body {
+            NibssBody::AuthorizationRequest0100(_) => "0100",
+            NibssBody::AuthorizationResponse0110(_) => "0110",
+        };
+        Self { mti: mti.into(), body }
+    }
 }
 
-finfmt::bitmap_format! {
-    pub struct FlatNibssMessageFmt for FlatNibssMessage, finfmt::bitmap::BitmapLayout::iso(1, 1), BitmapAsciiHexWord {
-        head: {
-            mti: FixedAscii<4>,
-        }
-        3 => f003_processing_code: Option<FixedAsciiAlphanum<6>>,
-        11 => f011_systems_trace_audit_number: Option<FixedAsciiNumeric<6>>,
-        41 => f041_card_acceptor_terminal_id: Option<FixedAscii<8>>,
+finfmt::wire_type! {
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+    #[allow(dead_code)]
+    #[wire(bitmap = NibssShortBitmap)]
+    pub struct FlatNibssMessage {
+        #[wire(fmt = FixedAscii<4>)]
+        pub mti: CompactString,
+        #[wire(fmt = FixedAsciiAlphanum<6>, bit = 3)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub f003_processing_code: Option<CompactString>,
+        #[wire(fmt = FixedAsciiNumeric<6>, bit = 11)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub f011_systems_trace_audit_number: Option<CompactString>,
+        #[wire(fmt = FixedAscii<8>, bit = 41)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub f041_card_acceptor_terminal_id: Option<CompactString>,
     }
 }
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     #[test]
@@ -309,7 +332,7 @@ mod tests {
         let total = output.len();
         let used = {
             let mut out_ptr = output.as_mut_slice();
-            AuthorizationRequest0100BodyFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &value).unwrap();
+            <AuthorizationRequest0100 as finfmt::FieldEncode<_>>::encode_field(&mut out_ptr, scratch.as_mut_slice(), &value).unwrap();
             total - out_ptr.len()
         };
 
@@ -317,7 +340,8 @@ mod tests {
 
         let mut input = &output[..used];
         let mut decode_scratch = [0u8; 4096];
-        let decoded = AuthorizationRequest0100BodyFmt::decode(&mut input, decode_scratch.as_mut_slice()).unwrap();
+        let decoded =
+            <AuthorizationRequest0100 as finfmt::FieldDecode<'_, _>>::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
         assert_eq!(decoded, value);
         assert!(input.is_empty());
     }
@@ -342,7 +366,7 @@ mod tests {
 
     #[test]
     fn test_nibss_message_fmt_roundtrip_request() {
-        let value = NibssMessage::AuthorizationRequest0100(AuthorizationRequest0100 {
+        let value = NibssMessage::new(NibssBody::AuthorizationRequest0100(AuthorizationRequest0100 {
             f002_primary_account_number: "5399838383838381".into(),
             f003_processing_code: "310000".into(),
             f004_amount_transaction: 12345,
@@ -380,40 +404,46 @@ mod tests {
             f123_pos_data_code: "511101511344101".into(),
             f124_near_field_communication_data: Some("NFC-DATA".into()),
             f128_secondary_message_hash_value: "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF".into(),
-        });
+        }));
 
         let mut output = [0u8; 4096];
         let mut scratch = [0u8; 4096];
         let total = output.len();
         let used = {
             let mut out_ptr = output.as_mut_slice();
-            NibssMessageFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &value).unwrap();
+            <NibssMessage as finfmt::FieldEncode<_>>::encode_field(&mut out_ptr, scratch.as_mut_slice(), &value).unwrap();
             total - out_ptr.len()
         };
         assert_eq!(&output[..4], b"0100");
 
         let mut input = &output[..used];
         let mut decode_scratch = [0u8; 4096];
-        assert_eq!(NibssMessageFmt::decode(&mut input, decode_scratch.as_mut_slice()).unwrap(), value);
+        assert_eq!(
+            <NibssMessage as finfmt::FieldDecode<'_, _>>::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap(),
+            value
+        );
         assert!(input.is_empty());
     }
 
     #[test]
     fn test_nibss_message_fmt_roundtrip_response() {
-        let value = NibssMessage::AuthorizationResponse0110(sample_response());
+        let value = NibssMessage::new(NibssBody::AuthorizationResponse0110(sample_response()));
         let mut output = [0u8; 2048];
         let mut scratch = [0u8; 2048];
         let total = output.len();
         let used = {
             let mut out_ptr = output.as_mut_slice();
-            NibssMessageFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &value).unwrap();
+            <NibssMessage as finfmt::FieldEncode<_>>::encode_field(&mut out_ptr, scratch.as_mut_slice(), &value).unwrap();
             total - out_ptr.len()
         };
         assert_eq!(&output[..4], b"0110");
 
         let mut input = &output[..used];
         let mut decode_scratch = [0u8; 2048];
-        assert_eq!(NibssMessageFmt::decode(&mut input, decode_scratch.as_mut_slice()).unwrap(), value);
+        assert_eq!(
+            <NibssMessage as finfmt::FieldDecode<'_, _>>::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap(),
+            value
+        );
         assert!(input.is_empty());
     }
 
@@ -431,7 +461,7 @@ mod tests {
         let total = output.len();
         let used = {
             let mut out_ptr = output.as_mut_slice();
-            FlatNibssMessageFmt::encode(&mut out_ptr, scratch.as_mut_slice(), &value).unwrap();
+            <FlatNibssMessage as finfmt::FieldEncode<_>>::encode_field(&mut out_ptr, scratch.as_mut_slice(), &value).unwrap();
             total - out_ptr.len()
         };
         assert_eq!(&output[..4], b"0200");
@@ -440,7 +470,7 @@ mod tests {
         let mut input = &output[..used];
         let mut decode_scratch = [0u8; 128];
         assert_eq!(
-            FlatNibssMessageFmt::decode(&mut input, decode_scratch.as_mut_slice()).unwrap(),
+            <FlatNibssMessage as finfmt::FieldDecode<'_, _>>::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap(),
             value
         );
         assert!(input.is_empty());

@@ -9,14 +9,14 @@ use zenbench::prelude::*;
 #[allow(dead_code)]
 mod nibss;
 
-use nibss::{AuthorizationRequest0100, AuthorizationResponse0110, NibssMessage, NibssMessageFmt};
+use nibss::{AuthorizationRequest0100, AuthorizationResponse0110, NibssBody, NibssMessage};
 
 fn quick(group: &mut BenchGroup) {
     group.config().max_rounds(20).max_time(Duration::from_millis(300));
 }
 
 fn request_0100() -> NibssMessage {
-    NibssMessage::AuthorizationRequest0100(AuthorizationRequest0100 {
+    NibssMessage::new(NibssBody::AuthorizationRequest0100(AuthorizationRequest0100 {
         f002_primary_account_number: "5399838383838381".into(),
         f003_processing_code: "310000".into(),
         f004_amount_transaction: 12345,
@@ -54,11 +54,11 @@ fn request_0100() -> NibssMessage {
         f123_pos_data_code: "511101511344101".into(),
         f124_near_field_communication_data: None,
         f128_secondary_message_hash_value: "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF".into(),
-    })
+    }))
 }
 
 fn response_0110() -> NibssMessage {
-    NibssMessage::AuthorizationResponse0110(AuthorizationResponse0110 {
+    NibssMessage::new(NibssBody::AuthorizationResponse0110(AuthorizationResponse0110 {
         f003_processing_code: "310000".into(),
         f004_amount_transaction: 12345,
         f007_transmission_date_time_utc: "0101123456".into(),
@@ -72,12 +72,12 @@ fn response_0110() -> NibssMessage {
         f049_currency_code_transaction: "566".into(),
         f123_pos_data_code: "511101511344101".into(),
         f128_secondary_message_hash_value: "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF".into(),
-    })
+    }))
 }
 
 fn wire(value: &NibssMessage) -> Vec<u8> {
     let mut output = vec![0; 4096];
-    let used = finfmt::encode::<NibssMessageFmt, _>(&mut output, &mut [0; 4096], value).unwrap();
+    let used = finfmt::encode::<NibssMessage, _>(&mut output, &mut [0; 4096], value).unwrap();
     output.truncate(used);
     output
 }
@@ -88,21 +88,21 @@ fn bench_message(suite: &mut Suite) {
         for (name, value) in [("0100", request_0100()), ("0110", response_0110())] {
             let encoded = wire(&value);
             let mut scratch = [0; 4096];
-            let decoded = finfmt::decode::<NibssMessageFmt, _>(&encoded, &mut scratch).unwrap();
+            let decoded = finfmt::decode::<NibssMessage, _>(&encoded, &mut scratch).unwrap();
             assert_eq!(decoded, value);
 
             group.bench(format!("encode_{name}"), move |b| {
                 b.iter(|| {
                     let mut output = [0u8; 2048];
                     let mut scratch = [0u8; 2048];
-                    black_box(finfmt::encode::<NibssMessageFmt, _>(&mut output, &mut scratch, black_box(&value)).ok());
+                    black_box(finfmt::encode::<NibssMessage, _>(&mut output, &mut scratch, black_box(&value)).ok());
                     black_box(output)
                 })
             });
             group.bench(format!("decode_{name}"), move |b| {
                 b.iter(|| {
                     let mut scratch = [0u8; 2048];
-                    black_box(finfmt::decode::<NibssMessageFmt, _>(black_box(&encoded), &mut scratch).ok());
+                    black_box(finfmt::decode::<NibssMessage, _>(black_box(&encoded), &mut scratch).ok());
                 })
             });
         }

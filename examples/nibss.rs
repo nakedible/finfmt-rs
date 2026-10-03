@@ -20,7 +20,7 @@ fn run() -> Result<(), String> {
     match mode.as_str() {
         "to-json" => {
             let mut scratch = vec![0u8; input.len().max(4096)];
-            let value = finfmt::decode::<nibss::NibssMessageFmt, _>(&input, &mut scratch).map_err(|err| format!("decode failed: {err}"))?;
+            let value = finfmt::decode::<nibss::NibssMessage, _>(&input, &mut scratch).map_err(|err| format!("decode failed: {err}"))?;
             serde_json::to_writer(io::stdout().lock(), &value).map_err(|err| format!("json write failed: {err}"))?;
             Ok(())
         }
@@ -28,7 +28,7 @@ fn run() -> Result<(), String> {
             let value: nibss::NibssMessage = serde_json::from_slice(&input).map_err(|err| format!("json parse failed: {err}"))?;
             let mut output = vec![0u8; 8192];
             let mut scratch = vec![0u8; 8192];
-            let used = finfmt::encode::<nibss::NibssMessageFmt, _>(&mut output, &mut scratch, &value)
+            let used = finfmt::encode::<nibss::NibssMessage, _>(&mut output, &mut scratch, &value)
                 .map_err(|err| format!("encode failed: {err}"))?;
             io::stdout()
                 .lock()
