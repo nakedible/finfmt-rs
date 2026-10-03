@@ -13,6 +13,11 @@
 /// - `#[wire(concat)]`: fields back to back, in declaration order. An
 ///   `Option` field may be omitted at the end of the record: it decodes as
 ///   `None` at the end of the input, and only `Option` fields may follow it.
+/// - `#[wire(delimited = b'|')]`: fields separated by a byte. The last field
+///   takes the rest of the bounded input and may contain the separator;
+///   earlier fields must not encode it, which debug builds assert. An `Option`
+///   field may be anywhere, and an empty segment decodes as `None`, even one
+///   encoded from a value that produced no bytes.
 ///
 /// Fields take at most one `#[wire(...)]` attribute:
 ///
@@ -115,6 +120,9 @@ macro_rules! __finfmt_wire_item {
     ($kept:tt [concat ,]; ; $vis:vis struct $name:ident $lt:tt { $($body:tt)* }) => {
         $crate::__finfmt_wire_fields! { (concat $kept $vis $name $lt []) []; $($body)* }
     };
+    ($kept:tt [delimited = $separator:expr ,]; ; $vis:vis struct $name:ident $lt:tt { $($body:tt)* }) => {
+        $crate::__finfmt_wire_fields! { ([delimited $separator] $kept $vis $name $lt []) []; $($body)* }
+    };
     ($kept:tt []; ; $vis:vis $kw:ident $name:ident $($rest:tt)*) => {
         compile_error!(concat!("wire_type!: `", stringify!($name), "` needs a layout attribute, such as #[wire(concat)]"));
     };
@@ -133,10 +141,10 @@ macro_rules! __finfmt_wire_item {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __finfmt_wire_fields {
-    (($layout:ident $kept:tt $vis:vis $name:ident $lt:tt [$($done:tt)*]) [];) => {
+    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt [$($done:tt)*]) [];) => {
         $crate::__finfmt_wire_emit! { $layout $kept $vis $name $lt [$($done)*] }
     };
-    (($layout:ident $kept:tt $vis:vis $name:ident $lt:tt [$($done:tt)*]) [$($fkept:tt)*];
+    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt [$($done:tt)*]) [$($fkept:tt)*];
         $(#[doc = $doc:tt])* #[wire($($args:tt)*)] $(#[$($attr:tt)*])* $fvis:vis $field:ident : Option<$inner:ty> $(, $($rest:tt)*)?) => {
         $crate::__finfmt_wire_fields! {
             ($layout $kept $vis $name $lt [$($done)* {
@@ -145,7 +153,7 @@ macro_rules! __finfmt_wire_fields {
             $($($rest)*)?
         }
     };
-    (($layout:ident $kept:tt $vis:vis $name:ident $lt:tt [$($done:tt)*]) [$($fkept:tt)*];
+    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt [$($done:tt)*]) [$($fkept:tt)*];
         $(#[doc = $doc:tt])* #[wire($($args:tt)*)] $(#[$($attr:tt)*])* $fvis:vis $field:ident : $ty:ty $(, $($rest:tt)*)?) => {
         $crate::__finfmt_wire_fields! {
             ($layout $kept $vis $name $lt [$($done)* {
@@ -154,7 +162,7 @@ macro_rules! __finfmt_wire_fields {
             $($($rest)*)?
         }
     };
-    (($layout:ident $kept:tt $vis:vis $name:ident $lt:tt [$($done:tt)*]) [$($fkept:tt)*];
+    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt [$($done:tt)*]) [$($fkept:tt)*];
         $(#[doc = $doc:tt])* $fvis:vis $field:ident : Option<$inner:ty> $(, $($rest:tt)*)?) => {
         $crate::__finfmt_wire_fields! {
             ($layout $kept $vis $name $lt [$($done)* {
@@ -163,7 +171,7 @@ macro_rules! __finfmt_wire_fields {
             $($($rest)*)?
         }
     };
-    (($layout:ident $kept:tt $vis:vis $name:ident $lt:tt [$($done:tt)*]) [$($fkept:tt)*];
+    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt [$($done:tt)*]) [$($fkept:tt)*];
         $(#[doc = $doc:tt])* $fvis:vis $field:ident : $ty:ty $(, $($rest:tt)*)?) => {
         $crate::__finfmt_wire_fields! {
             ($layout $kept $vis $name $lt [$($done)* { [$($fkept)* $(#[doc = $doc])*] ($fvis) $field ($ty) req ($ty) [] }]) [];
@@ -213,6 +221,52 @@ macro_rules! __finfmt_wire_emit {
             ) -> Result<$crate::__finfmt_wire_decoded!($name ['__finfmt_de] [$($lt)?]), $crate::CompositeError> {
                 let _ = (&input, &scratch);
                 $($crate::__finfmt_wire_concat_decode!(input, scratch; $kind $field $crate::__finfmt_wire_fmt!($args $default));)*
+                Ok($name { $($field),* })
+            }
+        }
+    };
+    ([delimited $separator:expr] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?]
+        [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident ($ty:ty) $kind:ident ($default:ty) $args:tt })*]) => {
+        $($kept)*
+        $vis struct $name $(<$lt>)? {
+            $($($fkept)* $fvis $field: $ty,)*
+        }
+
+        impl $(<$lt>)? $crate::composite::FieldEncode<$name $(<$lt>)?> for $name $(<$lt>)? {
+            #[inline(always)]
+            #[allow(unused_assignments, unused_variables)]
+            fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &Self) -> Result<(), $crate::CompositeError> {
+                let _ = (&output, &scratch, value);
+                const SEPARATOR: u8 = $separator;
+                let count = <[&str]>::len(&[$(stringify!($field)),*]);
+                let mut position = 0;
+                $(
+                    position += 1;
+                    $crate::__finfmt_wire_delimited_encode!(value, output, scratch, SEPARATOR, position < count;
+                        $kind $field $crate::__finfmt_wire_fmt!($args $default));
+                )*
+                Ok(())
+            }
+        }
+
+        impl<$($lt,)? '__finfmt_de> $crate::composite::FieldDecode<'__finfmt_de, $crate::__finfmt_wire_decoded!($name ['__finfmt_de] [$($lt)?])>
+            for $name $(<$lt>)?
+        {
+            #[inline(always)]
+            #[allow(unused_assignments, unused_variables)]
+            fn decode_field(
+                input: &mut &'__finfmt_de [u8],
+                scratch: &mut &'__finfmt_de mut [u8],
+            ) -> Result<$crate::__finfmt_wire_decoded!($name ['__finfmt_de] [$($lt)?]), $crate::CompositeError> {
+                let _ = (&input, &scratch);
+                const SEPARATOR: u8 = $separator;
+                let count = <[&str]>::len(&[$(stringify!($field)),*]);
+                let mut position = 0;
+                $(
+                    position += 1;
+                    $crate::__finfmt_wire_delimited_decode!(input, scratch, SEPARATOR, position < count;
+                        $kind $field $crate::__finfmt_wire_fmt!($args $default));
+                )*
                 Ok($name { $($field),* })
             }
         }
@@ -283,6 +337,53 @@ macro_rules! __finfmt_wire_concat_decode {
         } else {
             Some(
                 <$fmt as $crate::composite::FieldDecode<'_, _>>::decode_field($input, $scratch)
+                    .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
+            )
+        };
+    };
+}
+
+/// Encode one delimited field, then the separator unless it is the last. Only
+/// the last field may contain the separator.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __finfmt_wire_delimited_encode {
+    ($value:ident, $output:ident, $scratch:ident, $separator:ident, $more:expr; req $field:ident $fmt:ty) => {
+        $crate::__finfmt_wire_delimited_encode!(@value &$value.$field, $output, $scratch, $separator, $more; $field $fmt);
+        $crate::__finfmt_wire_delimited_encode!(@next $output, $separator, $more)
+    };
+    ($value:ident, $output:ident, $scratch:ident, $separator:ident, $more:expr; opt $field:ident $fmt:ty) => {
+        if let Some(inner) = $value.$field.as_ref() {
+            $crate::__finfmt_wire_delimited_encode!(@value inner, $output, $scratch, $separator, $more; $field $fmt);
+        }
+        $crate::__finfmt_wire_delimited_encode!(@next $output, $separator, $more)
+    };
+    (@value $value:expr, $output:ident, $scratch:ident, $separator:ident, $more:expr; $field:ident $fmt:ty) => {
+        $crate::composite::encode_delimited_value::<_, $fmt>($output, $scratch, $value, if $more { Some($separator) } else { None })
+            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?
+    };
+    (@next $output:ident, $separator:ident, $more:expr) => {
+        if $more {
+            $crate::composite::encode_delimiter($output, $separator)?;
+        }
+    };
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __finfmt_wire_delimited_decode {
+    ($input:ident, $scratch:ident, $separator:ident, $more:expr; req $field:ident $fmt:ty) => {
+        let segment = $crate::composite::decode_delimited_field($input, $separator, $more)?;
+        let $field = $crate::composite::decode_delimited_value::<_, $fmt>(segment, $scratch)
+            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
+    };
+    ($input:ident, $scratch:ident, $separator:ident, $more:expr; opt $field:ident $fmt:ty) => {
+        let segment = $crate::composite::decode_delimited_field($input, $separator, $more)?;
+        let $field = if segment.is_empty() {
+            None
+        } else {
+            Some(
+                $crate::composite::decode_delimited_value::<_, $fmt>(segment, $scratch)
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
             )
         };
@@ -415,6 +516,79 @@ mod tests {
         let old_bad = crate::decode::<OldRecordFmt, OldRecord>(b"0100X73ABC", &mut scratch).unwrap_err();
         assert_eq!(bad, old_bad);
         assert_eq!(bad.path(), &[PathSegment::Field("inner"), PathSegment::Field("code")]);
+    }
+
+    type Text = Field<Ascii<0, 20>, crate::Rest>;
+
+    crate::wire_type! {
+        #[derive(Debug, Clone, PartialEq)]
+        #[wire(delimited = b'|')]
+        struct Delimited<'a> {
+            #[wire(fmt = Text)]
+            first: &'a str,
+            #[wire(fmt = N2)]
+            middle: Option<u64>,
+            inner: Inner,
+            #[wire(fmt = Text)]
+            last: Option<String>,
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    struct OldDelimited<'a> {
+        first: &'a str,
+        middle: Option<u64>,
+        inner: Inner,
+        last: Option<String>,
+    }
+
+    crate::delimited_format! {
+        struct OldDelimitedFmt for<'a> OldDelimited<'a>, b'|' {
+            first: Text,
+            middle: Option<N2>,
+            inner: Inner,
+            last: Option<Text>,
+        }
+    }
+
+    #[test]
+    fn delimited_records_match_delimited_format() {
+        for (middle, last, wire) in [(None, None, &b"AB||07|"[..]), (Some(15), Some("X|Y"), b"AB|15|07|X|Y")] {
+            let value = Delimited {
+                first: "AB",
+                middle,
+                inner: Inner { code: "07".into() },
+                last: last.map(Into::into),
+            };
+            let old = OldDelimited {
+                first: "AB",
+                middle,
+                inner: value.inner.clone(),
+                last: value.last.clone(),
+            };
+            assert_eq!(encode::<Delimited, _>(&value).as_deref(), Ok(wire));
+            assert_eq!(encode::<OldDelimitedFmt, _>(&old).as_deref(), Ok(wire));
+            let mut scratch = [0; 64];
+            assert_eq!(crate::decode::<Delimited, Delimited>(wire, &mut scratch), Ok(value));
+        }
+        // Errors match, segment by segment.
+        for wire in [&b"AB|1"[..], b"AB|15|7X|", b"AB|15|07"] {
+            let mut scratch = [0; 64];
+            let new = crate::decode::<Delimited, Delimited>(wire, &mut scratch).unwrap_err();
+            let mut scratch = [0; 64];
+            let old = crate::decode::<OldDelimitedFmt, OldDelimited>(wire, &mut scratch).unwrap_err();
+            assert_eq!(new, old);
+        }
+        // Only the last field may contain the separator.
+        let inside = std::panic::catch_unwind(|| {
+            encode::<Delimited, _>(&Delimited {
+                first: "A|B",
+                middle: None,
+                inner: Inner { code: "07".into() },
+                last: None,
+            })
+        });
+        assert_eq!(inside.is_err(), cfg!(debug_assertions));
     }
 
     #[test]
