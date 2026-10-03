@@ -85,11 +85,11 @@ required-features = ["asm-inspect"]
 [[bench]]
 name = "message"
 harness = false
-required-features = ["compact_str"]
+required-features = ["compact_str", "serde"]
 
 [[example]]
 name = "nibss"
-required-features = ["compact_str"]
+required-features = ["compact_str", "serde"]
 test = true
 
 [profile.release]

@@ -293,7 +293,8 @@ mod scalar;
 mod scalar_serde;
 mod wire_macros;
 pub use scalar::{ScalarDecode, ScalarEncode};
-#[cfg(test)]
+// These tests use serde derives and `SerdeScalar` throughout.
+#[cfg(all(test, feature = "serde"))]
 mod tests {
     use std::collections::BTreeMap;
 

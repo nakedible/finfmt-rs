@@ -1340,7 +1340,8 @@ macro_rules! __finfmt_wire_ber {
     (@finish $($rest:tt)*) => {};
 }
 
-#[cfg(test)]
+// These tests use serde derives and `SerdeScalar` throughout.
+#[cfg(all(test, feature = "serde"))]
 mod tests {
     use serde::Serialize;
 

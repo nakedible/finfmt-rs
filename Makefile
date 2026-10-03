@@ -10,6 +10,7 @@ check:
 	cargo clippy --all-features --all-targets -- -D warnings
 	cargo clippy --no-default-features --lib -- -D warnings
 	cargo test --all-features
+	cargo test --no-default-features --lib
 	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 	cargo build --release --all-features --benches
 
