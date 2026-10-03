@@ -2873,6 +2873,87 @@ pub const fn check_bitmap_fields(layout: crate::bitmap::BitmapLayout, bits: &[Op
     Ok(())
 }
 
+/// Check a BER-TLV record's tags: each must be one valid tag in uppercase
+/// hex, as `9F02`, and none may repeat. `None` is the extras collection, of
+/// which there is at most one. `wire_type!` evaluates this at compile time and
+/// reports the message.
+#[doc(hidden)]
+pub const fn check_ber_tags(tags: &[Option<&str>]) -> Result<(), &'static str> {
+    let mut extras = false;
+    let mut rest = tags;
+    while let [tag, later @ ..] = rest {
+        match *tag {
+            None if extras => return Err("a BER-TLV record has at most one extras field"),
+            None => extras = true,
+            Some(tag) => {
+                if !is_ber_tag_hex(tag.as_bytes()) {
+                    return Err("a BER tag must be one valid tag in uppercase hex, such as \"9F02\"");
+                }
+                let mut others = later;
+                while let [other, after @ ..] = others {
+                    if let Some(other) = *other
+                        && const_bytes_eq(tag.as_bytes(), other.as_bytes())
+                    {
+                        return Err("duplicate declared BER tag");
+                    }
+                    others = after;
+                }
+            }
+        }
+        rest = later;
+    }
+    Ok(())
+}
+
+/// Whether `hex` is one BER tag of at most four bytes in uppercase hex, by the
+/// rules `decode_ber_tag` frames with: one byte unless its low five bits are
+/// all set, then continuation bytes with the high bit set, the first not
+/// `80`, ending with one below `80`.
+const fn is_ber_tag_hex(hex: &[u8]) -> bool {
+    const fn nibble(digit: u8) -> Option<u8> {
+        match digit {
+            b'0'..=b'9' => Some(digit - b'0'),
+            b'A'..=b'F' => Some(digit - b'A' + 10),
+            _ => None,
+        }
+    }
+    const fn byte(high: u8, low: u8) -> Option<u8> {
+        match (nibble(high), nibble(low)) {
+            (Some(high), Some(low)) => Some(high << 4 | low),
+            _ => None,
+        }
+    }
+    const fn multi(first: Option<u8>) -> bool {
+        matches!(first, Some(first) if first & 0x1F == 0x1F)
+    }
+    match *hex {
+        [a, b] => matches!(byte(a, b), Some(first) if first & 0x1F != 0x1F && first != 0),
+        [a, b, c, d] => multi(byte(a, b)) && matches!(byte(c, d), Some(0x01..=0x7F)),
+        [a, b, c, d, e, f] => multi(byte(a, b)) && matches!(byte(c, d), Some(0x81..=0xFF)) && matches!(byte(e, f), Some(0x00..=0x7F)),
+        [a, b, c, d, e, f, g, h] => {
+            multi(byte(a, b))
+                && matches!(byte(c, d), Some(0x81..=0xFF))
+                && matches!(byte(e, f), Some(0x80..=0xFF))
+                && matches!(byte(g, h), Some(0x00..=0x7F))
+        }
+        _ => false,
+    }
+}
+
+const fn const_bytes_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut rest = (a, b);
+    while let ([x, a @ ..], [y, b @ ..]) = rest {
+        if *x != *y {
+            return false;
+        }
+        rest = (a, b);
+    }
+    true
+}
+
 /// Whether no required field follows an optional one.
 #[doc(hidden)]
 pub const fn optional_fields_trail(optional: &[bool]) -> bool {
