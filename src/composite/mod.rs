@@ -84,6 +84,32 @@ pub fn decode<'de, F: FieldDecode<'de, T>, T>(input: &'de [u8], scratch: &'de mu
     Ok(value)
 }
 
+/// Encode into scratch, for a format that must know an encoding's bytes before
+/// writing what precedes them, such as a length.
+///
+/// `encode` writes into the first half of scratch, with the second half as its
+/// workspace. Returns the bytes it wrote and the scratch after them. Workspace
+/// never shares a region with bytes bound for output, and output is only
+/// appended to, so a length error cannot ship leftover workspace. Nested
+/// staging halves scratch again, so scratch must hold about `2^depth` times the
+/// largest staged encoding.
+#[inline(always)]
+pub fn encode_staged<E, F>(scratch: &mut [u8], encode: F) -> Result<(&mut [u8], &mut [u8]), E>
+where
+    E: From<Error>,
+    F: FnOnce(&mut &mut [u8], &mut [u8]) -> Result<(), E>,
+{
+    let used = {
+        let half = scratch.len() / 2;
+        let (area, workspace) = split_scratch(scratch, half)?;
+        let mut staged = area;
+        let available = staged.len();
+        encode(&mut staged, workspace)?;
+        available - staged.len()
+    };
+    Ok(split_scratch(scratch, used)?)
+}
+
 /// Encode a value using an already available context value, such as an
 /// earlier field that selects the layout.
 pub trait ContextEncode<T: ?Sized, C: ?Sized> {
@@ -110,19 +136,12 @@ pub trait AbsentFmt {
     /// past it, which may be no bytes at all. `scratch` is a workspace for this
     /// call only.
     ///
-    /// The default writes the absent encoding into the first half of scratch,
-    /// with the second half as its workspace, and compares it with the input.
-    /// Override it to accept other spellings.
+    /// The default stages the absent encoding with [`encode_staged`] and
+    /// compares it with the input. Override it to accept other spellings.
     #[inline]
     fn decode_absent(input: &mut &[u8], scratch: &mut [u8]) -> Result<bool, Error> {
-        let (area, workspace) = scratch.split_at_mut(scratch.len() / 2);
-        let written = {
-            let mut out = &mut *area;
-            let available = out.len();
-            Self::encode_absent(&mut out, workspace)?;
-            available - out.len()
-        };
-        Ok(match_prefix(input, area.get(..written).unwrap_or_default()))
+        let (absent, _) = encode_staged(scratch, Self::encode_absent)?;
+        Ok(match_prefix(input, absent))
     }
 }
 
@@ -1552,6 +1571,30 @@ mod tests {
         assert!(input.is_empty());
     }
 
+    #[test]
+    fn staging_writes_only_the_message_to_output() {
+        // The inner frame stages while the outer one is staging.
+        type Nested = Frame<Field<Binary<0, 99>, AsciiLength<2>>, FramedConcatFmt>;
+        let value = FramedConcat {
+            head: "12".into(),
+            tail: "34".into(),
+            inner: FixedTail {
+                a: "123456".into(),
+                b: "78".into(),
+                c: "ABCD".into(),
+            },
+        };
+        let mut output = [0xEE; 64];
+        let used = crate::encode::<Nested, _>(&mut output, &mut [0; 48], &value).unwrap();
+        assert_eq!(&output[..used], b"18121212345678ABCD34");
+        assert!(output[used..].iter().all(|&byte| byte == 0xEE));
+        let mut exact = [0; 20];
+        assert_eq!(crate::encode::<Nested, _>(&mut exact, &mut [0; 48], &value), Ok(20));
+        // The inner frame's 12 bytes need half of the back half: 48 bytes in all.
+        let overflow = crate::encode::<Nested, _>(&mut output, &mut [0; 46], &value).unwrap_err();
+        assert_eq!(overflow.kind, Error::BufferOverflow);
+    }
+
     fn check_trailing_length_frame<F>()
     where
         F: FieldEncode<TrailingLengthData> + for<'de> FieldDecode<'de, TrailingLengthData>,
@@ -2729,16 +2772,9 @@ where
 {
     let mut tag = [0; crate::primitive::bertlv::MAX_BER_TAG_BYTES];
     let tag = crate::primitive::bertlv::pack_ber_tag_hex(&mut tag, tag_hex);
-    // Stage the value in scratch, using the unwritten output as its workspace
-    // as `Frame` does, so the head can be written before it.
-    let used = {
-        let mut staged = &mut *scratch;
-        let available = staged.len();
-        encode_value(&mut staged, output).map_err(|error| wrap_composite_error(error, field))?;
-        available - staged.len()
-    };
-    let value = scratch.get(..used).unwrap_or_default();
-    crate::primitive::bertlv::encode_ber_tlv_head(output, tag, used).map_err(|error| wrap_composite_error(error, field))?;
+    // Stage the value, so the head can state its length before it.
+    let (value, _) = encode_staged(scratch, encode_value).map_err(|error| wrap_composite_error(error, field))?;
+    crate::primitive::bertlv::encode_ber_tlv_head(output, tag, value.len()).map_err(|error| wrap_composite_error(error, field))?;
     copy_bytes(output, value).map_err(|error| wrap_composite_error(error, field))?;
     Ok(())
 }

@@ -180,10 +180,9 @@ macro_rules! __finfmt_ber_tlv_assert_tags {
 /// a decoded message. A `HashMap` makes that order vary between runs: use a
 /// `BTreeMap`, or an order-preserving map to keep decoded order.
 ///
-/// Encoding stages each value in scratch before writing its tag and length, so
-/// scratch must hold the largest value. The unwritten output is the value's own
-/// workspace, as for `Frame`: with an output sized exactly to the message, a
-/// value that needs workspace can report `BufferOverflow`.
+/// Encoding stages each value with [`encode_staged`](crate::composite::encode_staged)
+/// before writing its tag and length, so half of scratch must hold the largest
+/// value.
 ///
 /// Declared tags must be unique constant expressions. Repeated wire occurrences
 /// of a known tag are also rejected, independently of this declaration check.

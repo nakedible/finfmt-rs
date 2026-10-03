@@ -4,14 +4,7 @@ use crate::primitive::bytes::{copy_bytes, take_bytes};
 impl<T: ?Sized, F: ScalarFmt, S: FieldEncode<T>> FieldEncode<T> for Frame<F, S> {
     #[inline(always)]
     fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
-        // The inner value is staged in scratch, using the unwritten output as its workspace.
-        let used = {
-            let mut semantic_out = &mut *scratch;
-            let available = semantic_out.len();
-            S::encode_field(&mut semantic_out, output, value)?;
-            available - semantic_out.len()
-        };
-        let (semantic, scratch) = split_scratch(scratch, used)?;
+        let (semantic, scratch) = encode_staged(scratch, |out, workspace| S::encode_field(out, workspace, value))?;
         F::encode(output, scratch, semantic)?;
         Ok(())
     }

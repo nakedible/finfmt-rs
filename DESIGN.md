@@ -113,6 +113,16 @@ when transformation is needed. The wire-format machinery itself should not
 allocate; destination Rust types may allocate if their own representation
 requires it.
 
+Workspace never shares a region with bytes bound for output. Encoding only
+appends to output; the one exception is a step chain transforming a field's
+own fixed extent in place. A format that must know an encoding before writing
+what precedes it, such as a length, stages it with `encode_staged`: the
+encoding goes into the first half of scratch and its workspace is the second
+half, and the staged bytes are copied out by the count the encoding advanced.
+A length bug can then at worst ship stale staged bytes, never live workspace.
+Nested staging halves scratch again, so scratch needs about `2^depth` times the
+largest staged encoding.
+
 Length-prefixed formats rely on `encoded_len` to write the length before the
 value. Supported scalar transformations should have deterministic output length
 for a given semantic input.
@@ -125,9 +135,16 @@ space is reported as `BufferOverflow`.
 
 A higher-level convenience API should usually avoid exact buffer sizing. The
 normal path should pick output and scratch buffers that fit almost all messages
-for the specific protocol. Examples such as 2 KiB + 2 KiB or 4 KiB + 4 KiB are
-often already larger than real financial messages, but the right defaults are
-protocol-specific.
+for the specific protocol. For messages under 1 KiB, 2 KiB of output and 8 KiB
+of scratch fit three levels of staging, such as a message length around a
+length-prefixed field around a token list. Flat formats fit in 4 KiB of
+scratch. The right defaults are still protocol-specific.
+
+Buffers belong to a worker thread and are reused, not allocated per message or
+per connection. Clear both after each message with a plain fill, which costs
+tens of nanoseconds for 8 KiB; `zeroize`'s byte-wise volatile writes cost
+about 2 µs there, so keep them for when a buffer is dropped. The output needs
+clearing too: a shorter message leaves the end of the previous one behind it.
 
 If the normal path returns `BufferOverflow`, the convenience layer should retry
 the whole conversion from the original input or value using a larger maximum
