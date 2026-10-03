@@ -38,14 +38,18 @@ pub trait LengthSpec {
 
 /// A length of `N` units with no prefix. `Fixed<8>` is 8 wire bytes; with the
 /// marker in `chain!(PadLeft<19, b'0'>, Count, PackNibblesRight<…>)`,
-/// `Fixed<19>` is 19 digits in 10 bytes. Encoding checks in debug builds that
-/// the value has that length.
+/// `Fixed<19>` is 19 digits in 10 bytes. Encoding another length is
+/// `InvalidValueLength`: a frame's body that does not fill the area. In a field
+/// or a list it is a composition mistake, which they assert in debug builds.
 pub struct Fixed<const N: usize>;
 
 impl<const N: usize> LengthSpec for Fixed<N> {
     #[inline(always)]
     fn encoded_len(len: usize) -> Result<usize, Error> {
-        debug_assert_eq!(len, N, "value does not have the fixed length");
+        if len != N {
+            cold_path();
+            return Err(Error::InvalidValueLength);
+        }
         Ok(0)
     }
 
@@ -184,26 +188,32 @@ impl<L: LengthSpec, const K: usize> LengthSpec for Offset<L, K> {
 
 /// A length whose prefix `L` counts groups of `D` units: binary data carried
 /// as hex text, counted in bytes, is `Per<L, 2>` over the hex digits. Encoding
-/// a length that is not a multiple of `D` is a composition mistake, asserted
-/// in debug builds; the value's check must rule it out. A stated count whose
-/// length overflows is `Invalid`.
+/// a length that is not a multiple of `D` is `InvalidValueLength`; in a field
+/// or a list it is a composition mistake, which they assert in debug builds. A
+/// stated count whose length overflows is `Invalid`.
 pub struct Per<L, const D: usize>(PhantomData<L>);
+
+#[inline(always)]
+fn groups<const D: usize>(len: usize) -> Result<usize, Error> {
+    const { assert!(D != 0, "a Per length needs a nonzero group size") };
+    if !len.is_multiple_of(D) {
+        cold_path();
+        return Err(Error::InvalidValueLength);
+    }
+    Ok(len / D)
+}
 
 impl<L: LengthSpec, const D: usize> LengthSpec for Per<L, D> {
     const STATES_LEN: bool = L::STATES_LEN;
 
     #[inline(always)]
     fn encoded_len(len: usize) -> Result<usize, Error> {
-        const { assert!(D != 0, "a Per length needs a nonzero group size") };
-        debug_assert!(len.is_multiple_of(D), "the length is not a whole number of groups");
-        L::encoded_len(len / D)
+        L::encoded_len(groups::<D>(len)?)
     }
 
     #[inline(always)]
     fn encode(output: &mut &mut [u8], scratch: &mut [u8], len: usize) -> Result<(), Error> {
-        const { assert!(D != 0, "a Per length needs a nonzero group size") };
-        debug_assert!(len.is_multiple_of(D), "the length is not a whole number of groups");
-        L::encode(output, scratch, len / D)
+        L::encode(output, scratch, groups::<D>(len)?)
     }
 
     #[inline(always)]
@@ -306,9 +316,7 @@ mod tests {
         type Units = Offset<Per<AsciiLength<2>, 2>, 2>;
         assert_eq!(encode_length::<Units>(8).unwrap(), b"05");
         assert_eq!(decode_length::<Units>(b"05"), Ok(Some(8)));
-        if cfg!(debug_assertions) {
-            assert!(std::panic::catch_unwind(|| encode_length::<Bytes>(3)).is_err());
-        }
+        assert_eq!(encode_length::<Bytes>(3), Err(Error::InvalidValueLength));
     }
 
     #[test]
@@ -341,21 +349,18 @@ mod tests {
     }
 
     #[test]
-    fn fixed_lengths_assert_only_in_debug() {
+    fn fixed_lengths_reject_other_lengths() {
         for len in [0, 1, 3] {
-            let predicted = std::panic::catch_unwind(|| Fixed::<2>::encoded_len(len));
-            let encoded = std::panic::catch_unwind(|| Fixed::<2>::encode(&mut &mut [][..], &mut [][..], len));
-            if cfg!(debug_assertions) {
-                assert!(predicted.is_err() && encoded.is_err());
-            } else {
-                assert_eq!(predicted.unwrap(), Ok(0));
-                assert_eq!(encoded.unwrap(), Ok(()));
-            }
+            assert_eq!(encode_length::<Fixed<2>>(len), Err(Error::InvalidValueLength));
         }
         assert_eq!(encode_length::<Fixed<2>>(2), Ok(vec![]));
         assert_eq!(decode_length::<Fixed<2>>(b""), Ok(Some(2)));
         assert_eq!(decode_length::<Rest>(b""), Ok(None));
 
+        // A field whose check admits another length is written wrong.
+        type Loose = Field<Ascii<1, 3>, Fixed<2>>;
+        let loose = std::panic::catch_unwind(|| Loose::encode(&mut &mut [0; 8][..], &mut [][..], b"A"));
+        assert!(loose.is_err() == cfg!(debug_assertions));
         type Exact = Field<Ascii<2, 2>, Fixed<2>>;
         assert_eq!(Exact::encoded_len(b"ABC"), Err(Error::InvalidValueLength));
         assert_eq!(
