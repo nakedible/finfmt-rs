@@ -10,7 +10,7 @@ mod scalarfmt;
 mod types;
 mod utils;
 
-pub use bitmap::{Bitmap, BitmapLayout, decode_bitmap, encode_bitmap};
+pub use bitmap::{Bitmap, BitmapFormat, BitmapLayout, decode_bitmap, encode_bitmap};
 pub use composite::{
     AbsentBytes, AbsentFmt, BerTlvExtras, BoundedList, ContextDecode, ContextEncode, Empty, FieldDecode, FieldEncode, FixedAreaList, Frame,
     NoTrailingFields, OptionAs, ScalarDecode, ScalarEncode, Separator, TrailingField, TrailingLengthFrame, decode, encode,

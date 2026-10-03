@@ -8,6 +8,27 @@ use crate::primitive::bytes::{is_filled, take_bytes};
 use crate::utils::cold_path;
 use crate::{Error, Step};
 
+/// A bitmap's layout and the encoding of its words, named once per protocol
+/// and used as `#[wire(bitmap = …)]` by every record of that protocol.
+///
+/// ```
+/// use finfmt::bitmap::{BitmapFormat, BitmapLayout};
+/// use finfmt::primitive::nibble::UpperHexDigits;
+///
+/// /// ISO 8583 primary and secondary bitmaps as uppercase hex text.
+/// struct HexBitmap;
+/// impl BitmapFormat for HexBitmap {
+///     const LAYOUT: BitmapLayout = BitmapLayout::iso(1, 2);
+///     type Word = finfmt::UnpackNibbles<UpperHexDigits>;
+/// }
+/// ```
+pub trait BitmapFormat {
+    /// The words and the flags that announce them.
+    const LAYOUT: BitmapLayout;
+    /// The step that encodes each word's bytes.
+    type Word: Step;
+}
+
 /// Bitmap word counts and the flags that announce the second and third words.
 ///
 /// Words form a prefix: the second word may follow the first, and the third

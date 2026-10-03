@@ -2820,6 +2820,59 @@ pub fn encode_delimiter(output: &mut &mut [u8], byte: u8) -> Result<(), Error> {
     copy_bytes(output, &[byte]).map(|_| ())
 }
 
+/// Check a bitmap record's fields: `bits` holds each field's number, or `None`
+/// for a header field, in declaration order. `wire_type!` evaluates this at
+/// compile time and reports the message.
+#[doc(hidden)]
+pub const fn check_bitmap_fields(layout: crate::bitmap::BitmapLayout, bits: &[Option<u16>], optional: &[bool]) -> Result<(), &'static str> {
+    if let Err(message) = layout.validate() {
+        return Err(message);
+    }
+    let width = layout.word_bits as usize;
+    let max_words = layout.max_words as usize;
+    let [second_flag, third_flag] = layout.word_flags;
+    let mut flags = [0u16; 2];
+    if max_words > 1
+        && let Some(flag) = second_flag
+    {
+        flags[0] = flag as u16;
+    }
+    if max_words > 2
+        && let Some(flag) = third_flag
+    {
+        flags[1] = flag as u16;
+    }
+    let mut previous = 0;
+    let mut rest = (bits, optional);
+    while let ([bit, bits @ ..], [is_optional, optionals @ ..]) = rest {
+        match *bit {
+            None if previous != 0 => return Err("bitmap header fields must come before numbered ones"),
+            None if *is_optional => return Err("a bitmap header field cannot be an Option; use OptionAs for an absent pattern"),
+            None => {}
+            Some(id) => {
+                if id == 0 || id > 192 {
+                    return Err("bitmap field must be in 1..=192");
+                }
+                if id <= previous {
+                    return Err("bitmap fields must be declared in ascending order");
+                }
+                if (id as usize - 1) / 64 >= max_words {
+                    return Err("bitmap field exceeds configured word count");
+                }
+                if (id as usize - 1) % 64 + 1 > width {
+                    return Err("bitmap field exceeds decoded word width");
+                }
+                if id == flags[0] || id == flags[1] {
+                    return Err("bitmap field uses a word flag");
+                }
+                previous = id;
+            }
+        }
+        rest = (bits, optionals);
+    }
+    Ok(())
+}
+
 /// Whether no required field follows an optional one.
 #[doc(hidden)]
 pub const fn optional_fields_trail(optional: &[bool]) -> bool {

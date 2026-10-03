@@ -18,12 +18,21 @@
 ///   earlier fields must not encode it, which debug builds assert. An `Option`
 ///   field may be anywhere, and an empty segment decodes as `None`, even one
 ///   encoded from a value that produced no bytes.
+/// - `#[wire(bitmap = B)]`: a presence bitmap, then the fields it marks, in
+///   field number order. `B` implements [`BitmapFormat`](crate::BitmapFormat),
+///   naming the protocol's layout and word encoding once. Fields with a
+///   `bit` are the body: an `Option` field is present when its bit is set, a
+///   required field's bit must be set, and decoding rejects bits the record
+///   does not declare. Fields without a `bit` come first and are the header,
+///   written before the bitmap, such as the MTI; they cannot be `Option`. The
+///   numbers are checked against the layout at compile time.
 ///
 /// Fields take at most one `#[wire(...)]` attribute:
 ///
 /// - `fmt = F`: the field's format. Without it, the field's type must be a
 ///   format itself, such as another wire struct; for an `Option<T>` field,
 ///   `T` must.
+/// - `bit = N`: the field's number in a bitmap record.
 ///
 /// A struct may have one lifetime parameter, for fields borrowed from the
 /// input or scratch.
@@ -68,7 +77,8 @@
 /// ```
 ///
 /// A struct without a layout, a required field after an `Option` one in a
-/// concat record, and an unknown argument are compile errors:
+/// concat record, a bitmap field number out of order, and an unknown argument
+/// are compile errors:
 ///
 /// ```compile_fail
 /// finfmt::wire_type! {
@@ -84,6 +94,24 @@
 ///         #[wire(fmt = N2)]
 ///         first: Option<String>,
 ///         #[wire(fmt = N2)]
+///         second: String,
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// # type N2 = finfmt::Field<finfmt::Numeric<2, 2>, finfmt::Fixed<2>>;
+/// # struct B;
+/// # impl finfmt::BitmapFormat for B {
+/// #     const LAYOUT: finfmt::BitmapLayout = finfmt::BitmapLayout::iso(1, 2);
+/// #     type Word = finfmt::Identity;
+/// # }
+/// finfmt::wire_type! {
+///     #[wire(bitmap = B)]
+///     struct Descending {
+///         #[wire(fmt = N2, bit = 3)]
+///         third: String,
+///         #[wire(fmt = N2, bit = 2)]
 ///         second: String,
 ///     }
 /// }
@@ -122,6 +150,9 @@ macro_rules! __finfmt_wire_item {
     };
     ($kept:tt [delimited = $separator:expr ,]; ; $vis:vis struct $name:ident $lt:tt { $($body:tt)* }) => {
         $crate::__finfmt_wire_fields! { ([delimited $separator] $kept $vis $name $lt []) []; $($body)* }
+    };
+    ($kept:tt [bitmap = $format:ty ,]; ; $vis:vis struct $name:ident $lt:tt { $($body:tt)* }) => {
+        $crate::__finfmt_wire_fields! { ([bitmap $format] $kept $vis $name $lt []) []; $($body)* }
     };
     ($kept:tt []; ; $vis:vis $kw:ident $name:ident $($rest:tt)*) => {
         compile_error!(concat!("wire_type!: `", stringify!($name), "` needs a layout attribute, such as #[wire(concat)]"));
@@ -271,6 +302,69 @@ macro_rules! __finfmt_wire_emit {
             }
         }
     };
+    ([bitmap $format:ty] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?]
+        [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]) => {
+        $($kept)*
+        $vis struct $name $(<$lt>)? {
+            $($($fkept)* $fvis $field: $ty,)*
+        }
+
+        const _: () = if let Err(message) = $crate::composite::check_bitmap_fields(
+            <$format as $crate::bitmap::BitmapFormat>::LAYOUT,
+            &[$($crate::__finfmt_wire_bitmap_args! { {@bit; $kind $field} ($default); [] []; $($args)* }),*],
+            &[$($crate::__finfmt_wire_is_optional!($kind)),*],
+        ) {
+            panic!("{}", message);
+        };
+
+        impl $(<$lt>)? $crate::composite::FieldEncode<$name $(<$lt>)?> for $name $(<$lt>)? {
+            #[inline(always)]
+            #[allow(unused_mut)]
+            fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &Self) -> Result<(), $crate::CompositeError> {
+                let _ = (&output, &scratch, value);
+                $($crate::__finfmt_wire_bitmap_args! { {@head_encode value, output, scratch; $kind $field} ($default); [] []; $($args)* })*
+                let mut bitmap = $crate::bitmap::Bitmap::new();
+                $($crate::__finfmt_wire_bitmap_args! { {@set bitmap, value; $kind $field} ($default); [] []; $($args)* })*
+                $crate::bitmap::encode_bitmap::<<$format as $crate::bitmap::BitmapFormat>::Word>(
+                    output,
+                    &mut *scratch,
+                    &bitmap,
+                    <$format as $crate::bitmap::BitmapFormat>::LAYOUT,
+                )
+                .map_err($crate::CompositeError::from)?;
+                $($crate::__finfmt_wire_bitmap_args! { {@body_encode value, output, scratch; $kind $field} ($default); [] []; $($args)* })*
+                Ok(())
+            }
+        }
+
+        impl<$($lt,)? '__finfmt_de> $crate::composite::FieldDecode<'__finfmt_de, $crate::__finfmt_wire_decoded!($name ['__finfmt_de] [$($lt)?])>
+            for $name $(<$lt>)?
+        {
+            #[inline(always)]
+            #[allow(unused_mut)]
+            fn decode_field(
+                input: &mut &'__finfmt_de [u8],
+                scratch: &mut &'__finfmt_de mut [u8],
+            ) -> Result<$crate::__finfmt_wire_decoded!($name ['__finfmt_de] [$($lt)?]), $crate::CompositeError> {
+                $($crate::__finfmt_wire_bitmap_args! { {@head_decode input, scratch; $kind $field} ($default); [] []; $($args)* })*
+                let bitmap = $crate::bitmap::decode_bitmap::<<$format as $crate::bitmap::BitmapFormat>::Word>(
+                    input,
+                    &mut **scratch,
+                    <$format as $crate::bitmap::BitmapFormat>::LAYOUT,
+                )
+                .map_err($crate::CompositeError::from)?;
+                // Fields this record does not declare are rejected before any is decoded.
+                let mut unknown = bitmap;
+                $($crate::__finfmt_wire_bitmap_args! { {@clear unknown; $kind $field} ($default); [] []; $($args)* })*
+                if unknown != $crate::bitmap::Bitmap::new() {
+                    $crate::__private::cold_path();
+                    return Err($crate::Error::Invalid.into());
+                }
+                $($crate::__finfmt_wire_bitmap_args! { {@body_decode bitmap, input, scratch; $kind $field} ($default); [] []; $($args)* })*
+                Ok($name { $($field),* })
+            }
+        }
+    };
 }
 
 /// The struct's type with its lifetime, if any, set to `$de`.
@@ -298,6 +392,9 @@ macro_rules! __finfmt_wire_is_optional {
 macro_rules! __finfmt_wire_fmt {
     ([fmt = $fmt:ty $(,)?] $default:ty) => { $fmt };
     ([] $default:ty) => { $default };
+    ([$(fmt = $fmt:ty,)? bit = $($args:tt)*] $default:ty) => {
+        compile_error!("wire_type!: `bit` is for bitmap records")
+    };
     ([$($args:tt)*] $default:ty) => {
         compile_error!(concat!("wire_type!: unsupported #[wire] field arguments: ", stringify!($($args)*)))
     };
@@ -388,6 +485,105 @@ macro_rules! __finfmt_wire_delimited_decode {
             )
         };
     };
+}
+
+/// Parse a bitmap field's `fmt` and `bit` arguments, in either order, then
+/// generate the code for one phase of the record with
+/// `__finfmt_wire_bitmap_field!`. Fields without a bit are the header.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __finfmt_wire_bitmap_args {
+    ({$($phase:tt)*} ($default:ty); [$fmt:ty] [$($bit:literal)?];) => {
+        $crate::__finfmt_wire_bitmap_field! { $($phase)* ($fmt) [$($bit)?] }
+    };
+    ({$($phase:tt)*} ($default:ty); [] [$($bit:literal)?];) => {
+        $crate::__finfmt_wire_bitmap_field! { $($phase)* ($default) [$($bit)?] }
+    };
+    ($phase:tt $default:tt; [] $bit:tt; fmt = $fmt:ty $(, $($rest:tt)*)?) => {
+        $crate::__finfmt_wire_bitmap_args! { $phase $default; [$fmt] $bit; $($($rest)*)? }
+    };
+    ($phase:tt $default:tt; $fmt:tt []; bit = $bit:literal $(, $($rest:tt)*)?) => {
+        $crate::__finfmt_wire_bitmap_args! { $phase $default; $fmt [$bit]; $($($rest)*)? }
+    };
+    ($phase:tt $default:tt; [$fmt:ty] $bit:tt; fmt = $($args:tt)*) => {
+        compile_error!("wire_type!: a field takes one `fmt`")
+    };
+    ($phase:tt $default:tt; $fmt:tt [$bit:literal]; bit = $($args:tt)*) => {
+        compile_error!("wire_type!: a field takes one `bit`")
+    };
+    ($phase:tt $default:tt; $fmt:tt $bit:tt; $($args:tt)+) => {
+        compile_error!(concat!("wire_type!: unsupported #[wire] field arguments: ", stringify!($($args)+)))
+    };
+}
+
+/// One phase of a bitmap record for one field, given its format and bit.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __finfmt_wire_bitmap_field {
+    (@bit; $kind:ident $field:ident ($fmt:ty) [$bit:literal]) => { Some($bit) };
+    (@bit; $kind:ident $field:ident ($fmt:ty) []) => { None };
+
+    (@head_encode $value:ident, $output:ident, $scratch:ident; req $field:ident ($fmt:ty) []) => {
+        $crate::__finfmt_wire_concat_encode!($value, $output, $scratch, unused; req $field $fmt);
+    };
+    (@head_encode $($rest:tt)*) => {};
+
+    (@set $bitmap:ident, $value:ident; req $field:ident ($fmt:ty) [$bit:literal]) => {
+        $bitmap.set($bit, true);
+    };
+    (@set $bitmap:ident, $value:ident; opt $field:ident ($fmt:ty) [$bit:literal]) => {
+        if $value.$field.is_some() {
+            $bitmap.set($bit, true);
+        }
+    };
+    (@set $($rest:tt)*) => {};
+
+    (@body_encode $value:ident, $output:ident, $scratch:ident; req $field:ident ($fmt:ty) [$bit:literal]) => {
+        <$fmt as $crate::composite::FieldEncode<_>>::encode_field($output, $scratch, &$value.$field)
+            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
+    };
+    (@body_encode $value:ident, $output:ident, $scratch:ident; opt $field:ident ($fmt:ty) [$bit:literal]) => {
+        if let Some(inner) = $value.$field.as_ref() {
+            <$fmt as $crate::composite::FieldEncode<_>>::encode_field($output, $scratch, inner)
+                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
+        }
+    };
+    (@body_encode $($rest:tt)*) => {};
+
+    (@head_decode $input:ident, $scratch:ident; req $field:ident ($fmt:ty) []) => {
+        $crate::__finfmt_wire_concat_decode!($input, $scratch; req $field $fmt);
+    };
+    // Rejected by the record's compile-time check; bound to keep errors quiet.
+    (@head_decode $input:ident, $scratch:ident; opt $field:ident ($fmt:ty) []) => {
+        let $field = None;
+    };
+    (@head_decode $($rest:tt)*) => {};
+
+    (@clear $unknown:ident; $kind:ident $field:ident ($fmt:ty) [$bit:literal]) => {
+        $unknown.set($bit, false);
+    };
+    (@clear $($rest:tt)*) => {};
+
+    (@body_decode $bitmap:ident, $input:ident, $scratch:ident; req $field:ident ($fmt:ty) [$bit:literal]) => {
+        let $field = if $bitmap.get($bit) {
+            <$fmt as $crate::composite::FieldDecode<'_, _>>::decode_field($input, $scratch)
+                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?
+        } else {
+            $crate::__private::cold_path();
+            return Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)));
+        };
+    };
+    (@body_decode $bitmap:ident, $input:ident, $scratch:ident; opt $field:ident ($fmt:ty) [$bit:literal]) => {
+        let $field = if $bitmap.get($bit) {
+            Some(
+                <$fmt as $crate::composite::FieldDecode<'_, _>>::decode_field($input, $scratch)
+                    .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
+            )
+        } else {
+            None
+        };
+    };
+    (@body_decode $($rest:tt)*) => {};
 }
 
 #[cfg(test)]
@@ -589,6 +785,78 @@ mod tests {
             })
         });
         assert_eq!(inside.is_err(), cfg!(debug_assertions));
+    }
+
+    struct HexBitmap;
+    impl crate::bitmap::BitmapFormat for HexBitmap {
+        const LAYOUT: crate::bitmap::BitmapLayout = crate::bitmap::BitmapLayout::iso(1, 2);
+        type Word = crate::UnpackNibbles<crate::primitive::nibble::UpperHexDigits>;
+    }
+
+    crate::wire_type! {
+        #[derive(Debug, Clone, PartialEq)]
+        #[wire(bitmap = HexBitmap)]
+        struct Message<'a> {
+            #[wire(fmt = N4)]
+            mti: &'a str,
+            #[wire(fmt = Var, bit = 2)]
+            pan: Option<String>,
+            #[wire(bit = 3)]
+            inner: Inner,
+            /// A secondary-bitmap field.
+            #[wire(bit = 70, fmt = N2)]
+            code: Option<u64>,
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    struct OldMessage<'a> {
+        mti: &'a str,
+        pan: Option<String>,
+        inner: Inner,
+        code: Option<u64>,
+    }
+
+    crate::bitmap_format! {
+        struct OldMessageFmt for<'a> OldMessage<'a>, <HexBitmap as crate::bitmap::BitmapFormat>::LAYOUT,
+            <HexBitmap as crate::bitmap::BitmapFormat>::Word {
+            head: { mti: N4, }
+            2 => pan: Option<Var>,
+            3 => inner: Inner,
+            70 => code: Option<N2>,
+        }
+    }
+
+    #[test]
+    fn bitmap_records_match_bitmap_format() {
+        for (pan, code) in [(None, None), (Some("4111"), Some(42))] {
+            let value = Message {
+                mti: "0100",
+                pan: pan.map(Into::into),
+                inner: Inner { code: "07".into() },
+                code,
+            };
+            let old = OldMessage {
+                mti: value.mti,
+                pan: value.pan.clone(),
+                inner: value.inner.clone(),
+                code,
+            };
+            let wire = encode::<Message, _>(&value).unwrap();
+            assert_eq!(encode::<OldMessageFmt, _>(&old), Ok(wire.clone()));
+            let mut scratch = [0; 64];
+            assert_eq!(crate::decode::<Message, Message>(&wire, &mut scratch), Ok(value));
+        }
+        // Unknown and missing fields are rejected alike.
+        // Field 4 is unknown; field 3 is required.
+        for wire in [&b"0100100000000000000007"[..], b"010040000000000000000"] {
+            let mut scratch = [0; 64];
+            let new = crate::decode::<Message, Message>(wire, &mut scratch).unwrap_err();
+            let mut scratch = [0; 64];
+            let old = crate::decode::<OldMessageFmt, OldMessage>(wire, &mut scratch).unwrap_err();
+            assert_eq!(new, old);
+            assert_eq!(new.kind, Error::Invalid);
+        }
     }
 
     #[test]
