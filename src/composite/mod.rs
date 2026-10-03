@@ -174,6 +174,17 @@ impl<P: crate::ConstBytes> AbsentFmt for AbsentBytes<P> {
     }
 }
 
+/// A constant value encoded through the scalar format `F`, for a field of type
+/// `()` whose spec value never changes: `FixedValue<A1, RecordTypeH>`, where
+/// `RecordTypeH` carries `b"H"`. Encoding writes the constant; decoding reads
+/// a value with `F` and requires it to equal the constant, so it is as lenient
+/// as `F` is (padding, alphabet aliases). A constant `F` rejects is a
+/// composition mistake, asserted in debug builds.
+pub struct FixedValue<F, V>(PhantomData<(F, V)>);
+/// Constant wire bytes for a field of type `()`, such as a filler:
+/// `FixedBytes<Fill<b' ', 10>>`. Decoding requires exactly these bytes.
+pub struct FixedBytes<P>(PhantomData<P>);
+
 /// An inner format's encoding behind a length and through a step chain: a
 /// group of fields or a list with a byte length, such as
 /// `Frame<AsciiLength<3>, Inner>`.

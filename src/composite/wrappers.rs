@@ -251,6 +251,51 @@ impl<'de, T, Inner: FieldDecode<'de, T>, Absent: AbsentFmt> FieldDecode<'de, Opt
     }
 }
 
+impl<F: ScalarFmt, V: crate::ConstBytes> FieldEncode<()> for FixedValue<F, V> {
+    #[inline(always)]
+    fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], _value: &()) -> Result<(), CompositeError> {
+        let result = F::encode(output, scratch, V::BYTES);
+        debug_assert!(
+            !matches!(result, Err(Error::Invalid | Error::InvalidValueLength)),
+            "the fixed value is not a valid value of its format"
+        );
+        Ok(result?)
+    }
+}
+
+impl<'de, F: ScalarFmt, V: crate::ConstBytes> FieldDecode<'de, ()> for FixedValue<F, V> {
+    const TAKES_REST: bool = F::TAKES_REST;
+
+    #[inline(always)]
+    fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<(), CompositeError> {
+        // The decoded value is only compared, so its scratch is not kept.
+        if !match_literal::<F>(input, scratch, V::BYTES)? {
+            cold_path();
+            return Err(Error::Invalid.into());
+        }
+        Ok(())
+    }
+}
+
+impl<P: crate::ConstBytes> FieldEncode<()> for FixedBytes<P> {
+    #[inline(always)]
+    fn encode_field(output: &mut &mut [u8], _scratch: &mut [u8], _value: &()) -> Result<(), CompositeError> {
+        copy_bytes(output, P::BYTES)?;
+        Ok(())
+    }
+}
+
+impl<P: crate::ConstBytes> FieldDecode<'_, ()> for FixedBytes<P> {
+    #[inline(always)]
+    fn decode_field(input: &mut &[u8], _scratch: &mut &mut [u8]) -> Result<(), CompositeError> {
+        if !match_prefix(input, P::BYTES) {
+            cold_path();
+            return Err(Error::Invalid.into());
+        }
+        Ok(())
+    }
+}
+
 impl<T: ?Sized> FieldEncode<T> for Empty {
     #[inline(always)]
     fn encode_field(_output: &mut &mut [u8], _scratch: &mut [u8], _value: &T) -> Result<(), CompositeError> {
@@ -269,6 +314,40 @@ impl<T: Default> FieldDecode<'_, T> for Empty {
 mod tests {
     use super::*;
     use crate::{Ascii, AsciiLength, Ebcdic037, Field, Fill, Fixed, Numeric, PadLeft, Rest};
+
+    #[test]
+    fn fixed_formats_write_and_check_constants() {
+        struct H;
+        impl crate::ConstBytes for H {
+            const BYTES: &'static [u8] = b"H";
+        }
+        type Value = FixedValue<Field<Ascii<0, 4>, Fixed<4>, crate::PadRight<4>>, H>;
+        type Filler = FixedBytes<Fill<b'.', 2>>;
+        let mut output = [0; 8];
+        assert_eq!(crate::encode::<Value, _>(&mut output, &mut [], &()), Ok(4));
+        assert_eq!(&output[..4], b"H   ");
+        assert_eq!(crate::encode::<Filler, _>(&mut output, &mut [], &()), Ok(2));
+        assert_eq!(&output[..2], b"..");
+        // A value is compared after decoding, as leniently as its format reads;
+        // bytes are compared exactly. Mismatches are `Invalid`.
+        let mut scratch = [0; 8];
+        assert_eq!(crate::decode::<Value, ()>(b"H   ", &mut scratch), Ok(()));
+        for wire in [&b"X   "[..], b"HH  "] {
+            assert_eq!(
+                crate::decode::<Value, ()>(wire, &mut scratch).map_err(|error| error.kind),
+                Err(Error::Invalid)
+            );
+        }
+        assert_eq!(crate::decode::<Filler, ()>(b"..", &mut scratch), Ok(()));
+        assert_eq!(
+            crate::decode::<Filler, ()>(b".:", &mut scratch).map_err(|error| error.kind),
+            Err(Error::Invalid)
+        );
+        // A constant its format rejects is written wrong.
+        type Bad = FixedValue<Field<Numeric<2, 2>, Fixed<2>>, H>;
+        let encoded = std::panic::catch_unwind(|| crate::encode::<Bad, _>(&mut [0; 8], &mut [], &()));
+        assert_eq!(encoded.is_err(), cfg!(debug_assertions));
+    }
 
     type A3 = Field<Ascii<3, 3>, Fixed<3>>;
 
