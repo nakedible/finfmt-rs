@@ -174,10 +174,26 @@ impl<P: crate::ConstBytes> AbsentFmt for AbsentBytes<P> {
     }
 }
 
-/// Encode/decode an inner format's value through an outer scalar field. A group of
-/// fields or a list with a byte length is a frame whose field has that length,
-/// such as `Frame<Field<Binary<0, 999>, AsciiLength<3>>, Inner>`.
-pub struct Frame<F, S>(PhantomData<(F, S)>);
+/// An inner format's encoding behind a length and through a step chain: a
+/// group of fields or a list with a byte length, such as
+/// `Frame<AsciiLength<3>, Inner>`.
+///
+/// `L` states the length at the chain's [`crate::Count`] marker, or the wire
+/// length without one, as in a [`crate::Field`]: `Frame<AsciiLength<2>, Inner,
+/// UnpackNibbles<…>>` counts hex digits, and `Frame<AsciiLength<2>, Inner,
+/// chain!(Count, UnpackNibbles<…>)>` counts bytes. A frame has no check: the
+/// inner fields check their own content, and must produce bytes the steps
+/// accept. `MIN` and `MAX` bound the inner encoding, before the steps, for a
+/// limit a specification states beyond what the inner format and `L` imply. A
+/// frame padded to an area sets `MAX` to its width, as padding does not cut.
+///
+/// Encoding stages the inner value with [`encode_staged`]. A body outside
+/// `MIN..=MAX`, or one `L` cannot state, is `InvalidValueLength`: the value is
+/// too long or short for the frame. Decoding rejects a body outside the bounds,
+/// or one the inner format does not consume entirely, as `Invalid`.
+pub struct Frame<L, Inner, Steps = crate::Identity, const MIN: usize = 0, const MAX: usize = { usize::MAX }>(
+    PhantomData<(L, Inner, Steps)>,
+);
 /// A fixed physical body whose length prefix excludes absent trailing fields.
 ///
 /// `Len` states the used body extent in bytes. The full body, including absent filler, remains on the
@@ -267,7 +283,7 @@ mod tests {
     use crate::field::Length;
     use crate::primitive::nibble::{BcdzDigits, UpperHexDigits};
     use crate::{
-        Ascii, AsciiLength, Binary, Count, Ebcdic037, EbcdicLength, Error, Field, Fixed, Numeric, PadLeft, PadRightEven, SignPrefix,
+        Ascii, AsciiLength, Count, Ebcdic037, EbcdicLength, Error, Field, Fixed, Identity, Numeric, PadLeft, PadRightEven, SignPrefix,
         Track2, UnpackNibbles,
     };
 
@@ -424,8 +440,8 @@ mod tests {
         check::<Ber>();
     }
 
-    type FramedFixedTailFmt = Frame<Field<Ascii<0, 12>, AsciiLength<2>>, FixedTailFmt>;
-    type FramedHexFixedTailFmt = Frame<Field<Binary<0, 12>, AsciiLength<2>, UnpackNibbles<UpperHexDigits>>, FixedTailFmt>;
+    type FramedFixedTailFmt = Frame<AsciiLength<2>, FixedTailFmt>;
+    type FramedHexFixedTailFmt = Frame<AsciiLength<2>, FixedTailFmt, UnpackNibbles<UpperHexDigits>>;
     type Blank3 = AbsentBytes<crate::Fill<b' ', 3>>;
     type OptionalA3SpaceFmt = OptionAs<A3, Blank3>;
 
@@ -740,7 +756,7 @@ mod tests {
             optional_direct: Option<N2>,
             optional_nested: Option<FixedTailFmt>,
             optional_direct_inline: Option<Field<Numeric<2, 2>, Fixed<2>>>,
-            optional_nested_inline: Option<Frame<Field<Ascii<0, 12>, AsciiLength<2>>, FixedTailFmt>>,
+            optional_nested_inline: Option<Frame<AsciiLength<2>, FixedTailFmt>>,
         }
     }
 
@@ -753,7 +769,7 @@ mod tests {
             optional_direct: Option<N2>,
             optional_nested: Option<FixedTailFmt>,
             optional_direct_inline: Option<Field<Numeric<2, 2>, Fixed<2>>>,
-            optional_nested_inline: Option<Frame<Field<Ascii<0, 12>, AsciiLength<2>>, FixedTailFmt>>,
+            optional_nested_inline: Option<Frame<AsciiLength<2>, FixedTailFmt>>,
         }
     }
 
@@ -766,7 +782,7 @@ mod tests {
             6 => optional_direct: Option<N2>,
             7 => optional_nested: Option<FixedTailFmt>,
             8 => optional_direct_inline: Option<Field<Numeric<2, 2>, Fixed<2>>>,
-            9 => optional_nested_inline: Option<Frame<Field<Ascii<0, 12>, AsciiLength<2>>, FixedTailFmt>>,
+            9 => optional_nested_inline: Option<Frame<AsciiLength<2>, FixedTailFmt>>,
         }
     }
 
@@ -779,7 +795,7 @@ mod tests {
             "06" => optional_direct: Option<N2>,
             "07" => optional_nested: Option<FixedTailFmt>,
             "08" => optional_direct_inline: Option<Field<Numeric<2, 2>, Fixed<2>>>,
-            "09" => optional_nested_inline: Option<Frame<Field<Ascii<0, 12>, AsciiLength<2>>, FixedTailFmt>>,
+            "09" => optional_nested_inline: Option<Frame<AsciiLength<2>, FixedTailFmt>>,
         }
     }
 
@@ -1024,9 +1040,8 @@ mod tests {
 
     type A5Padded = Field<Ascii<0, 5>, crate::Fixed<5>, crate::chain!(crate::PadRight<5, b' '>)>;
     type CountN2 = Field<Numeric<1, 2>, Fixed<2>, PadLeft<2, b'0', 1>>;
-    type CountedAsciiListFmt = Frame<Field<Binary<7, 19>, AsciiLength<2>>, BoundedList<AsciiLength<2>, A5Padded, Separator<b'/'>, 0, 3>>;
-    type ScalarCountedAsciiListFmt =
-        Frame<Field<Binary<7, 19>, AsciiLength<2>>, BoundedList<Length<CountN2>, A5Padded, Separator<b'/'>, 0, 3>>;
+    type CountedAsciiListFmt = Frame<AsciiLength<2>, BoundedList<AsciiLength<2>, A5Padded, Separator<b'/'>, 0, 3>, Identity, 7, 19>;
+    type ScalarCountedAsciiListFmt = Frame<AsciiLength<2>, BoundedList<Length<CountN2>, A5Padded, Separator<b'/'>, 0, 3>, Identity, 7, 19>;
     type FixedAsciiListFmt = BoundedList<Fixed<3>, A5Padded, (), 3, 3>;
 
     #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1572,9 +1587,60 @@ mod tests {
     }
 
     #[test]
+    fn frames_count_and_bound_their_bodies() {
+        type Text = Field<Ascii<0, 20>, crate::Rest>;
+        fn encode<F: FieldEncode<str>>(value: &str) -> Result<std::vec::Vec<u8>, Error> {
+            let mut output = [0; 64];
+            let used = crate::encode::<F, _>(&mut output, &mut [0; 64], value).map_err(|error| error.kind)?;
+            Ok(output[..used].to_vec())
+        }
+        fn decode<F: for<'de> FieldDecode<'de, &'de str>>(wire: &[u8]) -> Result<std::string::String, Error> {
+            let mut scratch = [0; 64];
+            crate::decode::<F, &str>(wire, &mut scratch)
+                .map(Into::into)
+                .map_err(|error| error.kind)
+        }
+        fn roundtrip<F: FieldEncode<str> + for<'de> FieldDecode<'de, &'de str>>(value: &str, wire: &[u8]) {
+            assert_eq!(encode::<F>(value).as_deref(), Ok(wire));
+            assert_eq!(decode::<F>(wire).as_deref(), Ok(value));
+        }
+        // The length counts at the marker, or the wire without one.
+        roundtrip::<Frame<AsciiLength<2>, Text, UnpackNibbles<UpperHexDigits>>>("AB", b"044142");
+        roundtrip::<Frame<AsciiLength<2>, Text, crate::chain!(Count, UnpackNibbles<UpperHexDigits>)>>("AB", b"024142");
+        roundtrip::<Frame<crate::Per<AsciiLength<2>, 2>, Text, UnpackNibbles<UpperHexDigits>>>("AB", b"024142");
+        assert_eq!(
+            encode::<Frame<crate::Per<AsciiLength<2>, 2>, Text>>("ABC"),
+            Err(Error::InvalidValueLength)
+        );
+        // Bounds are on the body before the steps.
+        type Bounded = Frame<AsciiLength<2>, Text, UnpackNibbles<UpperHexDigits>, 2, 3>;
+        roundtrip::<Bounded>("ABC", b"06414243");
+        for value in ["A", "ABCD"] {
+            assert_eq!(encode::<Bounded>(value), Err(Error::InvalidValueLength));
+        }
+        assert_eq!(decode::<Bounded>(b"0241"), Err(Error::Invalid));
+        assert_eq!(decode::<Bounded>(b"0841424344"), Err(Error::Invalid));
+        // A body the length cannot state is too long or short for the frame.
+        assert_eq!(encode::<Frame<AsciiLength<1>, Text>>("ABCDEFGHIJ"), Err(Error::InvalidValueLength));
+        type Area = Frame<Fixed<4>, Text, crate::PadRight<4>>;
+        roundtrip::<Area>("AB", b"AB  ");
+        assert_eq!(encode::<Area>("ABCDE"), Err(Error::InvalidValueLength));
+        // The steps validate the wire, and the inner format must consume the body.
+        assert_eq!(
+            decode::<Frame<AsciiLength<2>, Text, UnpackNibbles<UpperHexDigits>>>(b"024G"),
+            Err(Error::Invalid)
+        );
+        assert_eq!(decode::<Frame<AsciiLength<2>, A2>>(b"03ABC"), Err(Error::Invalid));
+        // A frame without a stated length takes the rest of its input.
+        type Tail = Frame<crate::Rest, Text, UnpackNibbles<UpperHexDigits>>;
+        const { assert!(<Tail as FieldDecode<'static, &'static str>>::TAKES_REST) };
+        roundtrip::<Tail>("AB", b"4142");
+    }
+
+    #[test]
     fn staging_writes_only_the_message_to_output() {
         // The inner frame stages while the outer one is staging.
-        type Nested = Frame<Field<Binary<0, 99>, AsciiLength<2>>, FramedConcatFmt>;
+        type Nested = Frame<AsciiLength<2>, FramedConcatFmt>;
         let value = FramedConcat {
             head: "12".into(),
             tail: "34".into(),

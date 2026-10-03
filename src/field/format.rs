@@ -32,29 +32,50 @@ impl<C: Check, L: LengthSpec, S: Step> Field<C, L, S> {
 
     #[inline(always)]
     fn encode_checked(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8], semantic_len: usize) -> Result<(), Error> {
-        const { S::HAS_COUNT };
-        framed(L::encode(output, scratch, S::counted_len(semantic_len)?))?;
-        let encoded = S::encode(output, scratch, input)?;
-        debug_assert_eq!(
-            Ok(encoded.len()),
-            S::encoded_len(semantic_len),
-            "step encoded a different number of bytes than predicted"
-        );
-        Ok(())
+        framed(encode_length::<L, S>(output, scratch, semantic_len))?;
+        encode_steps::<S>(output, scratch, input, semantic_len)
     }
 
     /// Frame and step-decode a value, without checking it.
     #[inline(always)]
     fn decode_unchecked<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
-        const { S::HAS_COUNT };
-        let count = L::decode(input, scratch)?;
-        let wire = match count {
-            // The count is untrusted: a wire length it overflows is invalid data.
-            Some(count) => take_bytes(input, S::counted_wire_len(count).map_err(overflow_as_invalid)?)?,
-            None => core::mem::take(input),
-        };
-        S::decode_counted(wire, scratch, count)
+        decode_framed::<L, S>(input, scratch)
     }
+}
+
+/// Write the length `L` states for `semantic_len` bytes encoded through `S`:
+/// the count at the chain's marker, or the wire length without one.
+#[inline(always)]
+pub(crate) fn encode_length<L: LengthSpec, S: Step>(output: &mut &mut [u8], scratch: &mut [u8], semantic_len: usize) -> Result<(), Error> {
+    const { S::HAS_COUNT };
+    L::encode(output, scratch, S::counted_len(semantic_len)?)
+}
+
+/// Encode `input`, whose length in the chain's units is `semantic_len`,
+/// through `S`.
+#[inline(always)]
+pub(crate) fn encode_steps<S: Step>(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8], semantic_len: usize) -> Result<(), Error> {
+    let encoded = S::encode(output, scratch, input)?;
+    debug_assert_eq!(
+        Ok(encoded.len()),
+        S::encoded_len(semantic_len),
+        "step encoded a different number of bytes than predicted"
+    );
+    Ok(())
+}
+
+/// Read the length `L` states, take the extent it gives, and decode it
+/// through `S`.
+#[inline(always)]
+pub(crate) fn decode_framed<'a, L: LengthSpec, S: Step>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
+    const { S::HAS_COUNT };
+    let count = L::decode(input, scratch)?;
+    let wire = match count {
+        // The count is untrusted: a wire length it overflows is invalid data.
+        Some(count) => take_bytes(input, S::counted_wire_len(count).map_err(overflow_as_invalid)?)?,
+        None => core::mem::take(input),
+    };
+    S::decode_counted(wire, scratch, count)
 }
 
 #[inline(always)]

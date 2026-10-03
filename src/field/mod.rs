@@ -28,6 +28,7 @@ pub use check::{
 pub use constant::{ConstBytes, Fill};
 pub use ebcdic::{Ebcdic037, Ebcdic1142};
 pub use format::Field;
+pub(crate) use format::{decode_framed, encode_length, encode_steps};
 pub use length::{AsciiLength, BlankableEbcdicLength, EbcdicLength, Fixed, Length, LengthSpec, Offset, Per, Rest};
 pub use nibble::{PackNibbles, PackNibblesLeft, PackNibblesRight, UnpackNibbles};
 pub use numeric::{

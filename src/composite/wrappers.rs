@@ -1,31 +1,56 @@
 use super::*;
+use crate::field::{LengthSpec, Step, decode_framed, encode_length, encode_steps};
 use crate::primitive::bytes::{copy_bytes, take_bytes};
+use crate::utils::cold_path;
 
-impl<T: ?Sized, F: ScalarFmt, S: FieldEncode<T>> FieldEncode<T> for Frame<F, S> {
+impl<T, L, Inner, Steps, const MIN: usize, const MAX: usize> FieldEncode<T> for Frame<L, Inner, Steps, MIN, MAX>
+where
+    T: ?Sized,
+    L: LengthSpec,
+    Inner: FieldEncode<T>,
+    Steps: Step,
+{
     #[inline(always)]
     fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
-        let (semantic, scratch) = encode_staged(scratch, |out, workspace| S::encode_field(out, workspace, value))?;
-        F::encode(output, scratch, semantic)?;
+        const { assert!(MIN <= MAX, "a frame's MIN exceeds its MAX") };
+        let (body, scratch) = encode_staged(scratch, |out, workspace| Inner::encode_field(out, workspace, value))?;
+        if body.len() < MIN || body.len() > MAX {
+            cold_path();
+            return Err(Error::InvalidValueLength.into());
+        }
+        // The length comes from the value: one the prefix cannot state is the value's.
+        encode_length::<L, Steps>(output, scratch, body.len()).map_err(|error| match error {
+            Error::Invalid => Error::InvalidValueLength,
+            error => error,
+        })?;
+        encode_steps::<Steps>(output, scratch, body, body.len())?;
         Ok(())
     }
 }
 
-impl<'de, T, F: ScalarFmt, S: FieldDecode<'de, T>> FieldDecode<'de, T> for Frame<F, S> {
-    const TAKES_REST: bool = F::TAKES_REST;
+impl<'de, T, L, Inner, Steps, const MIN: usize, const MAX: usize> FieldDecode<'de, T> for Frame<L, Inner, Steps, MIN, MAX>
+where
+    L: LengthSpec,
+    Inner: FieldDecode<'de, T>,
+    Steps: Step,
+{
+    const TAKES_REST: bool = !L::STATES_LEN;
 
     #[inline(always)]
     fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<T, CompositeError> {
-        let source = *input;
-        let mut input_ptr = source;
-        let value_bytes = F::decode(&mut input_ptr, scratch)?;
-        advance_input(input, source.len() - input_ptr.len())?;
-
-        let mut value_input = value_bytes;
-        let value = S::decode_field(&mut value_input, scratch)?;
-        if !value_input.is_empty() {
-            crate::utils::cold_path();
+        let mut rest = *input;
+        let body = decode_framed::<L, Steps>(&mut rest, scratch)?;
+        if body.len() < MIN || body.len() > MAX {
+            cold_path();
             return Err(Error::Invalid.into());
         }
+        let mut body_input = body;
+        let value = Inner::decode_field(&mut body_input, scratch)?;
+        if !body_input.is_empty() {
+            cold_path();
+            return Err(Error::Invalid.into());
+        }
+        *input = rest;
         Ok(value)
     }
 }

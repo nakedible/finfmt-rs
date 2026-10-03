@@ -400,7 +400,7 @@ mod tests {
     #[test]
     fn lists_count_items_and_frames_give_byte_extents() {
         // A byte length is a frame around a list that takes the rest.
-        type Extent = Frame<Field<crate::Binary<0, 99>, AsciiLength<2>>, BoundedList<Rest, Text, Separator<b'|'>, 0, 4>>;
+        type Extent = Frame<AsciiLength<2>, BoundedList<Rest, Text, Separator<b'|'>, 0, 4>>;
         roundtrip::<Extent>(&["AB", "C"], b"04AB|C");
         roundtrip::<Extent>(&[], b"00");
         assert_eq!(

@@ -85,6 +85,15 @@ length from the count by arithmetic after it (`Step::counted_wire_len`), and
 the steps after the marker get their exact lengths, so padding there is split
 off exactly rather than by content.
 
+`Frame<L, Inner, Steps, MIN, MAX>` puts a group of fields or a list behind a
+length and through a step chain, counted as a field counts. It has no check:
+the inner fields check their own content and must produce bytes the steps
+accept. Its length comes from the value, so a body outside `MIN..=MAX`, or one
+`L` cannot state, is `InvalidValueLength`, where a field whose check admits a
+length its framing cannot hold is a composition mistake asserted in debug
+builds. `MIN` and `MAX` bound the body before the steps, for limits a
+specification states beyond what the inner format and `L` imply.
+
 `FieldEncode<T>` and `FieldDecode<'de, T>` are the format contract: a format
 encodes values of type `T`, and decodes values of type `T` that may borrow
 input or scratch for `'de`. Scalar and composite formats implement the same
@@ -123,9 +132,10 @@ A length bug can then at worst ship stale staged bytes, never live workspace.
 Nested staging halves scratch again, so scratch needs about `2^depth` times the
 largest staged encoding.
 
-Length-prefixed formats rely on `encoded_len` to write the length before the
-value. Supported scalar transformations should have deterministic output length
-for a given semantic input.
+A field writes its length before its value from the logical length its check
+returns, by step and length-spec arithmetic, so scalar transformations must
+have a deterministic output length for a given input length. A frame stages
+its body to learn its length.
 
 ## Top-Level Buffer Strategy
 
