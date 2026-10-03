@@ -197,8 +197,9 @@
 /// ```
 ///
 /// A struct without a layout, a required field after an `Option` one in a
-/// concat record, a bitmap field number out of order, a repeated BER tag, and
-/// an unknown argument are compile errors:
+/// concat record, a bitmap field number out of order, a repeated BER tag, an
+/// unknown argument, and `#[cfg]` on an item, field or variant are compile
+/// errors:
 ///
 /// ```compile_fail
 /// finfmt::wire_type! {
@@ -254,6 +255,18 @@
 /// type N2 = finfmt::Field<finfmt::Numeric<2, 2>, finfmt::Fixed<2>>;
 /// finfmt::wire_type! {
 ///     #[wire(concat)]
+///     struct Conditional {
+///         #[wire(fmt = N2)]
+///         #[cfg(any())]
+///         code: String,
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// type N2 = finfmt::Field<finfmt::Numeric<2, 2>, finfmt::Fixed<2>>;
+/// finfmt::wire_type! {
+///     #[wire(concat)]
 ///     struct Unknown {
 ///         #[wire(fmt = N2, bits = 3)]
 ///         code: String,
@@ -265,6 +278,20 @@ macro_rules! wire_type {
     ($($(#[$($attr:tt)*])* $vis:vis $kw:ident $name:ident $(<$lt:lifetime>)? { $($body:tt)* })*) => {
         $($crate::__finfmt_wire_item! { [] []; $(#[$($attr)*])*; $vis $kw $name [$($lt)?] [$($lt)? '__finfmt_de] { $($body)* } })*
     };
+}
+
+/// Reject `#[cfg]` on an item, field or variant: the generated code would
+/// still name what it removes. One step for all attributes.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __finfmt_wire_no_cfg {
+    ($(#[$name:ident $($args:tt)*])*) => {
+        $($crate::__finfmt_wire_no_cfg! { @attr $name })*
+    };
+    (@attr cfg) => {
+        compile_error!("wire_type!: #[cfg] is not supported on items, fields or variants; put it on the whole wire_type! block");
+    };
+    (@attr $name:ident) => {};
 }
 
 /// Split an item's attributes into kept ones and `#[wire]` arguments, then
@@ -410,6 +437,7 @@ macro_rules! __finfmt_wire_variants {
 macro_rules! __finfmt_wire_enum {
     ($kind:ident [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
         [$({ [$($vkept:tt)*] $variant:ident [$($args:tt)*] [$(($payload:ty) ($fmt:ty) $bind:ident)?] })*]) => {
+        $crate::__finfmt_wire_no_cfg! { $($kept)* $($($vkept)*)* }
         $($kept)*
         $vis enum $name $(<$lt>)? {
             $($($vkept)* $variant $(($payload))?,)*
@@ -644,6 +672,7 @@ macro_rules! __finfmt_wire_variant {
 macro_rules! __finfmt_wire_emit {
     (concat [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
         [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident $pos:tt ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]) => {
+        $crate::__finfmt_wire_no_cfg! { $($kept)* $($($fkept)*)* }
         $($kept)*
         $vis struct $name $(<$lt>)? {
             $($($fkept)* $fvis $field: $ty,)*
@@ -697,6 +726,7 @@ macro_rules! __finfmt_wire_emit {
     };
     ([delimited $separator:expr] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
         [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident $pos:tt ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]) => {
+        $crate::__finfmt_wire_no_cfg! { $($kept)* $($($fkept)*)* }
         $($kept)*
         $vis struct $name $(<$lt>)? {
             $($($fkept)* $fvis $field: $ty,)*
@@ -747,6 +777,7 @@ macro_rules! __finfmt_wire_emit {
     };
     ([bitmap $format:ty] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
         [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident $pos:tt ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]) => {
+        $crate::__finfmt_wire_no_cfg! { $($kept)* $($($fkept)*)* }
         $($kept)*
         $vis struct $name $(<$lt>)? {
             $($($fkept)* $fvis $field: $ty,)*
@@ -822,6 +853,7 @@ macro_rules! __finfmt_wire_emit {
     };
     ([ber_tlv $padding:tt] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
         [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident $pos:tt ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]) => {
+        $crate::__finfmt_wire_no_cfg! { $($kept)* $($($fkept)*)* }
         $($kept)*
         $vis struct $name $(<$lt>)? {
             $($($fkept)* $fvis $field: $ty,)*
