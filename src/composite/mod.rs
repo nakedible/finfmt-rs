@@ -8,20 +8,8 @@
 //! take their inner formats through the same traits, so scalar and composite
 //! formats nest alike.
 //!
-//! Record macros take entries of these forms:
-//! - `field: Fmt`, a field encoded by `Fmt`;
-//! - `field(context): Fmt`, a field whose format also reads an earlier field;
-//! - `field: Option<Fmt>`, a field the wire container can omit;
-//! - `_: Fmt = b"…"`, a literal encoded by `Fmt`.
-//!
-//! `Option<Fmt>` is container-level presence, not merely a field whose value
-//! happens to be `Option<T>`. In `concat_format!`, optional fields are
-//! tail-only and decode to `None` after EOF. In `delimited_format!`, an empty
-//! segment decodes to `None`. In bitmap and BER-TLV formats, absence is
-//! controlled by the bitmap bit or tag presence. If bytes are always present but
-//! a pattern inside those bytes means "no value", express that in the field
-//! format, for example with `OptionAs`, not by wrapping the macro field in
-//! `Option<...>`.
+//! Records are declared with [`wire_type!`](crate::wire_type), which makes
+//! each struct or enum its own format.
 
 use core::marker::PhantomData;
 
@@ -108,12 +96,6 @@ where
         available - staged.len()
     };
     Ok(split_scratch(scratch, used)?)
-}
-
-/// Encode a value using an already available context value, such as an
-/// earlier field that selects the layout.
-pub trait ContextEncode<T: ?Sized, C: ?Sized> {
-    fn encode_with(output: &mut &mut [u8], scratch: &mut [u8], context: &C, value: &T) -> Result<(), CompositeError>;
 }
 
 /// Decode a value using an already available context value.
@@ -231,8 +213,9 @@ pub struct NoTrailingFields;
 pub struct Empty;
 /// Structural BER-TLV representation as a Serde map or sequence of
 /// `(tag, value)` pairs. Tags and values are uppercase hex, such as `"9F02"` and
-/// `"000000012345"`; an empty value is `""`. Only `ber_tlv_format!` extras, which
-/// sit beside named fields, use `t9F02_unknown` keys.
+/// `"000000012345"`; an empty value is `""`. Only the `extras` of a
+/// `wire_type!` BER-TLV record, which sit beside named fields, use
+/// `t9F02_unknown` keys.
 ///
 /// Order and duplicates are preserved if the chosen collection type preserves
 /// them: a sequence keeps every entry, while a std map keeps the last value of a
@@ -285,12 +268,8 @@ pub struct Separator<const BYTE: u8>;
 mod bertlv;
 #[doc(hidden)]
 pub use bertlv::decode_ber_tlv_collection_entry;
-mod bertlv_macros;
 #[cfg(feature = "serde")]
 mod bertlv_serde;
-mod bitmap_macros;
-mod concat_macros;
-mod delimited_macros;
 mod repeated;
 mod scalar;
 #[cfg(feature = "serde")]
@@ -496,61 +475,6 @@ mod tests {
     type TrailingLengthTails = TrailingField<Blank3, 3, TrailingField<Blank3, 3>>;
     type TrailingLengthDataFmt = TrailingLengthFrame<AsciiLength<2>, TrailingLengthData, TrailingLengthTails, 2>;
 
-    #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-    enum UnionValue {
-        Known(String),
-        Alpha(String),
-        Unknown(String),
-    }
-
-    type FixedNumeric4 = Field<Numeric<4, 4>, Fixed<4>>;
-    type FixedAlpha4 = Field<crate::Alpha<4, 4>, Fixed<4>>;
-    type RestNumeric4 = Field<Numeric<4, 4>, crate::Rest>;
-    type RestAscii8 = Field<Ascii<0, 8>, crate::Rest>;
-
-    crate::union_format! {
-        #[doc = "Test format for an untagged speculative enum."]
-        struct UnionValueFmt for UnionValue {
-            Known(FixedNumeric4),
-            Alpha(FixedAlpha4),
-            Unknown(RestAscii8),
-        }
-    }
-
-    crate::union_format! {
-        struct RestUnionValueFmt for UnionValue {
-            Known(RestNumeric4),
-            Alpha(FixedAlpha4),
-            Unknown(RestAscii8),
-        }
-    }
-
-    #[derive(Debug, PartialEq, Eq, Serialize)]
-    enum BorrowedUnionValue<'a> {
-        Known(&'a str),
-        Unknown(&'a str),
-    }
-
-    crate::union_format! {
-        struct BorrowedUnionValueFmt for<'a> BorrowedUnionValue<'a> {
-            Known(FixedNumeric4),
-            Unknown(A4Ebcdic),
-        }
-    }
-
-    #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-    enum ShortUnionValue {
-        Numeric(String),
-        Alpha(String),
-    }
-
-    crate::union_format! {
-        struct ShortUnionValueFmt for ShortUnionValue {
-            Numeric(FixedNumeric4),
-            Alpha(FixedAlpha4),
-        }
-    }
-
     #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(transparent)]
     struct ProcessingCode(String);
@@ -720,34 +644,6 @@ mod tests {
         }
 
         #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-        #[wire(concat)]
-        struct VariantSelector {
-            #[wire(fmt = A4)]
-            code: String,
-        }
-
-        #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-        #[wire(concat)]
-        struct VariantATail {
-            #[wire(fmt = N2)]
-            tail: String,
-        }
-
-        #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-        #[wire(concat)]
-        struct VariantBTail {
-            #[wire(fmt = A4)]
-            tail: String,
-        }
-
-        #[derive(Debug, PartialEq, Eq, Serialize)]
-        #[wire(concat)]
-        struct BorrowedVariantTail<'a> {
-            #[wire(fmt = A4)]
-            tail: &'a str,
-        }
-
-        #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
         #[wire(delimited = b'\\')]
         struct DelimitedSlots {
             #[wire(fmt = A4)]
@@ -863,77 +759,6 @@ mod tests {
             optional_direct_inline: Option<ManualStan>,
             #[wire(fmt = Frame<AsciiLength<2>, FixedTail>, tag = "09")]
             optional_nested_inline: Option<FixedTail>,
-        }
-    }
-
-    #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-    enum VariantData {
-        A(VariantATail),
-        B(VariantBTail),
-    }
-
-    crate::tagged_format! {
-        #[doc = "Test format for an internally tagged enum."]
-        struct VariantDataFmt for VariantData {
-            _: A4 = b"AXAA" => A(VariantATail) if |remaining_len| remaining_len == 2,
-            _: A4 = b"AXBB" => B(VariantBTail) if |remaining_len| remaining_len == 4,
-        }
-    }
-
-    #[derive(Debug, PartialEq, Eq, Serialize)]
-    enum BorrowedVariantData<'a> {
-        A(BorrowedVariantTail<'a>),
-        B(BorrowedVariantTail<'a>),
-    }
-
-    crate::tagged_format! {
-        struct BorrowedVariantDataFmt for<'a> BorrowedVariantData<'a> {
-            _: A4 = b"AXAA" => A(BorrowedVariantTail),
-            _: A4 = b"AXBB" => B(BorrowedVariantTail),
-        }
-    }
-
-    #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-    enum RetainedVariantData {
-        A(VariantATail),
-        B(VariantBTail),
-    }
-
-    crate::choice_format! {
-        #[doc = "Test format for an externally selected enum body."]
-        struct RetainedVariantDataFmt for RetainedVariantData, VariantSelector {
-            A(VariantATail) if |selector| selector.code == "AXAA",
-            B(VariantBTail) if |selector| selector.code == "AXBB",
-        }
-    }
-
-    crate::choice_format! {
-        struct BorrowedRetainedVariantDataFmt for<'a> BorrowedVariantData<'a>, VariantSelector {
-            A(BorrowedVariantTail) if |selector| selector.code == "AXAA",
-            B(BorrowedVariantTail) if |selector| selector.code == "AXBB",
-        }
-    }
-
-    #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-    struct RetainedVariantRecord {
-        selector: VariantSelector,
-        body: RetainedVariantData,
-        suffix: String,
-    }
-
-    crate::concat_format! {
-        struct RetainedVariantRecordFmt for RetainedVariantRecord {
-            selector: VariantSelector,
-            body(selector): RetainedVariantDataFmt,
-            suffix: A4,
-        }
-    }
-
-    crate::delimited_format! {
-        struct DelimitedRetainedVariantRecordFmt for RetainedVariantRecord, b'|' {
-            selector: VariantSelector,
-            body(selector): RetainedVariantDataFmt,
-            suffix: A4,
         }
     }
 
@@ -2071,127 +1896,6 @@ mod tests {
     }
 
     #[test]
-    fn test_tagged_format_roundtrip() {
-        for (value, expected) in [
-            (VariantData::A(VariantATail { tail: "12".into() }), &b"AXAA12"[..]),
-            (VariantData::B(VariantBTail { tail: "WXYZ".into() }), &b"AXBBWXYZ"[..]),
-        ] {
-            let mut output = [0u8; 32];
-            let mut scratch = [0u8; 32];
-            let total = output.len();
-            let encoded = {
-                let mut out_ptr = output.as_mut_slice();
-                VariantDataFmt::encode_field(&mut out_ptr, scratch.as_mut_slice(), &value).map(|_| total - out_ptr.len())
-            }
-            .unwrap();
-            assert_eq!(&output[..encoded], expected);
-            let mut input = &output[..encoded];
-            let mut decode_scratch = [0u8; 32];
-            let decoded = VariantDataFmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
-            assert_eq!(decoded, value);
-            assert!(input.is_empty());
-        }
-    }
-
-    #[test]
-    fn test_retained_selector_choice_roundtrip_and_mismatch() {
-        let value = RetainedVariantRecord {
-            selector: VariantSelector { code: "AXBB".into() },
-            body: RetainedVariantData::B(VariantBTail { tail: "WXYZ".into() }),
-            suffix: "DONE".into(),
-        };
-        let mut output = [0u8; 32];
-        let mut scratch = [0u8; 32];
-        let total = output.len();
-        let used = {
-            let mut out = output.as_mut_slice();
-            RetainedVariantRecordFmt::encode_field(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
-        }
-        .unwrap();
-        assert_eq!(&output[..used], b"AXBBWXYZDONE");
-
-        let mut input = &output[..used];
-        let mut decode_scratch = [0u8; 32];
-        let decoded = RetainedVariantRecordFmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
-        assert_eq!(decoded, value);
-        assert!(input.is_empty());
-
-        let used = {
-            let mut out = output.as_mut_slice();
-            DelimitedRetainedVariantRecordFmt::encode_field(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
-        }
-        .unwrap();
-        assert_eq!(&output[..used], b"AXBB|WXYZ|DONE");
-
-        let mut input = &output[..used];
-        let decoded = DelimitedRetainedVariantRecordFmt::decode_field(&mut input, &mut decode_scratch.as_mut_slice()).unwrap();
-        assert_eq!(decoded, value);
-        assert!(input.is_empty());
-
-        let selector = VariantSelector { code: "AXBB".into() };
-        let borrowed = BorrowedVariantData::B(BorrowedVariantTail { tail: "WXYZ" });
-        let used = {
-            let mut out = output.as_mut_slice();
-            let scratch_ptr = scratch.as_mut_slice();
-            BorrowedRetainedVariantDataFmt::encode_with(&mut out, scratch_ptr, &selector, &borrowed).map(|_| total - out.len())
-        }
-        .unwrap();
-        assert_eq!(&output[..used], b"WXYZ");
-
-        let mut input = &output[..used];
-        let mut scratch_ptr = decode_scratch.as_mut_slice();
-        let decoded = BorrowedRetainedVariantDataFmt::decode_with(&mut input, &mut scratch_ptr, &selector).unwrap();
-        assert_eq!(decoded, borrowed);
-        assert!(input.is_empty());
-
-        let mismatch = RetainedVariantRecord {
-            selector: VariantSelector { code: "AXAA".into() },
-            body: RetainedVariantData::B(VariantBTail { tail: "WXYZ".into() }),
-            suffix: "DONE".into(),
-        };
-        let mut out = output.as_mut_slice();
-        assert_eq!(
-            error_kind(RetainedVariantRecordFmt::encode_field(&mut out, scratch.as_mut_slice(), &mismatch)),
-            Err(Error::Invalid)
-        );
-
-        let mut unknown = &b"AXZZWXYZDONE"[..];
-        assert_eq!(
-            error_kind(RetainedVariantRecordFmt::decode_field(&mut unknown, &mut scratch.as_mut_slice())),
-            Err(Error::Invalid)
-        );
-
-        let with_separator = RetainedVariantRecord {
-            selector: VariantSelector { code: "AXBB".into() },
-            body: RetainedVariantData::B(VariantBTail { tail: "WX|Z".into() }),
-            suffix: "DONE".into(),
-        };
-        let separator_inside = std::panic::catch_unwind(|| {
-            DelimitedRetainedVariantRecordFmt::encode_field(&mut &mut [0u8; 32][..], &mut [0u8; 32], &with_separator)
-        });
-        assert_eq!(separator_inside.is_err(), cfg!(debug_assertions));
-    }
-
-    #[test]
-    fn test_borrowed_tagged_format_roundtrip() {
-        let mut output = [0u8; 32];
-        let mut scratch = [0u8; 32];
-
-        let value = BorrowedVariantData::B(BorrowedVariantTail { tail: "WXYZ" });
-        let used = {
-            let total = output.len();
-            let mut out = output.as_mut_slice();
-            BorrowedVariantDataFmt::encode_field(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
-        }
-        .unwrap();
-        assert_eq!(&output[..used], b"AXBBWXYZ");
-        let mut input = &output[..used];
-        let decoded = BorrowedVariantDataFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap();
-        assert_eq!(decoded, value);
-        assert!(input.is_empty());
-    }
-
-    #[test]
     fn test_iso_bitmap_roundtrip() {
         for (value, bitmap) in [
             (
@@ -2688,101 +2392,11 @@ mod tests {
         );
         assert!(input.is_empty());
     }
-
-    #[test]
-    fn test_union_format_decode_and_encode() {
-        let mut scratch = [0u8; 16];
-
-        let mut input = b"1234".as_slice();
-        assert_eq!(
-            UnionValueFmt::decode_field(&mut input, &mut scratch.as_mut_slice()),
-            Ok(UnionValue::Known("1234".into()))
-        );
-        assert!(input.is_empty());
-
-        let mut input = b"ABCD".as_slice();
-        assert_eq!(
-            UnionValueFmt::decode_field(&mut input, &mut scratch.as_mut_slice()),
-            Ok(UnionValue::Alpha("ABCD".into()))
-        );
-        assert!(input.is_empty());
-
-        let mut input = b"12AB".as_slice();
-        let mut exact_scratch = [0u8; 4];
-        assert_eq!(
-            UnionValueFmt::decode_field(&mut input, &mut exact_scratch.as_mut_slice()),
-            Ok(UnionValue::Unknown("12AB".into()))
-        );
-        assert!(input.is_empty());
-
-        let mut input = b"12".as_slice();
-        assert_eq!(
-            UnionValueFmt::decode_field(&mut input, &mut scratch.as_mut_slice()),
-            Ok(UnionValue::Unknown("12".into()))
-        );
-        assert!(input.is_empty());
-
-        let mut input = b"12345".as_slice();
-        assert_eq!(
-            RestUnionValueFmt::decode_field(&mut input, &mut scratch.as_mut_slice()),
-            Ok(UnionValue::Unknown("12345".into()))
-        );
-        assert!(input.is_empty());
-
-        let mut input = b"12".as_slice();
-        let error = ShortUnionValueFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap_err();
-        assert_eq!(error.kind, Error::UnexpectedEof);
-        assert!(error.path().is_empty());
-        assert_eq!(input, b"12");
-
-        let mut output = [0u8; 16];
-        let used = {
-            let total = output.len();
-            let mut out = output.as_mut_slice();
-            UnionValueFmt::encode_field(&mut out, scratch.as_mut_slice(), &UnionValue::Known("1234".into())).unwrap();
-            total - out.len()
-        };
-        assert_eq!(&output[..used], b"1234");
-
-        let used = {
-            let total = output.len();
-            let mut out = output.as_mut_slice();
-            UnionValueFmt::encode_field(&mut out, scratch.as_mut_slice(), &UnionValue::Unknown("ABCD".into())).unwrap();
-            total - out.len()
-        };
-        assert_eq!(&output[..used], b"ABCD");
-
-        let mut input = b"1234".as_slice();
-        assert_eq!(
-            BorrowedUnionValueFmt::decode_field(&mut input, &mut scratch.as_mut_slice()),
-            Ok(BorrowedUnionValue::Known("1234"))
-        );
-        assert!(input.is_empty());
-
-        let mut input = b"\xC1\xC2\xC3\xC4".as_slice();
-        assert_eq!(
-            BorrowedUnionValueFmt::decode_field(&mut input, &mut scratch.as_mut_slice()),
-            Ok(BorrowedUnionValue::Unknown("ABCD"))
-        );
-        assert!(input.is_empty());
-
-        let used = {
-            let total = output.len();
-            let mut out = output.as_mut_slice();
-            BorrowedUnionValueFmt::encode_field(&mut out, scratch.as_mut_slice(), &BorrowedUnionValue::Unknown("ABCD")).unwrap();
-            total - out.len()
-        };
-        assert_eq!(&output[..used], b"\xC1\xC2\xC3\xC4");
-    }
 }
-mod enum_macros;
 mod wrappers;
 
 #[cfg(feature = "serde")]
 pub use scalar_serde::SerdeScalar;
-#[cfg(feature = "serde")]
-#[doc(hidden)]
-pub use scalar_serde::{decode_serde_scalar, encode_serde_scalar};
 
 pub trait ListSeparatorPolicy {
     const BYTE: Option<u8>;
@@ -3086,24 +2700,6 @@ where
     Ok(true)
 }
 
-#[inline(always)]
-#[doc(hidden)]
-pub fn should_retry_union(error: Error) -> bool {
-    matches!(error, Error::Invalid | Error::UnexpectedEof)
-}
-
-/// Decode an owned value with a scratch reborrow the value does not outlive,
-/// so a failed trial leaves the arena untouched.
-#[inline(always)]
-#[doc(hidden)]
-pub fn decode_owned_value<'de, T, F>(input: &mut &'de [u8], scratch: &'de mut [u8]) -> Result<T, CompositeError>
-where
-    F: FieldDecode<'de, T>,
-{
-    let mut scratch = scratch;
-    F::decode_field(input, &mut scratch)
-}
-
 /// Encode through `encode`, then, in debug builds only, pass the bytes it wrote
 /// to `check`. Release builds encode straight into the output.
 #[inline(always)]
@@ -3153,20 +2749,6 @@ pub fn encode_delimited_value<T: ?Sized, F: FieldEncode<T>>(
     })
 }
 
-#[inline]
-#[doc(hidden)]
-pub fn encode_delimited_context<T: ?Sized, C: ?Sized, F: ContextEncode<T, C>>(
-    output: &mut &mut [u8],
-    scratch: &mut [u8],
-    context: &C,
-    value: &T,
-    separator: Option<u8>,
-) -> Result<(), CompositeError> {
-    encode_delimited_segment(output, scratch, separator, |segment_out, nested_scratch| {
-        F::encode_with(segment_out, nested_scratch, context, value)
-    })
-}
-
 #[inline(always)]
 #[doc(hidden)]
 pub fn decode_delimited_field<'a>(input: &mut &'a [u8], separator: u8, expect_separator: bool) -> Result<&'a [u8], Error> {
@@ -3213,31 +2795,6 @@ pub fn decode_delimited_context<'a, T, C: ?Sized, F: ContextDecode<'a, T, C>>(
     decode_delimited_segment(segment, scratch, |input, scratch| F::decode_with(input, scratch, context))
 }
 
-#[inline]
-#[doc(hidden)]
-pub fn encode_delimited_literal<F: ScalarFmt>(
-    output: &mut &mut [u8],
-    scratch: &mut [u8],
-    expected: &[u8],
-    separator: Option<u8>,
-) -> Result<(), CompositeError> {
-    encode_delimited_segment(output, scratch, separator, |segment_out, scratch| {
-        F::encode(segment_out, scratch, expected).map_err(CompositeError::from)
-    })
-}
-
-#[inline]
-#[doc(hidden)]
-pub fn decode_delimited_literal<'a, F: ScalarFmt>(
-    segment: &'a [u8],
-    scratch: &mut &'a mut [u8],
-    expected: &[u8],
-) -> Result<(), CompositeError> {
-    decode_delimited_segment(segment, scratch, |input, scratch| {
-        decode_literal::<F>(input, scratch, expected).map_err(CompositeError::from)
-    })
-}
-
 /// Encode one variant's value. Like [`decode_variant`], a variant body is its
 /// own function, so large variants do not inline into each other.
 #[inline(never)]
@@ -3256,19 +2813,6 @@ where
     W: FnOnce(T) -> E,
 {
     Ok(wrap(F::decode_field(input, scratch)?))
-}
-
-#[inline]
-pub fn decode_literal<'a, F: ScalarFmt>(input: &mut &'a [u8], scratch: &mut &'a mut [u8], expected: &[u8]) -> Result<(), Error> {
-    let source = *input;
-    let mut input_ptr = source;
-    let decoded = F::decode(&mut input_ptr, scratch)?;
-    advance_input(input, source.len() - input_ptr.len())?;
-    if decoded != expected {
-        crate::utils::cold_path();
-        return Err(Error::Invalid);
-    }
-    Ok(())
 }
 
 /// Trial-decode a literal in its decoded semantic representation. Input advances
@@ -3396,91 +2940,9 @@ mod delimited_proptests {
 }
 
 #[cfg(test)]
-mod tagged_tests {
+mod literal_tests {
     use super::*;
     use crate::{Ascii, Field, Fixed, FixedSignedComp3, Rest};
-    type A1 = Field<Ascii<1, 1>, Fixed<1>>;
-    type A2 = Field<Ascii<2, 2>, Fixed<2>>;
-    #[derive(Debug, PartialEq)]
-    enum Value {
-        Long(()),
-        Short(()),
-    }
-    crate::tagged_format! { struct Prefix for Value {
-        _: A2 = b"AB" => Long(Empty),
-        _: A1 = b"A" => Short(Empty),
-    } }
-    crate::tagged_format! { struct Guard for Value {
-        _: A1 = b"A" => Long(Empty) if |remaining| remaining == 1,
-        _: A1 = b"A" => Short(Empty),
-    } }
-    #[test]
-    fn partial_tags_and_guards_try_later_arms() {
-        for (wire, expected, rest) in [
-            (&b"A"[..], Ok(Value::Short(())), &b""[..]),
-            (b"AB", Ok(Value::Long(())), b""),
-            (b"ABC", Ok(Value::Long(())), b"C"),
-            (b"", Err(Error::UnexpectedEof), b""),
-            (b"ZZ", Err(Error::Invalid), b"ZZ"),
-        ] {
-            let mut input = wire;
-            assert_eq!(Prefix::decode_field(&mut input, &mut &mut [][..]).map_err(|e| e.kind), expected);
-            assert_eq!(input, rest);
-        }
-        assert_eq!(Guard::decode_field(&mut &b"A"[..], &mut &mut [][..]).unwrap(), Value::Short(()));
-        assert_eq!(Guard::decode_field(&mut &b"AB"[..], &mut &mut [][..]).unwrap(), Value::Long(()));
-    }
-    struct Reject<const CODE: u8>;
-    impl<const CODE: u8> ScalarFmt for Reject<CODE> {
-        fn encoded_len(value: &[u8]) -> Result<usize, Error> {
-            A1::encoded_len(value)
-        }
-        fn encode(output: &mut &mut [u8], scratch: &mut [u8], value: &[u8]) -> Result<(), Error> {
-            A1::encode(output, scratch, value)
-        }
-        fn decode<'a>(_input: &mut &'a [u8], _scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
-            Err(match CODE {
-                0 => Error::Invalid,
-                1 => Error::UnexpectedEof,
-                2 => Error::BufferOverflow,
-                _ => Error::Internal,
-            })
-        }
-    }
-    #[test]
-    fn tag_errors_retry_but_resource_and_selected_body_errors_do_not() {
-        macro_rules! check {
-            ($code:literal, $expected:expr) => {{
-                crate::tagged_format! { struct Format for Value {
-                    _: Reject<$code> = b"A" => Long(Empty),
-                    _: A1 = b"A" => Short(Empty),
-                } }
-                let mut input = &b"A"[..];
-                assert_eq!(
-                    Format::decode_field(&mut input, &mut &mut [][..]).map_err(|e| e.kind),
-                    $expected
-                );
-                assert_eq!(input, if $code < 2 { &b""[..] } else { &b"A"[..] });
-            }};
-        }
-        check!(0, Ok(Value::Short(())));
-        check!(1, Ok(Value::Short(())));
-        check!(2, Err(Error::BufferOverflow));
-        check!(3, Err(Error::Internal));
-        #[derive(Debug, PartialEq)]
-        enum Body {
-            Required(String),
-            Empty(()),
-        }
-        crate::tagged_format! { struct Format for Body {
-            _: A1 = b"A" => Required(A2),
-            _: A1 = b"A" => Empty(Empty),
-        } }
-        assert_eq!(
-            Format::decode_field(&mut &b"A"[..], &mut &mut [][..]).unwrap_err().kind,
-            Error::UnexpectedEof
-        );
-    }
     #[test]
     fn literal_semantics_and_temporary_scratch() {
         let mut scratch = [0; 80];

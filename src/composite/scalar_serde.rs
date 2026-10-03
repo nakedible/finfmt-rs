@@ -621,7 +621,7 @@ impl<'de, F: ScalarFmt> serde::Deserializer<'de> for ScalarValueDeserializer<'_,
 }
 
 #[inline(always)]
-pub fn encode_serde_scalar<T, F: ScalarFmt>(value: &T, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error>
+fn encode_serde_scalar<T, F: ScalarFmt>(value: &T, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error>
 where
     T: ?Sized + Serialize,
 {
@@ -633,7 +633,7 @@ where
 }
 
 #[inline(always)]
-pub fn decode_serde_scalar<'a, T, F: ScalarFmt>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<T, Error>
+fn decode_serde_scalar<'a, T, F: ScalarFmt>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<T, Error>
 where
     T: Deserialize<'a>,
 {

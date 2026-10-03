@@ -87,8 +87,9 @@ impl BitmapLayout {
         }
     }
 
-    /// Check the layout, returning what is wrong with it. `bitmap_format!`
-    /// asserts this at compile time; the codecs assert it in debug builds.
+    /// Check the layout, returning what is wrong with it. `wire_type!` bitmap
+    /// records assert this at compile time; the codecs assert it in debug
+    /// builds.
     pub const fn validate(self) -> Result<(), &'static str> {
         if self.min_words == 0 || self.min_words > self.max_words || self.max_words > 3 {
             return Err("bitmap word counts must satisfy 1 <= min_words <= max_words <= 3");

@@ -34,16 +34,15 @@ and numeric adapters. This layer should not invent new byte algorithms; it
 should choose and compose primitives.
 
 `src/composite/` contains the field dispatch traits and composite formats:
-fields, lists, delimited records, bitmaps, BER-TLV sets, variants, ordered
-unions, and absent/filler wrappers. Composite code may route data
+fields, lists, frames, the record and enum code behind `wire_type!`, and
+absent and fixed-value wrappers. Composite code may route data
 between scalar formats and primitives, but byte-level conversion still belongs
 in `primitive`.
 
 Records are described by `#[wire(...)]` attributes on ordinary structs inside
 `wire_type!`, which makes each one its own format. The macro reads only those
 attributes and emits new items, so a derive could replace it without changing
-them. Every record states its layout. The older `*_format!` macros stay until
-`wire_type!` covers their layouts; both implement the same traits and nest.
+them. Every record states its layout.
 
 `src/bitmap.rs` frames presence bitmaps: word layouts and flags, with each
 word's representation a `Step`. It is the public home of `Bitmap`, whose bit
@@ -301,7 +300,7 @@ and the crate builds without serde.
 The general structural wire-format path is not serde-based. Serde concepts such
 as flattening and optional field handling do not map cleanly to bitmap-driven,
 delimiter-driven, fixed-layout, or variant wire formats. Those are represented
-by explicit field format implementations and macros. Serde attributes on a
+by explicit field formats and `wire_type!` attributes. Serde attributes on a
 value type describe its JSON form; they reach the wire only through an explicit
 `SerdeScalar<F>`, and never for enums: the adapter rejects them, because an
 enum's wire mapping is its own `ScalarEncode`/`ScalarDecode` implementation.

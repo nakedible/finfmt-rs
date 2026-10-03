@@ -1442,47 +1442,6 @@ mod tests {
         }
     }
 
-    // The same layout through the old macro, for comparison.
-    #[derive(Debug, Clone, PartialEq)]
-    struct OldRecord<'a> {
-        kind: &'a str,
-        inner: Inner,
-        name: String,
-        first: Option<u64>,
-        second: Option<Inner>,
-    }
-
-    crate::concat_format! {
-        struct OldRecordFmt for<'a> OldRecord<'a> {
-            kind: N4,
-            inner: Inner,
-            name: Var,
-            first: Option<N2>,
-            second: Option<Inner>,
-        }
-    }
-
-    // Each macro's record nests inside the other's.
-    #[derive(Debug, PartialEq)]
-    struct Outer {
-        record: Inner,
-    }
-
-    crate::concat_format! {
-        struct OuterFmt for Outer {
-            record: Inner,
-        }
-    }
-
-    crate::wire_type! {
-        #[derive(Debug, PartialEq)]
-        #[wire(concat)]
-        struct Wrapped {
-            #[wire(fmt = OuterFmt)]
-            outer: Outer,
-        }
-    }
-
     fn record(first: Option<u64>, second: Option<&str>) -> Record<'static> {
         Record {
             kind: "0100",
@@ -1494,22 +1453,14 @@ mod tests {
     }
 
     #[test]
-    fn concat_records_match_concat_format() {
+    fn concat_records_roundtrip_with_optional_tails() {
         for (first, second, wire) in [
             (None, None, &b"0100073ABC"[..]),
             (Some(15), None, b"0100073ABC15"),
             (Some(15), Some("42"), b"0100073ABC1542"),
         ] {
             let value = record(first, second);
-            let old = OldRecord {
-                kind: value.kind,
-                inner: value.inner.clone(),
-                name: value.name.clone(),
-                first: value.first,
-                second: value.second.clone(),
-            };
             assert_eq!(encode::<Record, _>(&value).as_deref(), Ok(wire));
-            assert_eq!(encode::<OldRecordFmt, _>(&old).as_deref(), Ok(wire));
             let mut scratch = [0; 64];
             let decoded: Record = crate::decode::<Record, _>(wire, &mut scratch).unwrap();
             assert_eq!(decoded, value);
@@ -1522,9 +1473,7 @@ mod tests {
         assert_eq!(gap.path(), &[PathSegment::Field("second")]);
         let mut scratch = [0; 64];
         let bad = crate::decode::<Record, Record>(b"0100X73ABC", &mut scratch).unwrap_err();
-        let mut scratch = [0; 64];
-        let old_bad = crate::decode::<OldRecordFmt, OldRecord>(b"0100X73ABC", &mut scratch).unwrap_err();
-        assert_eq!(bad, old_bad);
+        assert_eq!(bad.kind, Error::Invalid);
         assert_eq!(bad.path(), &[PathSegment::Field("inner"), PathSegment::Field("code")]);
     }
 
@@ -1544,25 +1493,8 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Clone, PartialEq)]
-    struct OldDelimited<'a> {
-        first: &'a str,
-        middle: Option<u64>,
-        inner: Inner,
-        last: Option<String>,
-    }
-
-    crate::delimited_format! {
-        struct OldDelimitedFmt for<'a> OldDelimited<'a>, b'|' {
-            first: Text,
-            middle: Option<N2>,
-            inner: Inner,
-            last: Option<Text>,
-        }
-    }
-
     #[test]
-    fn delimited_records_match_delimited_format() {
+    fn delimited_records_roundtrip_and_reject_bad_segments() {
         for (middle, last, wire) in [(None, None, &b"AB||07|"[..]), (Some(15), Some("X|Y"), b"AB|15|07|X|Y")] {
             let value = Delimited {
                 first: "AB",
@@ -1570,24 +1502,19 @@ mod tests {
                 inner: Inner { code: "07".into() },
                 last: last.map(Into::into),
             };
-            let old = OldDelimited {
-                first: "AB",
-                middle,
-                inner: value.inner.clone(),
-                last: value.last.clone(),
-            };
             assert_eq!(encode::<Delimited, _>(&value).as_deref(), Ok(wire));
-            assert_eq!(encode::<OldDelimitedFmt, _>(&old).as_deref(), Ok(wire));
             let mut scratch = [0; 64];
             assert_eq!(crate::decode::<Delimited, Delimited>(wire, &mut scratch), Ok(value));
         }
-        // Errors match, segment by segment.
-        for wire in [&b"AB|1"[..], b"AB|15|7X|", b"AB|15|07"] {
+        // A missing separator is the record's error; a bad segment is its field's.
+        for (wire, path) in [
+            (&b"AB|1"[..], &[][..]),
+            (b"AB|15|7X|", &[PathSegment::Field("inner"), PathSegment::Field("code")]),
+            (b"AB|15|07", &[]),
+        ] {
             let mut scratch = [0; 64];
-            let new = crate::decode::<Delimited, Delimited>(wire, &mut scratch).unwrap_err();
-            let mut scratch = [0; 64];
-            let old = crate::decode::<OldDelimitedFmt, OldDelimited>(wire, &mut scratch).unwrap_err();
-            assert_eq!(new, old);
+            let error = crate::decode::<Delimited, Delimited>(wire, &mut scratch).unwrap_err();
+            assert_eq!((error.kind, error.path()), (Error::Invalid, path));
         }
         // Only the last field may contain the separator.
         let inside = std::panic::catch_unwind(|| {
@@ -1623,26 +1550,8 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Clone, PartialEq)]
-    struct OldMessage<'a> {
-        mti: &'a str,
-        pan: Option<String>,
-        inner: Inner,
-        code: Option<u64>,
-    }
-
-    crate::bitmap_format! {
-        struct OldMessageFmt for<'a> OldMessage<'a>, <HexBitmap as crate::bitmap::BitmapFormat>::LAYOUT,
-            <HexBitmap as crate::bitmap::BitmapFormat>::Word {
-            head: { mti: N4, }
-            2 => pan: Option<Var>,
-            3 => inner: Inner,
-            70 => code: Option<N2>,
-        }
-    }
-
     #[test]
-    fn bitmap_records_match_bitmap_format() {
+    fn bitmap_records_roundtrip_and_reject_unknown_or_missing_fields() {
         for (pan, code) in [(None, None), (Some("4111"), Some(42))] {
             let value = Message {
                 mti: "0100",
@@ -1650,26 +1559,19 @@ mod tests {
                 inner: Inner { code: "07".into() },
                 code,
             };
-            let old = OldMessage {
-                mti: value.mti,
-                pan: value.pan.clone(),
-                inner: value.inner.clone(),
-                code,
-            };
             let wire = encode::<Message, _>(&value).unwrap();
-            assert_eq!(encode::<OldMessageFmt, _>(&old), Ok(wire.clone()));
             let mut scratch = [0; 64];
             assert_eq!(crate::decode::<Message, Message>(&wire, &mut scratch), Ok(value));
         }
         // Unknown and missing fields are rejected alike.
         // Field 4 is unknown; field 3 is required.
-        for wire in [&b"0100100000000000000007"[..], b"010040000000000000000"] {
+        for (wire, path) in [
+            (&b"0100100000000000000007"[..], &[][..]),
+            (b"010040000000000000000", &[PathSegment::Field("inner")]),
+        ] {
             let mut scratch = [0; 64];
-            let new = crate::decode::<Message, Message>(wire, &mut scratch).unwrap_err();
-            let mut scratch = [0; 64];
-            let old = crate::decode::<OldMessageFmt, OldMessage>(wire, &mut scratch).unwrap_err();
-            assert_eq!(new, old);
-            assert_eq!(new.kind, Error::Invalid);
+            let error = crate::decode::<Message, Message>(wire, &mut scratch).unwrap_err();
+            assert_eq!((error.kind, error.path()), (Error::Invalid, path));
         }
     }
 
@@ -1698,92 +1600,52 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Clone, PartialEq)]
-    struct OldEmv {
-        amount: String,
-        extras: std::collections::BTreeMap<String, String>,
-        currency: Option<String>,
-    }
-
-    crate::ber_tlv_format! {
-        struct OldEmvFmt for OldEmv {
-            extras: extras,
-            AMOUNT => amount: Hex4,
-            "5F2A" => currency: Option<Hex4>,
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
-    struct OldStrict<'a> {
-        amount: &'a str,
-        counter: Option<String>,
-    }
-
-    crate::ber_tlv_format! {
-        struct OldStrictFmt for<'a> OldStrict<'a>, allow_zero_padding = true {
-            "9F02" => amount: Field<Ascii<0, 8>, crate::Rest>,
-            "9F36" => counter: Option<Hex4>,
-        }
-    }
-
     #[test]
-    fn ber_tlv_records_match_ber_tlv_format() {
+    fn ber_tlv_records_roundtrip_extras_and_padding() {
         let mut extras = std::collections::BTreeMap::new();
         extras.insert("t9F03_unknown".to_owned(), "00".to_owned());
         let value = Emv {
             amount: "000000012345".into(),
-            extras: extras.clone(),
+            extras,
             currency: Some("0978".into()),
         };
-        let old = OldEmv {
-            amount: value.amount.clone(),
-            extras,
-            currency: value.currency.clone(),
-        };
-        // The old macro writes extras last; this record declares them second.
+        // Extras are written where the record declares them, and read in any order.
         let wire = encode::<Emv, _>(&value).unwrap();
         assert_eq!(wire, b"\x9F\x02\x06\x00\x00\x00\x01\x23\x45\x9F\x03\x01\x00\x5F\x2A\x02\x09\x78");
-        let old_wire = encode::<OldEmvFmt, _>(&old).unwrap();
         let mut scratch = [0; 128];
         assert_eq!(crate::decode::<Emv, Emv>(&wire, &mut scratch), Ok(value.clone()));
+        let extras_last = b"\x9F\x02\x06\x00\x00\x00\x01\x23\x45\x5F\x2A\x02\x09\x78\x9F\x03\x01\x00";
         let mut scratch = [0; 128];
-        assert_eq!(crate::decode::<Emv, Emv>(&old_wire, &mut scratch), Ok(value));
-        // Errors match: a repeated known tag, a missing required one, and an
-        // extras entry claiming a declared tag.
+        assert_eq!(crate::decode::<Emv, Emv>(extras_last, &mut scratch), Ok(value));
+        // A repeated known tag, a missing required one, and an extras entry
+        // claiming a declared tag are rejected.
         for wire in [&b"\x9F\x02\x01\x00\x9F\x02\x01\x00"[..], b"\x5F\x2A\x01\x00"] {
             let mut scratch = [0; 128];
-            let new = crate::decode::<Emv, Emv>(wire, &mut scratch).unwrap_err();
-            let mut scratch = [0; 128];
-            assert_eq!(Err(new), crate::decode::<OldEmvFmt, OldEmv>(wire, &mut scratch).map(|_| ()));
+            let error = crate::decode::<Emv, Emv>(wire, &mut scratch).unwrap_err();
+            assert_eq!((error.kind, error.path()), (Error::Invalid, &[PathSegment::Field("amount")][..]));
         }
         let mut claimed = std::collections::BTreeMap::new();
         claimed.insert("t5F2A_unknown".to_owned(), "00".to_owned());
         let value = Emv {
             amount: "00".into(),
-            extras: claimed.clone(),
-            currency: None,
-        };
-        let old = OldEmv {
-            amount: "00".into(),
             extras: claimed,
             currency: None,
         };
-        assert_eq!(encode::<Emv, _>(&value), encode::<OldEmvFmt, _>(&old));
+        let error = encode::<Emv, _>(&value).unwrap_err();
+        assert_eq!((error.kind, error.path()), (Error::Invalid, &[PathSegment::Field("extras")][..]));
 
         // Without extras, unknown tags are rejected; padding is allowed when asked for.
-        for wire in [
-            &b"\x00\x9F\x02\x02AB\x00\x9F\x36\x01\x07\x00"[..],
-            b"\x9F\x02\x02AB\x9F\x03\x01\x00",
-        ] {
-            let mut scratch = [0; 128];
-            let new = crate::decode::<Strict, Strict>(wire, &mut scratch);
-            let mut scratch = [0; 128];
-            let old = crate::decode::<OldStrictFmt, OldStrict>(wire, &mut scratch);
-            assert_eq!(
-                new.as_ref().map(|value| (value.amount, value.counter.clone())),
-                old.as_ref().map(|value| (value.amount, value.counter.clone()))
-            );
-        }
+        let mut scratch = [0; 128];
+        assert_eq!(
+            crate::decode::<Strict, Strict>(b"\x00\x9F\x02\x02AB\x00\x9F\x36\x01\x07\x00", &mut scratch),
+            Ok(Strict {
+                amount: "AB",
+                counter: Some("07".into())
+            })
+        );
+        let mut scratch = [0; 128];
+        let error = crate::decode::<Strict, Strict>(b"\x9F\x02\x02AB\x9F\x03\x01\x00", &mut scratch).unwrap_err();
+        assert_eq!((error.kind, error.path()), (Error::Invalid, &[][..]));
     }
 
     #[test]
@@ -1862,17 +1724,6 @@ mod tests {
         }
     }
 
-    // The same concat layout with the old macro's literals.
-    crate::concat_format! {
-        struct OldFixedFmt for Inner {
-            _: A1 = b"H",
-            code: N2,
-            _: Field<Ascii<2, 2>, Fixed<2>> = b"  ",
-            _: Padded = b"AB",
-            _: Field<Ascii<3, 3>, Fixed<3>> = b"...",
-        }
-    }
-
     #[test]
     fn fixed_fields_write_and_check_constants() {
         let value = Constants {
@@ -1881,10 +1732,6 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(encode::<Constants, _>(&value).as_deref(), Ok(&b"H42  AB  ...!"[..]));
-        assert_eq!(
-            encode::<OldFixedFmt, _>(&Inner { code: "42".into() }).as_deref(),
-            Ok(&b"H42  AB  ..."[..])
-        );
         let mut scratch = [0; 64];
         assert_eq!(crate::decode::<Constants, Constants>(b"H42  AB  ...!", &mut scratch), Ok(value));
         // A value is compared after decoding, so its format's leniency applies;
@@ -2093,20 +1940,6 @@ mod tests {
         }
     }
 
-    // The same concat fields as explicit `OptionAs` formats.
-    #[derive(Debug, Default, PartialEq)]
-    struct OldAbsent {
-        literal: Option<u64>,
-        custom: Option<u64>,
-    }
-
-    crate::concat_format! {
-        struct OldAbsentFmt for OldAbsent {
-            literal: crate::OptionAs<Amount, crate::AbsentBytes<crate::Fill<b' ', 6>>>,
-            custom: crate::OptionAs<Amount, crate::AbsentBytes<crate::Fill<b'*', 6>>>,
-        }
-    }
-
     #[test]
     fn absent_forms_map_option_onto_wire_patterns() {
         // Absent fields are always on the wire, so a later `Option` tail still works.
@@ -2152,10 +1985,10 @@ mod tests {
                 custom,
                 tail: None,
             };
-            let old = OldAbsent { literal, custom };
             let new_wire = encode::<Absent, _>(&new).unwrap();
-            let old_wire = encode::<OldAbsentFmt, _>(&old).unwrap();
-            assert_eq!((&new_wire[..6], &new_wire[24..30]), (&old_wire[..6], &old_wire[6..]));
+            let literal_wire = encode::<crate::OptionAs<Amount, crate::AbsentBytes<crate::Fill<b' ', 6>>>, _>(&literal).unwrap();
+            let custom_wire = encode::<crate::OptionAs<Amount, crate::AbsentBytes<crate::Fill<b'*', 6>>>, _>(&custom).unwrap();
+            assert_eq!((&new_wire[..6], &new_wire[24..30]), (&literal_wire[..], &custom_wire[..]));
         }
 
         // In the other layouts the field is required by its container.
@@ -2367,7 +2200,7 @@ mod tests {
             Request(Inner),
             /// A payload with its own format.
             #[wire(rename = "0110")]
-            Response(#[wire(fmt = ApprovalFmt)] Approval),
+            Response(#[wire(fmt = N2)] String),
             #[wire(rename = "0800")]
             Echo,
             #[wire(other)]
@@ -2390,31 +2223,6 @@ mod tests {
             mti: String,
             #[wire(bit = 3, select = mti)]
             body: Body,
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
-    struct Approval {
-        code: String,
-    }
-
-    crate::concat_format! {
-        struct ApprovalFmt for Approval {
-            code: N2,
-        }
-    }
-
-    // The same MTI dispatch with the old macro, the tag inside the enum.
-    #[derive(Debug, Clone, PartialEq)]
-    enum OldBody {
-        Request(Inner),
-        Response(Approval),
-    }
-
-    crate::tagged_format! {
-        struct OldBodyFmt for OldBody {
-            _: N4 = b"0100" => Request(Inner),
-            _: N4 = b"0110" => Response(ApprovalFmt),
         }
     }
 
@@ -2502,16 +2310,12 @@ mod tests {
         };
         let response = MtiMessage {
             mti: "0110",
-            body: Body::Response(Approval { code: "42".into() }),
+            body: Body::Response("42".into()),
         };
-        for (value, old) in [
-            (&request, OldBody::Request(Inner { code: "07".into() })),
-            (&response, OldBody::Response(Approval { code: "42".into() })),
-        ] {
-            let wire = encode::<MtiMessage, _>(value).unwrap();
-            assert_eq!(encode::<OldBodyFmt, _>(&old), Ok(wire.clone()));
+        for (value, wire) in [(&request, &b"010007"[..]), (&response, b"011042")] {
+            assert_eq!(encode::<MtiMessage, _>(value).as_deref(), Ok(wire));
             let mut scratch = [0; 64];
-            assert_eq!(crate::decode::<MtiMessage, MtiMessage>(&wire, &mut scratch).as_ref(), Ok(value));
+            assert_eq!(crate::decode::<MtiMessage, MtiMessage>(wire, &mut scratch).as_ref(), Ok(value));
         }
         // A unit variant has no body; `other` takes any other key's body.
         for (value, wire) in [
@@ -2562,7 +2366,7 @@ mod tests {
 
         let value = BitmapMessage {
             mti: "0110".into(),
-            body: Body::Response(Approval { code: "42".into() }),
+            body: Body::Response("42".into()),
         };
         let wire = encode::<BitmapMessage, _>(&value).unwrap();
         assert_eq!(wire, b"0110200000000000000042");
@@ -2571,15 +2375,7 @@ mod tests {
     }
 
     #[test]
-    fn records_nest_across_macros_and_keep_other_attributes() {
-        let value = Wrapped {
-            outer: Outer {
-                record: Inner { code: "12".into() },
-            },
-        };
-        assert_eq!(encode::<Wrapped, _>(&value).as_deref(), Ok(&b"12"[..]));
-        let mut scratch = [0; 8];
-        assert_eq!(crate::decode::<Wrapped, Wrapped>(b"12", &mut scratch), Ok(value));
+    fn records_keep_other_attributes() {
         // Serde attributes stay on the struct; `#[wire]` ones are gone.
         let json = serde_json::to_string(&record(None, None)).unwrap();
         assert!(json.starts_with(r#"{"type":"0100","inner":{"code":"07"}"#), "{json}");
