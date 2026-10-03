@@ -96,9 +96,12 @@
 ///   `#[wire(other)]` variant holding a value takes any other key's body;
 ///   without it, an unknown key is `Invalid`. Encoding writes only the
 ///   variant's body, so the key field must agree with the variant; nothing
-///   checks it. The enum implements [`FieldEncode`](crate::FieldEncode) and
+///   checks it; `wire_name()` gives a variant's name for setting the key,
+///   `None` for `other`. The enum implements
+///   [`FieldEncode`](crate::FieldEncode) and
 ///   [`ContextDecode<'de, Self, str>`](crate::ContextDecode), whose context is
-///   the key.
+///   the key, so a `Frame` around it passes the key through too:
+///   `#[wire(select = kind, fmt = Frame<AsciiLength<3>, Body>)]`.
 ///
 /// ```
 /// use finfmt::{Field, Fixed, Numeric};
@@ -478,6 +481,17 @@ macro_rules! __finfmt_wire_enum {
         ]) {
             panic!("{}", message);
         };
+
+        impl $(<$lt>)? $name $(<$lt>)? {
+            /// The variant's wire name, the key that selects it; `None` for
+            /// the `other` variant, whose key is not kept.
+            #[allow(dead_code)]
+            pub fn wire_name(&self) -> Option<&'static str> {
+                match self {
+                    $($name::$variant { .. } => $crate::__finfmt_wire_variant! { {@selected_name} $variant [$(($fmt) $bind)?]; [] [] []; $args },)*
+                }
+            }
+        }
 
         impl $(<$lt>)? $crate::composite::FieldEncode<$name $(<$lt>)?> for $name $(<$lt>)? {
             #[inline(always)]
@@ -2143,6 +2157,50 @@ mod tests {
             let error = crate::decode::<Codes, Codes>(wire, &mut scratch).unwrap_err();
             assert_eq!((error.kind, error.path()), (Error::Invalid, &[PathSegment::Field(field)][..]));
         }
+    }
+
+    crate::wire_type! {
+        #[derive(Debug, Clone, PartialEq)]
+        #[wire(concat)]
+        struct FramedMessage {
+            #[wire(fmt = N4)]
+            mti: String,
+            #[wire(select = mti, fmt = crate::Frame<AsciiLength<2>, Body>)]
+            body: Body,
+        }
+    }
+
+    #[test]
+    fn selected_bodies_pass_through_frames_and_name_their_key() {
+        for (value, wire) in [
+            (
+                FramedMessage {
+                    mti: "0100".into(),
+                    body: Body::Request(Inner { code: "07".into() }),
+                },
+                &b"01000207"[..],
+            ),
+            (
+                FramedMessage {
+                    mti: "0420".into(),
+                    body: Body::Unknown("ABC".into()),
+                },
+                b"042003ABC",
+            ),
+        ] {
+            assert_eq!(encode::<FramedMessage, _>(&value).as_deref(), Ok(wire));
+            let mut scratch = [0; 64];
+            assert_eq!(crate::decode::<FramedMessage, FramedMessage>(wire, &mut scratch), Ok(value));
+        }
+        // The frame bounds the body: one longer than its variant is invalid.
+        let mut scratch = [0; 64];
+        assert_eq!(
+            crate::decode::<FramedMessage, FramedMessage>(b"0100030712", &mut scratch).map_err(|error| error.kind),
+            Err(Error::Invalid)
+        );
+        assert_eq!(Body::Echo.wire_name(), Some("0800"));
+        assert_eq!(Body::Request(Inner { code: "07".into() }).wire_name(), Some("0100"));
+        assert_eq!(Body::Unknown("X".into()).wire_name(), None);
     }
 
     #[test]

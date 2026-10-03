@@ -198,11 +198,10 @@ impl NibssMessage {
     /// A message whose MTI matches its body. Used by the tests and the bench.
     #[allow(dead_code)]
     pub fn new(body: NibssBody) -> Self {
-        let mti = match body {
-            NibssBody::AuthorizationRequest0100(_) => "0100",
-            NibssBody::AuthorizationResponse0110(_) => "0110",
-        };
-        Self { mti: mti.into(), body }
+        Self {
+            mti: body.wire_name().unwrap_or_default().into(),
+            body,
+        }
     }
 }
 
