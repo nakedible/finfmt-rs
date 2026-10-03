@@ -149,7 +149,8 @@ impl<First: Step, Rest: Step> Step for Chain<First, Rest> {
     const ENCODE_IN_PLACE: bool = First::ENCODE_IN_PLACE && Rest::ENCODE_IN_PLACE;
     const ENCODE_APPENDING: bool = First::ENCODE_APPENDING && Rest::ENCODE_APPENDING;
     const ENCODE_UNCHANGED: bool = First::ENCODE_UNCHANGED && Rest::ENCODE_UNCHANGED;
-    const INPUT_IN_CHARS: bool = First::INPUT_IN_CHARS;
+    // A step copying its input unchanged passes the characters on.
+    const INPUT_IN_CHARS: bool = First::INPUT_IN_CHARS || (First::ENCODE_UNCHANGED && Rest::INPUT_IN_CHARS);
     const HAS_COUNT: bool = {
         assert!(!(First::HAS_COUNT && Rest::HAS_COUNT), "a step chain has at most one Count marker");
         First::HAS_COUNT || Rest::HAS_COUNT
@@ -324,6 +325,16 @@ mod tests {
         encode_without_scratch::<Field<Binary<0, 2>, Fixed<5>, crate::chain!(UnpackNibbles<UpperHexDigits>, PadRight<5, b'0'>)>>(
             b"\x0A", b"0A000",
         );
+    }
+
+    #[test]
+    fn character_counting_shows_through_unchanged_steps() {
+        use crate::{Ebcdic1142, Identity, UnpackNibbles, chain};
+        const {
+            assert!(<chain!(Count, Ebcdic1142)>::INPUT_IN_CHARS);
+            assert!(<chain!(Identity, Count, Ebcdic1142)>::INPUT_IN_CHARS);
+            assert!(!<chain!(UnpackNibbles<crate::primitive::nibble::UpperHexDigits>, Ebcdic1142)>::INPUT_IN_CHARS);
+        }
     }
 
     #[test]
