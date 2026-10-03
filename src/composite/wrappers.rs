@@ -38,21 +38,47 @@ where
 
     #[inline(always)]
     fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<T, CompositeError> {
-        let mut rest = *input;
-        let body = decode_framed::<L, Steps>(&mut rest, scratch)?;
-        if body.len() < MIN || body.len() > MAX {
-            cold_path();
-            return Err(Error::Invalid.into());
-        }
-        let mut body_input = body;
-        let value = Inner::decode_field(&mut body_input, scratch)?;
-        if !body_input.is_empty() {
-            cold_path();
-            return Err(Error::Invalid.into());
-        }
-        *input = rest;
-        Ok(value)
+        decode_frame::<L, Steps, MIN, MAX, T>(input, scratch, Inner::decode_field)
     }
+}
+
+/// A framed body decoded with a context, such as a selected enum's key from a
+/// field outside the frame.
+impl<'de, T, C, L, Inner, Steps, const MIN: usize, const MAX: usize> ContextDecode<'de, T, C> for Frame<L, Inner, Steps, MIN, MAX>
+where
+    C: ?Sized,
+    L: LengthSpec,
+    Inner: ContextDecode<'de, T, C>,
+    Steps: Step,
+{
+    #[inline(always)]
+    fn decode_with(input: &mut &'de [u8], scratch: &mut &'de mut [u8], context: &C) -> Result<T, CompositeError> {
+        decode_frame::<L, Steps, MIN, MAX, T>(input, scratch, |body, scratch| Inner::decode_with(body, scratch, context))
+    }
+}
+
+/// Take a frame's body and decode all of it with `decode`. Input advances
+/// only on success.
+#[inline(always)]
+fn decode_frame<'de, L: LengthSpec, Steps: Step, const MIN: usize, const MAX: usize, T>(
+    input: &mut &'de [u8],
+    scratch: &mut &'de mut [u8],
+    decode: impl FnOnce(&mut &'de [u8], &mut &'de mut [u8]) -> Result<T, CompositeError>,
+) -> Result<T, CompositeError> {
+    let mut rest = *input;
+    let body = decode_framed::<L, Steps>(&mut rest, scratch)?;
+    if body.len() < MIN || body.len() > MAX {
+        cold_path();
+        return Err(Error::Invalid.into());
+    }
+    let mut body_input = body;
+    let value = decode(&mut body_input, scratch)?;
+    if !body_input.is_empty() {
+        cold_path();
+        return Err(Error::Invalid.into());
+    }
+    *input = rest;
+    Ok(value)
 }
 
 mod trailing_sealed {
