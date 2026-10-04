@@ -266,8 +266,12 @@ pub struct FixedAreaList<Len, Inner, Absent, const WIDTH: usize, const MAX: usiz
 pub struct Separator<const BYTE: u8>;
 
 mod bertlv;
+mod tlv;
 #[doc(hidden)]
 pub use bertlv::decode_ber_tlv_collection_entry;
+pub use tlv::TlvExtras;
+#[doc(hidden)]
+pub use tlv::{MAX_TLV_TAG, decode_tlv_field, decode_tlv_tag, decode_tlv_value, encode_tlv_field};
 #[cfg(feature = "serde")]
 mod bertlv_serde;
 mod repeated;
@@ -2499,6 +2503,37 @@ pub const fn check_ber_tags(tags: &[Option<&str>]) -> Result<(), &'static str> {
                         && const_bytes_eq(tag.as_bytes(), other.as_bytes())
                     {
                         return Err("duplicate declared BER tag");
+                    }
+                    others = after;
+                }
+            }
+        }
+        rest = later;
+    }
+    Ok(())
+}
+
+/// Check a TLV record's declared tags, `None` for its extras field: no tag may
+/// repeat, and there is at most one extras field. `wire_type!` evaluates this
+/// at compile time and reports the message.
+#[doc(hidden)]
+pub const fn check_tlv_tags(tags: &[Option<&str>]) -> Result<(), &'static str> {
+    let mut extras = false;
+    let mut rest = tags;
+    while let [tag, later @ ..] = rest {
+        match *tag {
+            None if extras => return Err("a TLV record has at most one extras field"),
+            None => extras = true,
+            Some(tag) => {
+                if tag.len() > MAX_TLV_TAG {
+                    return Err("a TLV tag is at most 16 bytes");
+                }
+                let mut others = later;
+                while let [other, after @ ..] = others {
+                    if let Some(other) = *other
+                        && const_bytes_eq(tag.as_bytes(), other.as_bytes())
+                    {
+                        return Err("duplicate declared TLV tag");
                     }
                     others = after;
                 }
