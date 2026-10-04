@@ -4,6 +4,7 @@
 pub mod asm;
 pub mod bitmap;
 pub mod composite;
+pub mod extras;
 pub mod field;
 pub mod primitive;
 mod scalarfmt;
