@@ -11,16 +11,21 @@ use crate::utils::cold_path;
 #[doc(hidden)]
 pub const MAX_TLV_TAG: usize = 16;
 
-/// The unknown entries of a TLV record, collected by its `extras` field: the
-/// tag's text as the key, and the value read by the field's `fmt`.
+/// Entries of a TLV list, or the unknown entries of a TLV record collected
+/// by its `extras` field: the tag's text as the key, and the value read by
+/// the value format.
 ///
-/// Implemented for collections of `(key, value)` pairs, such as a
-/// `BTreeMap<String, String>`, which keeps the last value of a repeated tag.
-pub trait TlvExtras<V> {
+/// Implemented for collections of `(key, value)` pairs: a
+/// `Vec<(String, String)>` keeps every entry in order, while a
+/// `BTreeMap<String, String>` keeps the last value of a repeated tag.
+pub trait TlvExtras {
+    /// The value of each entry.
+    type Value;
+
     /// Encode the entries, each tag through `T` and value through `F`,
-    /// rejecting tags in `known_tags`, the record's declared tags, even if
+    /// rejecting tags in `known_tags`, a record's declared tags, even if
     /// their fields are absent.
-    fn encode_unknowns<T: ScalarFmt, F: FieldEncode<V>>(
+    fn encode_unknowns<T: ScalarFmt, F: FieldEncode<Self::Value>>(
         &self,
         output: &mut &mut [u8],
         scratch: &mut [u8],
@@ -28,7 +33,7 @@ pub trait TlvExtras<V> {
     ) -> Result<(), CompositeError>;
 
     /// Decode the value of an entry whose tag is not declared, through `F`.
-    fn decode_unknown<'de, F: FieldDecode<'de, V>>(
+    fn decode_unknown<'de, F: FieldDecode<'de, Self::Value>>(
         &mut self,
         tag: &[u8],
         input: &mut &'de [u8],
@@ -36,12 +41,35 @@ pub trait TlvExtras<V> {
     ) -> Result<(), CompositeError>;
 }
 
-impl<C, K, V> TlvExtras<V> for C
+/// An entry borrowed from a collection: `(&K, &V)` from a map, `&(K, V)`
+/// from a sequence of pairs.
+#[doc(hidden)]
+pub trait TlvEntry<'a, K: 'a, V: 'a> {
+    fn parts(self) -> (&'a K, &'a V);
+}
+
+impl<'a, K, V> TlvEntry<'a, K, V> for (&'a K, &'a V) {
+    #[inline(always)]
+    fn parts(self) -> (&'a K, &'a V) {
+        self
+    }
+}
+
+impl<'a, K, V> TlvEntry<'a, K, V> for &'a (K, V) {
+    #[inline(always)]
+    fn parts(self) -> (&'a K, &'a V) {
+        (&self.0, &self.1)
+    }
+}
+
+impl<C, K, V> TlvExtras for C
 where
-    C: Extend<(K, V)>,
-    for<'a> &'a C: IntoIterator<Item = (&'a K, &'a V)>,
+    C: IntoIterator<Item = (K, V)> + Extend<(K, V)>,
+    for<'a> &'a C: IntoIterator<Item: TlvEntry<'a, K, V>>,
     K: AsRef<str> + FromStr,
 {
+    type Value = V;
+
     #[inline(always)]
     fn encode_unknowns<T: ScalarFmt, F: FieldEncode<V>>(
         &self,
@@ -49,7 +77,8 @@ where
         scratch: &mut [u8],
         known_tags: &[&str],
     ) -> Result<(), CompositeError> {
-        for (key, value) in self {
+        for entry in self {
+            let (key, value) = entry.parts();
             let key = key.as_ref();
             if known_tags.contains(&key) {
                 cold_path();
@@ -79,6 +108,86 @@ where
         self.extend(core::iter::once((key, value)));
         Ok(())
     }
+}
+
+/// Bytes a [`TlvList`] skips before, between and after entries.
+pub trait TlvPadding {
+    /// The padding bytes; empty for none.
+    const BYTES: &'static [u8];
+}
+
+/// No padding between TLV entries.
+pub struct NoPadding;
+
+impl TlvPadding for NoPadding {
+    const BYTES: &'static [u8] = &[];
+}
+
+/// Padding of `BYTE` before, between and after TLV entries, such as `00` in
+/// BER-TLV. Decoding skips it; encoding never writes it.
+pub struct PaddingByte<const BYTE: u8>;
+
+impl<const BYTE: u8> TlvPadding for PaddingByte<BYTE> {
+    const BYTES: &'static [u8] = &[BYTE];
+}
+
+/// A list of tag-length-value entries that all share one value format, into
+/// any [`TlvExtras`] collection: what a `tlv` record with only an `extras`
+/// field reads, without declared tags. Each tag is written by the scalar
+/// format `T`, which must read a tag of a known width, and each value by `F`,
+/// which carries its own length; `P` is the [`TlvPadding`].
+///
+/// BER-TLV with hex values, keeping every entry in order:
+///
+/// ```
+/// use finfmt::primitive::nibble::UpperHexDigits;
+/// use finfmt::{BerLength, BerTag, Field, PackNibbles, PaddingByte, TlvList, UpperHexEven};
+///
+/// type BerHex = Field<UpperHexEven<0, 512>, BerLength, PackNibbles<UpperHexDigits>>;
+/// type Emv = TlvList<BerTag, BerHex, PaddingByte<0x00>>;
+///
+/// let mut scratch = [0; 64];
+/// let entries: Vec<(String, String)> = finfmt::decode::<Emv, _>(b"\x9F\x02\x02\x12\x34\x00\x5A\x00", &mut scratch).unwrap();
+/// assert_eq!(entries, [("9F02".into(), "1234".into()), ("5A".into(), "".into())]);
+/// ```
+pub struct TlvList<T, F, P = NoPadding>(PhantomData<(T, F, P)>);
+
+impl<C: TlvExtras, T: ScalarFmt, F: FieldEncode<C::Value>, P> FieldEncode<C> for TlvList<T, F, P> {
+    #[inline(always)]
+    fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &C) -> Result<(), CompositeError> {
+        value.encode_unknowns::<T, F>(output, scratch, &[])
+    }
+}
+
+impl<'de, C: TlvExtras + Default, T: ScalarFmt, F: FieldDecode<'de, C::Value>, P: TlvPadding> FieldDecode<'de, C> for TlvList<T, F, P> {
+    // Entries are read until the input ends.
+    const TAKES_REST: bool = true;
+
+    #[inline(always)]
+    fn decode_field(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<C, CompositeError> {
+        let mut entries = C::default();
+        skip_tlv_padding(input, P::BYTES);
+        while !input.is_empty() {
+            decode_tlv_unknown::<T, F, C>(input, scratch, &mut entries)?;
+            skip_tlv_padding(input, P::BYTES);
+        }
+        Ok(entries)
+    }
+}
+
+/// Decode an entry no declared tag matched into `entries`: its tag through
+/// `T`, kept only as text, so its scratch is not kept, and its value through
+/// `F`.
+#[doc(hidden)]
+#[inline(always)]
+pub fn decode_tlv_unknown<'de, T: ScalarFmt, F: FieldDecode<'de, C::Value>, C: TlvExtras>(
+    input: &mut &'de [u8],
+    scratch: &mut &'de mut [u8],
+    entries: &mut C,
+) -> Result<(), CompositeError> {
+    let mut tag = [0; MAX_TLV_TAG];
+    let tag = decode_tlv_tag::<T>(input, scratch, &mut tag)?;
+    entries.decode_unknown::<F>(tag, input, scratch)
 }
 
 /// Write a declared field's tag through `T`.
@@ -168,9 +277,8 @@ pub fn skip_tlv_padding(input: &mut &[u8], padding: &[u8]) {
 
 /// Read the next entry's tag through `T` into `buf`, for an entry no declared
 /// tag matched. The tag is only kept as text, so its scratch is not kept.
-#[doc(hidden)]
 #[inline(always)]
-pub fn decode_tlv_tag<'b, T: ScalarFmt>(input: &mut &[u8], scratch: &mut [u8], buf: &'b mut [u8; MAX_TLV_TAG]) -> Result<&'b [u8], Error> {
+fn decode_tlv_tag<'b, T: ScalarFmt>(input: &mut &[u8], scratch: &mut [u8], buf: &'b mut [u8; MAX_TLV_TAG]) -> Result<&'b [u8], Error> {
     let source = *input;
     let mut rest = source;
     let mut workspace = scratch;
@@ -207,4 +315,105 @@ where
     }
     *field_value = Some(decode_value(input, scratch).map_err(|error| wrap_composite_error(error, field))?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::string::String;
+    use std::vec::Vec;
+
+    use super::*;
+    use crate::primitive::nibble::UpperHexDigits;
+    use crate::{BerLength, BerTag, Field, PackNibbles, UpperHexEven};
+
+    type BerHex = Field<UpperHexEven<0, 64>, BerLength, PackNibbles<UpperHexDigits>>;
+    type Ber = TlvList<BerTag, BerHex>;
+    type PaddedBer = TlvList<BerTag, BerHex, PaddingByte<0x00>>;
+    type Pairs = Vec<(String, String)>;
+    type Map = BTreeMap<String, String>;
+
+    fn pairs(entries: &[(&str, &str)]) -> Pairs {
+        entries.iter().map(|&(tag, value)| (tag.into(), value.into())).collect()
+    }
+
+    fn encode<F: FieldEncode<C>, C>(value: &C) -> Result<Vec<u8>, Error> {
+        let mut output = [0; 64];
+        crate::encode::<F, C>(&mut output, &mut [0; 64], value)
+            .map(|used| output[..used].to_vec())
+            .map_err(|error| error.kind)
+    }
+
+    fn decode<'a, F: FieldDecode<'a, C>, C>(wire: &'a [u8], scratch: &'a mut [u8]) -> Result<C, Error> {
+        F::decode_field(&mut &*wire, &mut &mut *scratch).map_err(|error| error.kind)
+    }
+
+    #[test]
+    fn lists_keep_order_and_repeats_in_a_sequence_and_the_last_in_a_map() {
+        let entries = pairs(&[("59", "ABCD"), ("9F02", "1234"), ("59", "00FF")]);
+        let wire = b"\x59\x02\xAB\xCD\x9F\x02\x02\x12\x34\x59\x02\x00\xFF";
+        assert_eq!(encode::<Ber, _>(&entries).as_deref(), Ok(&wire[..]));
+        assert_eq!(decode::<Ber, Pairs>(wire, &mut [0; 64]), Ok(entries));
+        let map = Map::from([("59".into(), "00FF".into()), ("9F02".into(), "1234".into())]);
+        assert_eq!(decode::<Ber, Map>(wire, &mut [0; 64]), Ok(map.clone()));
+        assert_eq!(encode::<Ber, _>(&map).as_deref(), Ok(&b"\x59\x02\x00\xFF\x9F\x02\x02\x12\x34"[..]));
+        assert_eq!(decode::<Ber, Pairs>(b"", &mut []), Ok(Pairs::new()));
+        // Each value's text stays in scratch, as values may borrow it; tags do not.
+        assert!(decode::<Ber, Pairs>(wire, &mut [0; 12]).is_ok());
+        assert_eq!(decode::<Ber, Pairs>(wire, &mut [0; 11]), Err(Error::BufferOverflow));
+        assert_eq!(encode::<Ber, _>(&pairs(&[("bad", "12")])), Err(Error::Invalid));
+        assert_eq!(encode::<Ber, _>(&pairs(&[("9F02", "12fg")])), Err(Error::Invalid));
+    }
+
+    #[test]
+    fn padding_is_opt_in_skipped_around_entries_and_never_written() {
+        let wire = b"\0\x59\x02\0\xFF\0\0\xFF\x01\0\0";
+        let entries = pairs(&[("59", "00FF"), ("FF01", "")]);
+        assert_eq!(decode::<PaddedBer, Pairs>(wire, &mut [0; 64]), Ok(entries.clone()));
+        assert_eq!(decode::<Ber, Pairs>(wire, &mut [0; 64]), Err(Error::Invalid));
+        assert_eq!(encode::<PaddedBer, _>(&entries).as_deref(), Ok(&b"\x59\x02\0\xFF\xFF\x01\0"[..]));
+        assert_eq!(decode::<PaddedBer, Pairs>(b"\0\0", &mut []), Ok(Pairs::new()));
+        for (wire, error) in [
+            (&b"\0\x59\x02\0"[..], Error::UnexpectedEof),
+            (b"\0\x59\x80\0", Error::Invalid),
+            (b"\0\xFF", Error::UnexpectedEof),
+        ] {
+            assert_eq!(decode::<PaddedBer, Pairs>(wire, &mut [0; 64]), Err(error));
+        }
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use std::string::String;
+    use std::vec::Vec;
+
+    use proptest::prelude::*;
+
+    use super::*;
+    use crate::primitive::nibble::UpperHexDigits;
+    use crate::{BerLength, BerTag, Field, PackNibbles, UpperHexEven};
+
+    type BerHex = Field<UpperHexEven<0, 64>, BerLength, PackNibbles<UpperHexDigits>>;
+    type Ber = TlvList<BerTag, BerHex>;
+    type PaddedBer = TlvList<BerTag, BerHex, PaddingByte<0x00>>;
+
+    proptest! {
+        #[test]
+        fn padding_is_skipped_only_at_entry_boundaries(bytes in prop::collection::vec(any::<u8>(), 0..32), padding in prop::array::uniform3(0usize..8)) {
+            let mut wire = vec![0; padding[0]];
+            wire.extend_from_slice(&[0x59, bytes.len() as u8]);
+            wire.extend_from_slice(&bytes);
+            wire.extend(std::iter::repeat_n(0, padding[1]));
+            wire.extend_from_slice(&[0x59, 0]);
+            wire.extend(std::iter::repeat_n(0, padding[2]));
+            let hex: String = bytes.iter().map(|byte| format!("{byte:02X}")).collect();
+            let expected: Vec<(String, String)> = vec![("59".into(), hex), ("59".into(), "".into())];
+            let (mut input, mut scratch) = (wire.as_slice(), [0; 128]);
+            prop_assert_eq!(PaddedBer::decode_field(&mut input, &mut &mut scratch[..]).map_err(|error| error.kind), Ok(expected.clone()));
+            prop_assert!(input.is_empty());
+            let strict = Ber::decode_field(&mut wire.as_slice(), &mut &mut scratch[..]).map_err(|error| error.kind);
+            prop_assert_eq!(strict, if padding == [0; 3] { Ok(expected) } else { Err(Error::Invalid) });
+        }
+    }
 }

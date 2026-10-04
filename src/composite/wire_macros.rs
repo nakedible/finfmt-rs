@@ -39,7 +39,9 @@
 ///   and overlapping ones are ordered by the user. A binary tag uses a format
 ///   that shows it as hex. Unknown tags are rejected unless the record has an
 ///   `extras` field, whose tag format `T` must then read a tag of a known
-///   width, such as `Field<Alphanum<2, 2>, Fixed<2>>`.
+///   width, such as `Field<Alphanum<2, 2>, Fixed<2>>`. Entries that all
+///   share one value format, with no declared tags, are a
+///   [`TlvList`](crate::TlvList), read the same way as `extras`.
 ///
 ///   BER-TLV is `#[wire(tlv(tag = BerTag))]` with values framed by
 ///   [`BerLength`](crate::BerLength): `Frame<BerLength, Record>`, or
@@ -97,7 +99,8 @@
 ///   tags. `fmt` reads every unknown tag's value, and the key is the tag's
 ///   text: `#[wire(extras, fmt = Field<Ascii<0, 99>, AsciiLength<2>>)]` on a
 ///   `BTreeMap<String, String>`, which keeps the last value of a repeated
-///   tag. At most one; it takes no `tag` and is written at its declared
+///   tag, or a `Vec<(String, String)>`, which keeps every entry in order;
+///   see [`TlvExtras`](crate::TlvExtras). At most one; it takes no `tag` and is written at its declared
 ///   position. Encoding rejects an entry that claims a declared tag, even one
 ///   whose field is absent. For serde, [`unknown_tag_keys`](crate::extras::unknown_tag_keys)
 ///   flattens the entries beside the named fields as `t9F03_unknown` keys.
@@ -1506,10 +1509,7 @@ macro_rules! __finfmt_wire_tlv {
 
     (@unknown $input:ident, $scratch:ident, $matched:ident, ($tagfmt:ty); $kind:ident $field:ident ($fmt:ty) $bit:tt [] [extras ($vfmt:ty)] $($slots:tt)*) => {
         if !$matched {
-            let mut tag = [0; $crate::composite::MAX_TLV_TAG];
-            let tag = $crate::composite::decode_tlv_tag::<$tagfmt>($input, &mut **$scratch, &mut tag)
-                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
-            $crate::composite::TlvExtras::decode_unknown::<$vfmt>(&mut $field, tag, $input, $scratch)
+            $crate::composite::decode_tlv_unknown::<$tagfmt, $vfmt, _>($input, $scratch, &mut $field)
                 .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
             $matched = true;
         }

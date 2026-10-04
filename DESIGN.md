@@ -292,10 +292,10 @@ success.
 ## Serde Boundary
 
 Serde is an optional feature, on by default, and its support is isolated in
-files with `_serde` in the name. It serves Rust/JSON ergonomics, the explicit
-`SerdeScalar<F>` field adapter, and structural BER-TLV list/map decoding
-(`BerTlvList`). Nothing else requires it: field dispatch uses the value traits,
-and the crate builds without serde.
+files with `_serde` in the name, plus the optional `extras` helpers. It serves
+Rust/JSON ergonomics and the explicit `SerdeScalar<F>` field adapter. Nothing
+else requires it: field dispatch uses the value traits, TLV lists and extras
+use plain collection traits, and the crate builds without serde.
 
 The general structural wire-format path is not serde-based. Serde concepts such
 as flattening and optional field handling do not map cleanly to bitmap-driven,

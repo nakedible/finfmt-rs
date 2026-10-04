@@ -211,19 +211,6 @@ pub struct TrailingField<Absent, const WIDTH: usize, Rest = NoTrailingFields>(Ph
 pub struct NoTrailingFields;
 /// Encode nothing, and decode the value's `Default`.
 pub struct Empty;
-/// Structural BER-TLV representation as a Serde map or sequence of
-/// `(tag, value)` pairs. Tags and values are uppercase hex, such as `"9F02"` and
-/// `"000000012345"`; an empty value is `""`.
-///
-/// Order and duplicates are preserved if the chosen collection type preserves
-/// them: a sequence keeps every entry, while a std map keeps the last value of a
-/// repeated tag. To catch repeats, decode into a sequence or into a map type
-/// that rejects duplicate keys, such as `serde_with`'s `MapPreventDuplicates`.
-/// Decoding is strict by default. Set `ALLOW_ZERO_PADDING` to accept `00`
-/// bytes before, between and after entries. Values are never trimmed, and
-/// encoding never emits padding.
-#[cfg(feature = "serde")]
-pub struct BerTlvList<const ALLOW_ZERO_PADDING: bool = false>;
 /// A list of `MIN` to `MAX` items, whose length `L` counts items: a prefix
 /// such as [`crate::AsciiLength`], or [`crate::Fixed`], states the item count,
 /// and [`crate::Rest`] takes the rest of the input. A list with a byte length
@@ -263,14 +250,10 @@ pub struct OptionAs<Inner, Absent>(PhantomData<(Inner, Absent)>);
 pub struct FixedAreaList<Len, Inner, Absent, const WIDTH: usize, const MAX: usize>(PhantomData<(Len, Inner, Absent)>);
 pub struct Separator<const BYTE: u8>;
 
-#[cfg(feature = "serde")]
-mod bertlv;
 mod tlv;
-pub use tlv::TlvExtras;
 #[doc(hidden)]
-pub use tlv::{MAX_TLV_TAG, TlvTag, decode_tlv_field, decode_tlv_tag, encode_tlv_tag, skip_tlv_padding};
-#[cfg(feature = "serde")]
-mod bertlv_serde;
+pub use tlv::{MAX_TLV_TAG, TlvEntry, TlvTag, decode_tlv_field, decode_tlv_unknown, encode_tlv_tag, skip_tlv_padding};
+pub use tlv::{NoPadding, PaddingByte, TlvExtras, TlvList, TlvPadding};
 mod repeated;
 mod scalar;
 #[cfg(feature = "serde")]
@@ -2234,109 +2217,6 @@ mod tests {
         let mut out_ptr = output.as_mut_slice();
         assert_eq!(
             error_kind(TlvWithExtras::encode_field(&mut out_ptr, scratch.as_mut_slice(), &invalid_value)),
-            Err(Error::Invalid)
-        );
-    }
-
-    #[test]
-    fn test_ber_tlv_list_roundtrip_preserves_order_and_duplicates() {
-        type TlvListFmt = BerTlvList;
-
-        let value = vec![
-            ("59".to_owned(), "ABCD".to_owned()),
-            ("9F02".to_owned(), "1234".to_owned()),
-            ("59".to_owned(), "00FF".to_owned()),
-        ];
-        let mut output = [0u8; 64];
-        let mut scratch = [0u8; 64];
-        let used = {
-            let total = output.len();
-            let mut out = output.as_mut_slice();
-            TlvListFmt::encode_field(&mut out, scratch.as_mut_slice(), &value).map(|_| total - out.len())
-        }
-        .unwrap();
-
-        let mut input = &output[..used];
-        let decoded: Vec<(String, String)> = TlvListFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap();
-        assert_eq!(decoded, value);
-        assert!(input.is_empty());
-    }
-
-    #[test]
-    fn ber_tlv_list_text_reuses_decode_scratch_per_entry() {
-        // Ten entries need 120 bytes of tag and hex text in total, but each is
-        // parsed into an owned value before the next, so one entry's worth is enough.
-        let wire: Vec<u8> = (0..10u8).flat_map(|i| [0x9F, i + 1, 0x04, 0xDE, 0xAD, 0xBE, 0xEF]).collect();
-        let mut scratch = [0u8; 21];
-        let list =
-            <BerTlvList as FieldDecode<'_, Vec<(String, String)>>>::decode_field(&mut wire.as_slice(), &mut &mut scratch[..]).unwrap();
-        assert_eq!(list.len(), 10);
-        let map =
-            <BerTlvList as FieldDecode<'_, BTreeMap<String, String>>>::decode_field(&mut wire.as_slice(), &mut &mut scratch[..]).unwrap();
-        assert_eq!(map.len(), 10);
-    }
-
-    #[test]
-    fn test_ber_tlv_list_supports_map_and_newtype_wrappers() {
-        #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-        #[serde(transparent)]
-        struct TlvSeqWrapper(Vec<(String, String)>);
-
-        type TlvMapFmt = BerTlvList;
-        type TlvSeqWrapperFmt = BerTlvList;
-
-        let map = BTreeMap::from([("59".to_owned(), "ABCD".to_owned()), ("9F02".to_owned(), "1234".to_owned())]);
-        let wrapper = TlvSeqWrapper(vec![
-            ("59".to_owned(), "ABCD".to_owned()),
-            ("9F02".to_owned(), "1234".to_owned()),
-            ("59".to_owned(), "00FF".to_owned()),
-        ]);
-        let map_bytes = b"\x59\x02\xAB\xCD\x9F\x02\x02\x12\x34";
-        let wrapper_bytes = b"\x59\x02\xAB\xCD\x9F\x02\x02\x12\x34\x59\x02\x00\xFF";
-        let mut scratch = [0u8; 64];
-
-        let mut output = [0u8; 64];
-        let used = {
-            let total = output.len();
-            let mut out = output.as_mut_slice();
-            TlvMapFmt::encode_field(&mut out, scratch.as_mut_slice(), &map).map(|_| total - out.len())
-        }
-        .unwrap();
-        assert_eq!(&output[..used], map_bytes);
-        let mut input = map_bytes.as_slice();
-        let decoded: BTreeMap<String, String> = TlvMapFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap();
-        assert_eq!(decoded, map);
-        assert!(input.is_empty());
-
-        let used = {
-            let total = output.len();
-            let mut out = output.as_mut_slice();
-            TlvSeqWrapperFmt::encode_field(&mut out, scratch.as_mut_slice(), &wrapper).map(|_| total - out.len())
-        }
-        .unwrap();
-        assert_eq!(&output[..used], wrapper_bytes);
-        let mut input = wrapper_bytes.as_slice();
-        let decoded: TlvSeqWrapper = TlvSeqWrapperFmt::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap();
-        assert_eq!(decoded, wrapper);
-        assert!(input.is_empty());
-    }
-
-    #[test]
-    fn test_ber_tlv_list_invalid_key_or_value_rejected_on_encode() {
-        type TlvListFmt = BerTlvList;
-
-        let invalid_key = vec![("bad".to_owned(), "1234".to_owned())];
-        let invalid_value = vec![("9F02".to_owned(), "12fg".to_owned())];
-        let mut output = [0u8; 64];
-        let mut scratch = [0u8; 64];
-        let mut out = output.as_mut_slice();
-        assert_eq!(
-            error_kind(TlvListFmt::encode_field(&mut out, scratch.as_mut_slice(), &invalid_key)),
-            Err(Error::Invalid)
-        );
-        let mut out = output.as_mut_slice();
-        assert_eq!(
-            error_kind(TlvListFmt::encode_field(&mut out, scratch.as_mut_slice(), &invalid_value)),
             Err(Error::Invalid)
         );
     }

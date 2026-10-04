@@ -12,12 +12,13 @@ mod types;
 mod utils;
 
 pub use bitmap::{Bitmap, BitmapFormat, BitmapLayout, decode_bitmap, encode_bitmap};
+#[cfg(feature = "serde")]
+pub use composite::SerdeScalar;
 pub use composite::{
     AbsentBytes, AbsentFmt, BoundedList, ContextDecode, Empty, FieldDecode, FieldEncode, FixedAreaList, FixedBytes, FixedValue, Frame,
-    NoTrailingFields, OptionAs, ScalarDecode, ScalarEncode, Separator, TlvExtras, TrailingField, TrailingLengthFrame, decode, encode,
+    NoPadding, NoTrailingFields, OptionAs, PaddingByte, ScalarDecode, ScalarEncode, Separator, TlvExtras, TlvList, TlvPadding,
+    TrailingField, TrailingLengthFrame, decode, encode,
 };
-#[cfg(feature = "serde")]
-pub use composite::{BerTlvList, SerdeScalar};
 pub use field::{
     Alpha, Alphanum, Ascii, AsciiLength, AsciiPrintable, Bcd, BcdBytes, Bcdz, BerLength, BerTag, Binary, BlankableEbcdicLength, Check,
     ConstBytes, Count, DecodeCheck, Ebcdic037, Ebcdic037Ascii, Ebcdic1142, Ebcdic1142Text, EbcdicLength, EbcdicPrintable, Field, Fill,
