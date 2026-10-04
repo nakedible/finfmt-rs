@@ -107,12 +107,14 @@
 ///   variant has a name, as above, and may hold one value, a record such as
 ///   `Request(Request)` or one with a format, `Response(#[wire(fmt = F)]
 ///   Response)`. Decoding takes the variant whose name equals the key; its
-///   body's errors are returned, with the variant in the path. One
+///   body's errors are returned, with the variant in the path. A variant may
+///   also accept other keys with `#[wire(alias = "0101")]`, repeated as
+///   needed; names and aliases may not repeat across the enum. One
 ///   `#[wire(other)]` variant holding a value takes any other key's body;
 ///   without it, an unknown key is `Invalid`. Encoding writes only the
 ///   variant's body, so the key field must agree with the variant; nothing
-///   checks it; `wire_name()` gives a variant's name for setting the key,
-///   `None` for `other`. The enum implements
+///   checks it; `wire_name()` gives a variant's primary name for setting the
+///   key, `None` for `other`. The enum implements
 ///   [`FieldEncode`](crate::FieldEncode) and
 ///   [`ContextDecode<'de, Self, str>`](crate::ContextDecode), whose context is
 ///   the key, so a `Frame` around it passes the key through too:
@@ -273,6 +275,19 @@
 ///         #[wire(fmt = N2)]
 ///         #[cfg(any())]
 ///         code: String,
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// type N2 = finfmt::Field<finfmt::Numeric<2, 2>, finfmt::Fixed<2>>;
+/// finfmt::wire_type! {
+///     #[wire(selected)]
+///     enum Repeated {
+///         #[wire(rename = "0100", alias = "0101")]
+///         Request(#[wire(fmt = N2)] String),
+///         #[wire(rename = "0101")]
+///         Advice(#[wire(fmt = N2)] String),
 ///     }
 /// }
 /// ```
@@ -459,7 +474,7 @@ macro_rules! __finfmt_wire_enum {
         }
 
         const _: () = {
-            $($crate::__finfmt_wire_variant! { {@check $kind} $variant [$(($fmt) $bind)?]; [] [] []; $($args)* })*
+            $($crate::__finfmt_wire_variant! { {@check $kind} $variant [$(($fmt) $bind)?]; [] [] [] []; $($args)* })*
             $crate::__finfmt_wire_enum! { @impl $kind $name [$($lt)?] [$de]
                 [$({ $variant [$($args)*] [$(($fmt) $bind)?] })*]
                 (false $($(|| <$fmt as $crate::composite::FieldDecode<$de, $payload>>::TAKES_REST)?)*) }
@@ -468,7 +483,7 @@ macro_rules! __finfmt_wire_enum {
 
     (@impl names $name:ident [$($lt:lifetime)?] [$de:lifetime] [$({ $variant:ident $args:tt $payload:tt })*] $takes_rest:tt) => {
         const _: () = if let Err(message) = $crate::composite::check_variant_names(&[
-            $(Some($crate::__finfmt_wire_variant! { {@name} $variant $payload; [] [] []; $args })),*
+            $(Some($crate::__finfmt_wire_variant! { {@name} $variant $payload; [] [] [] []; $args })),*
         ]) {
             panic!("{}", message);
         };
@@ -477,7 +492,7 @@ macro_rules! __finfmt_wire_enum {
             #[inline]
             fn encode_scalar<F: $crate::ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), $crate::Error> {
                 F::encode_str(output, scratch, match self {
-                    $($name::$variant => $crate::__finfmt_wire_variant! { {@name} $variant $payload; [] [] []; $args },)*
+                    $($name::$variant => $crate::__finfmt_wire_variant! { {@name} $variant $payload; [] [] [] []; $args },)*
                 })
             }
         }
@@ -486,7 +501,7 @@ macro_rules! __finfmt_wire_enum {
             #[inline]
             fn decode_scalar<F: $crate::ScalarFmt>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self, $crate::Error> {
                 $crate::composite::decode_mapped_text::<F, Self>(input, scratch, |text| {
-                    $($crate::__finfmt_wire_variant! { {@decode_name text} $variant $payload; [] [] []; $args })*
+                    $($crate::__finfmt_wire_variant! { {@decode_name text} $variant $payload; [] [] [] []; $args })*
                     None
                 })
             }
@@ -495,7 +510,7 @@ macro_rules! __finfmt_wire_enum {
 
     (@impl codes $name:ident [$($lt:lifetime)?] [$de:lifetime] [$({ $variant:ident $args:tt $payload:tt })*] $takes_rest:tt) => {
         const _: () = if let Err(message) = $crate::composite::check_variant_codes(&[
-            $($crate::__finfmt_wire_variant! { {@code} $variant $payload; [] [] []; $args }),*
+            $($crate::__finfmt_wire_variant! { {@code} $variant $payload; [] [] [] []; $args }),*
         ]) {
             panic!("{}", message);
         };
@@ -504,7 +519,7 @@ macro_rules! __finfmt_wire_enum {
             #[inline]
             fn encode_scalar<F: $crate::ScalarFmt>(&self, output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), $crate::Error> {
                 F::encode_u64(output, scratch, match self {
-                    $($name::$variant => $crate::__finfmt_wire_variant! { {@code} $variant $payload; [] [] []; $args },)*
+                    $($name::$variant => $crate::__finfmt_wire_variant! { {@code} $variant $payload; [] [] [] []; $args },)*
                 })
             }
         }
@@ -513,7 +528,7 @@ macro_rules! __finfmt_wire_enum {
             #[inline]
             fn decode_scalar<F: $crate::ScalarFmt>(input: &mut &'de [u8], scratch: &mut &'de mut [u8]) -> Result<Self, $crate::Error> {
                 let code = F::decode_u64(input, scratch)?;
-                $($crate::__finfmt_wire_variant! { {@decode_code code} $variant $payload; [] [] []; $args })*
+                $($crate::__finfmt_wire_variant! { {@decode_code code} $variant $payload; [] [] [] []; $args })*
                 $crate::__private::cold_path();
                 Err($crate::Error::Invalid)
             }
@@ -522,8 +537,8 @@ macro_rules! __finfmt_wire_enum {
 
     (@impl selected $name:ident [$($lt:lifetime)?] [$de:lifetime] [$({ $variant:ident $args:tt [$(($fmt:ty) $bind:ident)?] })*]
         ($($takes_rest:tt)*)) => {
-        const _: () = if let Err(message) = $crate::composite::check_variant_names(&[
-            $($crate::__finfmt_wire_variant! { {@selected_name} $variant [$(($fmt) $bind)?]; [] [] []; $args }),*
+        const _: () = if let Err(message) = $crate::composite::check_variant_keys(&[
+            $($crate::__finfmt_wire_variant! { {@selected_keys} $variant [$(($fmt) $bind)?]; [] [] [] []; $args }),*
         ]) {
             panic!("{}", message);
         };
@@ -534,7 +549,7 @@ macro_rules! __finfmt_wire_enum {
             #[allow(dead_code)]
             pub fn wire_name(&self) -> Option<&'static str> {
                 match self {
-                    $($name::$variant { .. } => $crate::__finfmt_wire_variant! { {@selected_name} $variant [$(($fmt) $bind)?]; [] [] []; $args },)*
+                    $($name::$variant { .. } => $crate::__finfmt_wire_variant! { {@selected_name} $variant [$(($fmt) $bind)?]; [] [] [] []; $args },)*
                 }
             }
         }
@@ -545,7 +560,7 @@ macro_rules! __finfmt_wire_enum {
                 let _ = (&output, &scratch);
                 match value {
                     $($name::$variant $(($bind))? => {
-                        $crate::__finfmt_wire_variant! { {@encode output, scratch} $variant [$(($fmt) $bind)?]; [] [] []; $args }
+                        $crate::__finfmt_wire_variant! { {@encode output, scratch} $variant [$(($fmt) $bind)?]; [] [] [] []; $args }
                     })*
                 }
             }
@@ -563,8 +578,8 @@ macro_rules! __finfmt_wire_enum {
                 key: &str,
             ) -> Result<Self, $crate::CompositeError> {
                 let _ = (&input, &scratch);
-                $($crate::__finfmt_wire_variant! { {@decode input, scratch, key, $name} $variant [$(($fmt) $bind)?]; [] [] []; $args })*
-                $($crate::__finfmt_wire_variant! { {@other input, scratch, $name} $variant [$(($fmt) $bind)?]; [] [] []; $args })*
+                $($crate::__finfmt_wire_variant! { {@decode input, scratch, key, $name} $variant [$(($fmt) $bind)?]; [] [] [] []; $args })*
+                $($crate::__finfmt_wire_variant! { {@other input, scratch, $name} $variant [$(($fmt) $bind)?]; [] [] [] []; $args })*
                 $crate::__private::cold_path();
                 Err($crate::Error::Invalid.into())
             }
@@ -580,54 +595,61 @@ macro_rules! __finfmt_wire_enum {
     };
 }
 
-/// Parse a variant's `rename`, `code` and `other` arguments, then generate one
-/// phase of its enum's code. The slots are `[rename] [code] [other]`.
+/// Parse a variant's `rename`, `code`, `other` and `alias` arguments, then
+/// generate one phase of its enum's code. The slots are
+/// `[rename] [code] [other] [aliases]`.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __finfmt_wire_variant {
-    ({$($phase:tt)*} $variant:ident $payload:tt; [$($rename:literal)?] [$($code:literal)?] [$($other:ident)?];) => {
-        $crate::__finfmt_wire_variant! { @phase $($phase)* $variant [$($rename)?] [$($code)?] [$($other)?] $payload }
+    ({$($phase:tt)*} $variant:ident $payload:tt; [$($rename:literal)?] [$($code:literal)?] [$($other:ident)?] [$($alias:literal)*];) => {
+        $crate::__finfmt_wire_variant! { @phase $($phase)* $variant [$($rename)?] [$($code)?] [$($other)?] [$($alias)*] $payload }
     };
-    ({$($phase:tt)*} $variant:ident $payload:tt; [] $code:tt $other:tt; rename = $rename:literal $(, $($rest:tt)*)?) => {
-        $crate::__finfmt_wire_variant! { {$($phase)*} $variant $payload; [$rename] $code $other; $($($rest)*)? }
+    ({$($phase:tt)*} $variant:ident $payload:tt; [] $code:tt $other:tt $aliases:tt; rename = $rename:literal $(, $($rest:tt)*)?) => {
+        $crate::__finfmt_wire_variant! { {$($phase)*} $variant $payload; [$rename] $code $other $aliases; $($($rest)*)? }
     };
-    ({$($phase:tt)*} $variant:ident $payload:tt; $rename:tt [] $other:tt; code = $code:literal $(, $($rest:tt)*)?) => {
-        $crate::__finfmt_wire_variant! { {$($phase)*} $variant $payload; $rename [$code] $other; $($($rest)*)? }
+    ({$($phase:tt)*} $variant:ident $payload:tt; $rename:tt [] $other:tt $aliases:tt; code = $code:literal $(, $($rest:tt)*)?) => {
+        $crate::__finfmt_wire_variant! { {$($phase)*} $variant $payload; $rename [$code] $other $aliases; $($($rest)*)? }
     };
-    ({$($phase:tt)*} $variant:ident $payload:tt; $rename:tt $code:tt []; other $(, $($rest:tt)*)?) => {
-        $crate::__finfmt_wire_variant! { {$($phase)*} $variant $payload; $rename $code [other]; $($($rest)*)? }
+    ({$($phase:tt)*} $variant:ident $payload:tt; $rename:tt $code:tt [] $aliases:tt; other $(, $($rest:tt)*)?) => {
+        $crate::__finfmt_wire_variant! { {$($phase)*} $variant $payload; $rename $code [other] $aliases; $($($rest)*)? }
     };
-    ({$($phase:tt)*} $variant:ident $payload:tt; $rename:tt $code:tt $other:tt; [$($args:tt)*]) => {
-        $crate::__finfmt_wire_variant! { {$($phase)*} $variant $payload; $rename $code $other; $($args)* }
+    ({$($phase:tt)*} $variant:ident $payload:tt; $rename:tt $code:tt $other:tt [$($alias:literal)*]; alias = $new:literal $(, $($rest:tt)*)?) => {
+        $crate::__finfmt_wire_variant! { {$($phase)*} $variant $payload; $rename $code $other [$($alias)* $new]; $($($rest)*)? }
     };
-    ({$($phase:tt)*} $variant:ident $payload:tt; $rename:tt $code:tt $other:tt; $($args:tt)+) => {
+    ({$($phase:tt)*} $variant:ident $payload:tt; $rename:tt $code:tt $other:tt $aliases:tt; [$($args:tt)*]) => {
+        $crate::__finfmt_wire_variant! { {$($phase)*} $variant $payload; $rename $code $other $aliases; $($args)* }
+    };
+    ({$($phase:tt)*} $variant:ident $payload:tt; $rename:tt $code:tt $other:tt $aliases:tt; $($args:tt)+) => {
         compile_error!(concat!("wire_type!: unsupported or repeated #[wire] variant arguments: ", stringify!($($args)+)))
     };
 
     // Which arguments each enum kind takes.
-    (@phase @check names $variant:ident [$($rename:literal)?] [] [] []) => {};
-    (@phase @check codes $variant:ident [] [$code:literal] [] []) => {};
-    (@phase @check selected $variant:ident [$($rename:literal)?] [] [] $payload:tt) => {};
-    (@phase @check selected $variant:ident [] [] [other] [$($payload:tt)+]) => {};
-    (@phase @check selected $variant:ident $rename:tt [] [other] $payload:tt) => {
-        compile_error!(concat!("wire_type!: the `other` variant `", stringify!($variant), "` holds the body and has no name"));
+    (@phase @check names $variant:ident [$($rename:literal)?] [] [] [] []) => {};
+    (@phase @check codes $variant:ident [] [$code:literal] [] [] []) => {};
+    (@phase @check selected $variant:ident [$($rename:literal)?] [] [] $aliases:tt $payload:tt) => {};
+    (@phase @check selected $variant:ident [] [] [other] [] [$($payload:tt)+]) => {};
+    (@phase @check selected $variant:ident $rename:tt [] [other] $aliases:tt $payload:tt) => {
+        compile_error!(concat!("wire_type!: the `other` variant `", stringify!($variant), "` holds the body and has no name or alias"));
     };
-    (@phase @check codes $variant:ident [] [] $other:tt []) => {
+    (@phase @check $kind:ident $variant:ident $rename:tt $code:tt $other:tt [$($alias:literal)+] $payload:tt) => {
+        compile_error!("wire_type!: `alias` is for #[wire(selected)] enums so far");
+    };
+    (@phase @check codes $variant:ident [] [] $other:tt $aliases:tt []) => {
         compile_error!(concat!("wire_type!: variant `", stringify!($variant), "` of a codes enum needs a `code`"));
     };
-    (@phase @check $kind:ident $variant:ident $rename:tt $code:tt [other] $payload:tt) => {
+    (@phase @check $kind:ident $variant:ident $rename:tt $code:tt [other] $aliases:tt $payload:tt) => {
         compile_error!("wire_type!: `other` is only for selected enums so far");
     };
-    (@phase @check $kind:ident $variant:ident $rename:tt $code:tt $other:tt [$($payload:tt)+]) => {
+    (@phase @check $kind:ident $variant:ident $rename:tt $code:tt $other:tt $aliases:tt [$($payload:tt)+]) => {
         compile_error!(concat!("wire_type!: variant `", stringify!($variant), "` of a unit enum cannot hold a value"));
     };
-    (@phase @check names $variant:ident $rename:tt [$code:literal] $other:tt $payload:tt) => {
+    (@phase @check names $variant:ident $rename:tt [$code:literal] $other:tt $aliases:tt $payload:tt) => {
         compile_error!("wire_type!: `code` is for #[wire(codes)] enums");
     };
-    (@phase @check $kind:ident $variant:ident [$rename:literal] $code:tt $other:tt $payload:tt) => {
+    (@phase @check $kind:ident $variant:ident [$rename:literal] $code:tt $other:tt $aliases:tt $payload:tt) => {
         compile_error!("wire_type!: `rename` is for #[wire(names)] and #[wire(selected)] enums");
     };
-    (@phase @check selected $variant:ident $rename:tt [$code:literal] $other:tt $payload:tt) => {
+    (@phase @check selected $variant:ident $rename:tt [$code:literal] $other:tt $aliases:tt $payload:tt) => {
         compile_error!("wire_type!: `code` is for #[wire(codes)] enums");
     };
     // An unknown kind is reported once, by the enum itself.
@@ -650,31 +672,37 @@ macro_rules! __finfmt_wire_variant {
     };
     (@phase @decode_code $($rest:tt)*) => {};
 
-    // Selected enums: the primary name keys decode; `other` takes the rest.
-    (@phase @selected_name $variant:ident $rename:tt $code:tt [other] $payload:tt) => { None };
+    // Selected enums: the primary name and any alias key decode; `other`
+    // takes the rest.
+    (@phase @selected_name $variant:ident $rename:tt $code:tt [other] $aliases:tt $payload:tt) => { None };
     (@phase @selected_name $variant:ident $rename:tt $($rest:tt)*) => {
         Some($crate::__finfmt_wire_variant! { @phase @name $variant $rename })
     };
-    (@phase @encode $output:ident, $scratch:ident $variant:ident $rename:tt $code:tt $other:tt [($fmt:ty) $bind:ident]) => {
+    // A variant's keys, for the duplicate check: none for `other`.
+    (@phase @selected_keys $variant:ident $rename:tt $code:tt [other] $aliases:tt $payload:tt) => { &[None] };
+    (@phase @selected_keys $variant:ident $rename:tt $code:tt $other:tt [$($alias:literal)*] $payload:tt) => {
+        &[Some($crate::__finfmt_wire_variant! { @phase @name $variant $rename }) $(, Some($alias))*]
+    };
+    (@phase @encode $output:ident, $scratch:ident $variant:ident $rename:tt $code:tt $other:tt $aliases:tt [($fmt:ty) $bind:ident]) => {
         $crate::__private::encode_variant::<_, $fmt>($output, $scratch, $bind)
             .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($variant)))
     };
-    (@phase @encode $output:ident, $scratch:ident $variant:ident $rename:tt $code:tt $other:tt []) => {
+    (@phase @encode $output:ident, $scratch:ident $variant:ident $rename:tt $code:tt $other:tt $aliases:tt []) => {
         Ok(())
     };
-    (@phase @decode $input:ident, $scratch:ident, $key:ident, $name:ident $variant:ident $rename:tt $code:tt [other] $payload:tt) => {};
-    (@phase @decode $input:ident, $scratch:ident, $key:ident, $name:ident $variant:ident $rename:tt $code:tt [] [($fmt:ty) $bind:ident]) => {
-        if $key == $crate::__finfmt_wire_variant! { @phase @name $variant $rename } {
+    (@phase @decode $input:ident, $scratch:ident, $key:ident, $name:ident $variant:ident $rename:tt $code:tt [other] $aliases:tt $payload:tt) => {};
+    (@phase @decode $input:ident, $scratch:ident, $key:ident, $name:ident $variant:ident $rename:tt $code:tt [] [$($alias:literal)*] [($fmt:ty) $bind:ident]) => {
+        if $key == $crate::__finfmt_wire_variant! { @phase @name $variant $rename } $(|| $key == $alias)* {
             return $crate::__private::decode_variant::<_, _, $fmt, _>($input, $scratch, $name::$variant)
                 .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($variant)));
         }
     };
-    (@phase @decode $input:ident, $scratch:ident, $key:ident, $name:ident $variant:ident $rename:tt $code:tt [] []) => {
-        if $key == $crate::__finfmt_wire_variant! { @phase @name $variant $rename } {
+    (@phase @decode $input:ident, $scratch:ident, $key:ident, $name:ident $variant:ident $rename:tt $code:tt [] [$($alias:literal)*] []) => {
+        if $key == $crate::__finfmt_wire_variant! { @phase @name $variant $rename } $(|| $key == $alias)* {
             return Ok($name::$variant);
         }
     };
-    (@phase @other $input:ident, $scratch:ident, $name:ident $variant:ident $rename:tt $code:tt [other] [($fmt:ty) $bind:ident]) => {
+    (@phase @other $input:ident, $scratch:ident, $name:ident $variant:ident $rename:tt $code:tt [other] $aliases:tt [($fmt:ty) $bind:ident]) => {
         return $crate::__private::decode_variant::<_, _, $fmt, _>($input, $scratch, $name::$variant)
             .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($variant)));
     };
@@ -2485,6 +2513,47 @@ mod tests {
             let mut scratch = [0; 64];
             assert_eq!(crate::decode::<KeyedDelimited, KeyedDelimited>(wire, &mut scratch), Ok(value));
         }
+    }
+
+    crate::wire_type! {
+        #[derive(Debug, Clone, PartialEq)]
+        #[wire(selected)]
+        enum Aliased {
+            #[wire(rename = "0100", alias = "0101", alias = "0102")]
+            Request(#[wire(fmt = N2)] String),
+            #[wire(alias = "0111", rename = "0110")]
+            Response(#[wire(fmt = N2)] String),
+        }
+
+        #[derive(Debug, Clone, PartialEq)]
+        #[wire(concat)]
+        struct AliasedMessage {
+            #[wire(fmt = N4)]
+            mti: String,
+            #[wire(select = mti)]
+            body: Aliased,
+        }
+    }
+
+    #[test]
+    fn aliases_select_a_variant_and_keep_the_key_in_its_field() {
+        for (wire, body) in [
+            (&b"010012"[..], Aliased::Request("12".into())),
+            (b"010112", Aliased::Request("12".into())),
+            (b"010212", Aliased::Request("12".into())),
+            (b"011134", Aliased::Response("34".into())),
+        ] {
+            let mut scratch = [0; 64];
+            let decoded = crate::decode::<AliasedMessage, AliasedMessage>(wire, &mut scratch).unwrap();
+            assert_eq!((&decoded.mti[..], &decoded.body), (std::str::from_utf8(&wire[..4]).unwrap(), &body));
+            assert_eq!(encode::<AliasedMessage, _>(&decoded).as_deref(), Ok(wire));
+        }
+        assert_eq!(Aliased::Request("12".into()).wire_name(), Some("0100"));
+        let mut scratch = [0; 64];
+        assert_eq!(
+            crate::decode::<AliasedMessage, AliasedMessage>(b"010312", &mut scratch).map_err(|error| error.kind),
+            Err(Error::Invalid)
+        );
     }
 
     #[test]

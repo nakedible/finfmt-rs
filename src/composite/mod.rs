@@ -2586,6 +2586,53 @@ pub const fn check_variant_names(names: &[Option<&str>]) -> Result<(), &'static 
     Ok(())
 }
 
+/// Check a selected enum's keys, given per variant (its name and aliases, or
+/// `None` for `other`): no key may repeat across the enum, and at most one
+/// variant is `other`. `wire_type!` evaluates this at compile time and
+/// reports the message.
+#[doc(hidden)]
+pub const fn check_variant_keys(variants: &[&[Option<&str>]]) -> Result<(), &'static str> {
+    let mut other = false;
+    let mut rest = variants;
+    while let [keys, later_variants @ ..] = rest {
+        let mut keys = *keys;
+        while let [key, later_keys @ ..] = keys {
+            match *key {
+                None if other => return Err("an enum has at most one `other` variant"),
+                None => other = true,
+                Some(key) => {
+                    if contains_key(later_keys, key) {
+                        return Err("duplicate variant name or alias in an enum");
+                    }
+                    let mut others = later_variants;
+                    while let [other_keys, after @ ..] = others {
+                        if contains_key(other_keys, key) {
+                            return Err("duplicate variant name or alias in an enum");
+                        }
+                        others = after;
+                    }
+                }
+            }
+            keys = later_keys;
+        }
+        rest = later_variants;
+    }
+    Ok(())
+}
+
+const fn contains_key(keys: &[Option<&str>], key: &str) -> bool {
+    let mut rest = keys;
+    while let [next, after @ ..] = rest {
+        if let Some(next) = *next
+            && const_bytes_eq(key.as_bytes(), next.as_bytes())
+        {
+            return true;
+        }
+        rest = after;
+    }
+    false
+}
+
 /// Check an enum's numeric codes: none may repeat. `wire_type!` evaluates
 /// this at compile time and reports the message.
 #[doc(hidden)]
