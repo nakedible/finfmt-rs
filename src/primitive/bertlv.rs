@@ -56,6 +56,9 @@ pub fn encode_ber_tag<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a
 /// - Otherwise, continuation octets are consumed until a byte with MSB 0 is found.
 /// - Supports tags up to 4 octets; longer tags are rejected.
 /// - Accepts financial tags such as `9F02`; no ASN.1 minimum numeric tag is imposed.
+/// - `STRICT` rejects a first continuation octet of `80`, a tag number padded
+///   with leading zero bits, so each tag has one encoding. Without it, such
+///   tags (`DF8002`) are accepted, as some specifications use them.
 ///
 /// This frames tag octets only, including the `00` end-of-contents identifier.
 /// [`decode_ber_tlv_entry`] rejects that identifier as an ordinary data entry.
@@ -68,12 +71,12 @@ pub fn encode_ber_tag<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Result<&'a
 /// - `Error::UnexpectedEof` if `input` does not contain enough bytes.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn decode_ber_tag<'a>(input: &mut &'a [u8]) -> Result<&'a [u8], Error> {
+pub fn decode_ber_tag<'a, const STRICT: bool>(input: &mut &'a [u8]) -> Result<&'a [u8], Error> {
     match *input {
         [a, ..] if *a & 0x1F != 0x1F => take_bytes(input, 1),
         [_, 0x01..=0x7F, ..] => take_bytes(input, 2),
-        [_, 0x81..=0xFF, c, ..] if *c < 0x80 => take_bytes(input, 3),
-        [_, 0x81..=0xFF, _, d, ..] if *d < 0x80 => take_bytes(input, 4),
+        [_, b @ 0x80..=0xFF, c, ..] if *c < 0x80 && (*b != 0x80 || !STRICT) => take_bytes(input, 3),
+        [_, b @ 0x80..=0xFF, _, d, ..] if *d < 0x80 && (*b != 0x80 || !STRICT) => take_bytes(input, 4),
         [_, 0x00 | 0x80, ..] => {
             cold_path();
             Err(Error::Invalid)
@@ -157,13 +160,14 @@ pub fn ber_length_width(len: usize) -> Result<usize, Error> {
     }
 }
 
-/// Parses uppercase hex representing exactly one supported data tag.
+/// Parses uppercase hex representing exactly one supported data tag, by the
+/// rules of [`decode_ber_tag`] with the same `STRICT`.
 ///
 /// Returns `Invalid` for malformed text, incomplete or concatenated tags, and
 /// the `00` end-of-contents identifier. Unused array bytes are zero.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn parse_ber_tag_hex(tag: &str) -> Result<([u8; MAX_BER_TAG_BYTES], usize), Error> {
+pub fn parse_ber_tag_hex<const STRICT: bool>(tag: &str) -> Result<([u8; MAX_BER_TAG_BYTES], usize), Error> {
     let bytes = tag.as_bytes();
     if bytes.is_empty() || bytes.len() > 2 * MAX_BER_TAG_BYTES || !bytes.len().is_multiple_of(2) {
         cold_path();
@@ -176,7 +180,7 @@ pub fn parse_ber_tag_hex(tag: &str) -> Result<([u8; MAX_BER_TAG_BYTES], usize), 
         Error::Invalid
     })?;
     let mut input = &*packed;
-    let tag = decode_ber_tag(&mut input).map_err(|_| {
+    let tag = decode_ber_tag::<STRICT>(&mut input).map_err(|_| {
         cold_path();
         Error::Invalid
     })?;
@@ -204,7 +208,7 @@ pub fn format_ber_tag_hex<'a>(output: &'a mut [u8; MAX_BER_TAG_HEX], tag: &[u8])
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn pack_ber_tag_hex<'a>(output: &'a mut [u8; MAX_BER_TAG_BYTES], tag_hex: &str) -> &'a [u8] {
     debug_assert!(
-        parse_ber_tag_hex(tag_hex).is_ok(),
+        parse_ber_tag_hex::<false>(tag_hex).is_ok(),
         "a BER tag literal must be a valid tag in uppercase hex"
     );
     let mut out = &mut output[..];
@@ -244,7 +248,7 @@ pub fn decode_ber_tlv_entry<'a>(input: &mut &'a [u8]) -> Result<Option<BerTlvEnt
     if input.is_empty() {
         return Ok(None);
     }
-    let tag = decode_ber_tag(input)?;
+    let tag = decode_ber_tag::<true>(input)?;
     if tag == [0] {
         cold_path();
         return Err(Error::Invalid);
@@ -301,7 +305,7 @@ mod tests {
 
     fn dec_tag(input: &[u8]) -> Result<(Vec<u8>, Vec<u8>), Error> {
         let mut inp = input;
-        let tag = decode_ber_tag(&mut inp)?;
+        let tag = decode_ber_tag::<true>(&mut inp)?;
         Ok((tag.to_vec(), inp.to_vec()))
     }
 
@@ -323,7 +327,7 @@ mod tests {
     #[test]
     fn tag_literals_pack_and_format_as_inverses() {
         for text in ["5A", "9F02", "9F8101", "DF818001"] {
-            let (expected, len) = parse_ber_tag_hex(text).unwrap();
+            let (expected, len) = parse_ber_tag_hex::<true>(text).unwrap();
             let mut packed = [0; MAX_BER_TAG_BYTES];
             let tag = pack_ber_tag_hex(&mut packed, text);
             assert_eq!(tag, &expected[..len]);
@@ -477,20 +481,20 @@ mod tests {
     #[test]
     fn test_sequential_decode() {
         let mut input: &[u8] = b"\x9F\x02\x02\xAB\xCD";
-        assert_eq!(decode_ber_tag(&mut input), Ok(&b"\x9F\x02"[..]));
+        assert_eq!(decode_ber_tag::<true>(&mut input), Ok(&b"\x9F\x02"[..]));
         assert_eq!(decode_ber_length(&mut input), Ok(2));
         assert_eq!(input, b"\xAB\xCD");
     }
 
     #[test]
     fn test_parse_ber_tag_hex_uppercase_only() {
-        assert_eq!(parse_ber_tag_hex("9F02"), Ok(([0x9F, 0x02, 0, 0], 2)));
+        assert_eq!(parse_ber_tag_hex::<true>("9F02"), Ok(([0x9F, 0x02, 0, 0], 2)));
         for (text, expected, len) in [
             ("5A", [0x5A, 0, 0, 0], 1),
             ("9F817F", [0x9F, 0x81, 0x7F, 0], 3),
             ("FF818000", [0xFF, 0x81, 0x80, 0], 4),
         ] {
-            assert_eq!(parse_ber_tag_hex(text), Ok((expected, len)));
+            assert_eq!(parse_ber_tag_hex::<true>(text), Ok((expected, len)));
             let mut hex = [0; MAX_BER_TAG_HEX];
             assert_eq!(format_ber_tag_hex(&mut hex, &expected[..len]), text.as_bytes());
         }
@@ -507,12 +511,12 @@ mod tests {
             "9F81808000",
             "é",
         ] {
-            assert_eq!(parse_ber_tag_hex(text), Err(Error::Invalid), "{text}");
+            assert_eq!(parse_ber_tag_hex::<true>(text), Err(Error::Invalid), "{text}");
         }
-        assert_eq!(parse_ber_tag_hex(""), Err(Error::Invalid));
-        assert_eq!(parse_ber_tag_hex("9f02"), Err(Error::Invalid));
-        assert_eq!(parse_ber_tag_hex("9F0"), Err(Error::Invalid));
-        assert_eq!(parse_ber_tag_hex("9G02"), Err(Error::Invalid));
+        assert_eq!(parse_ber_tag_hex::<true>(""), Err(Error::Invalid));
+        assert_eq!(parse_ber_tag_hex::<true>("9f02"), Err(Error::Invalid));
+        assert_eq!(parse_ber_tag_hex::<true>("9F0"), Err(Error::Invalid));
+        assert_eq!(parse_ber_tag_hex::<true>("9G02"), Err(Error::Invalid));
     }
 
     #[test]
@@ -567,9 +571,9 @@ mod proptests {
                 _ => vec![first, 0x80 | (term >> 2).max(1), 0x80 | (term >> 1), term],
             };
             let mut inp = &input[..];
-            prop_assert_eq!(decode_ber_tag(&mut inp), Ok(&input[..]));
+            prop_assert_eq!(decode_ber_tag::<true>(&mut inp), Ok(&input[..]));
             let text: String = input.iter().map(|byte| format!("{byte:02X}")).collect();
-            let (tag, len) = parse_ber_tag_hex(&text).unwrap();
+            let (tag, len) = parse_ber_tag_hex::<true>(&text).unwrap();
             prop_assert_eq!(&tag[..len], input.as_slice());
             let mut hex = [0; MAX_BER_TAG_HEX];
             prop_assert_eq!(format_ber_tag_hex(&mut hex, &input), text.as_bytes());
@@ -579,7 +583,7 @@ mod proptests {
         fn bertag_decode_too_long(class in 0u8..=3, c1 in 0x80u8..=0xFF, c2 in 0x80u8..=0xFF, c3 in 0x80u8..=0xFF, term in 0u8..0x80) {
             let first = (class << 6) | 0x1F;
             let mut inp: &[u8] = &[first, c1, c2, c3, term];
-            prop_assert_eq!(decode_ber_tag(&mut inp), Err(Error::Invalid));
+            prop_assert_eq!(decode_ber_tag::<true>(&mut inp), Err(Error::Invalid));
         }
 
         #[test]

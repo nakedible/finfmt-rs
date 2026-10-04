@@ -3,7 +3,7 @@ use serde::de::value::StrDeserializer;
 use serde::de::{DeserializeOwned, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::ser::{Impossible, SerializeMap, SerializeSeq, SerializeTuple, SerializeTupleStruct};
 
-use super::bertlv::{encode_hex_upper, encode_unknown_tlv_from_tag};
+use super::bertlv::{decode_ber_tlv_collection_entry, encode_hex_upper, encode_unknown_tlv_from_tag};
 use super::*;
 use crate::Error;
 use crate::primitive::bertlv::{BerTlvEntry, MAX_BER_TAG_BYTES, parse_ber_tag_hex};
@@ -22,7 +22,7 @@ impl BerTlvTextSink for ParseUnknownTagSink {
 
     #[inline(always)]
     fn accept(self, text: &str) -> Result<Self::Ok, Error> {
-        parse_ber_tag_hex(text)
+        parse_ber_tag_hex::<true>(text)
     }
 }
 

@@ -28,6 +28,15 @@ fn bench_bertlv(suite: &mut Suite) {
                 black_box(decode_ber_tag_runtime(&mut input))
             })
         });
+        group.bench("decode_ber_tag_lenient_runtime", |b| {
+            b.iter(|| {
+                let mut input = black_box(TAG_2BYTE);
+                black_box(decode_ber_tag_lenient_runtime(&mut input))
+            })
+        });
+        group.bench("parse_ber_tag_hex_lenient_runtime", |b| {
+            b.iter(|| black_box(parse_ber_tag_hex_lenient_runtime(black_box("9F02"))))
+        });
         group.bench("encode_ber_length_runtime", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 4];

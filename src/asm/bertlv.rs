@@ -11,7 +11,17 @@ pub fn encode_ber_tag_runtime<'a>(output: &mut &'a mut [u8], input: &[u8]) -> Re
 
 #[inline(never)]
 pub fn decode_ber_tag_runtime<'a>(input: &mut &'a [u8]) -> Result<&'a [u8], Error> {
-    decode_ber_tag(input)
+    decode_ber_tag::<true>(input)
+}
+
+#[inline(never)]
+pub fn decode_ber_tag_lenient_runtime<'a>(input: &mut &'a [u8]) -> Result<&'a [u8], Error> {
+    decode_ber_tag::<false>(input)
+}
+
+#[inline(never)]
+pub fn parse_ber_tag_hex_lenient_runtime(tag: &str) -> Result<([u8; MAX_BER_TAG_BYTES], usize), Error> {
+    parse_ber_tag_hex::<false>(tag)
 }
 
 #[inline(never)]
@@ -31,7 +41,7 @@ pub fn ber_length_width_runtime(len: usize) -> Result<usize, Error> {
 
 #[inline(never)]
 pub fn parse_ber_tag_hex_runtime(tag: &str) -> Result<([u8; MAX_BER_TAG_BYTES], usize), Error> {
-    parse_ber_tag_hex(tag)
+    parse_ber_tag_hex::<true>(tag)
 }
 
 #[inline(never)]

@@ -130,6 +130,15 @@ impl TlvTag {
         Ok(out)
     }
 
+    /// Whether the tag starts with one of `bytes`, such as padding.
+    #[inline(always)]
+    pub fn starts_with_any(&self, bytes: &[u8]) -> bool {
+        self.bytes
+            .get(..self.len)
+            .and_then(|tag| tag.first())
+            .is_some_and(|first| bytes.contains(first))
+    }
+
     /// Whether `input` starts with this tag; if so, advance past it.
     #[inline(always)]
     pub fn matches(&self, input: &mut &[u8]) -> bool {
@@ -141,6 +150,19 @@ impl TlvTag {
             }
             _ => false,
         }
+    }
+}
+
+/// Skip any padding bytes before the next entry or at the end: each byte of
+/// `input` that is in `padding`, which holds the record's padding byte, if
+/// any.
+#[doc(hidden)]
+#[inline(always)]
+pub fn skip_tlv_padding(input: &mut &[u8], padding: &[u8]) {
+    while let [first, rest @ ..] = *input
+        && padding.contains(first)
+    {
+        *input = rest;
     }
 }
 

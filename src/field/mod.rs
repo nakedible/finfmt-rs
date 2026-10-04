@@ -1,5 +1,6 @@
 //! Composable field operations.
 
+mod bertlv;
 mod check;
 mod constant;
 mod ebcdic;
@@ -21,6 +22,7 @@ macro_rules! chain {
     };
 }
 
+pub use bertlv::{BerLength, BerTag, StrictBerTag};
 pub use check::{
     Alpha, Alphanum, Ascii, AsciiPrintable, Bcd, BcdBytes, Bcdz, Binary, Check, Ebcdic037Ascii, Ebcdic1142Text, EbcdicPrintable, Hex,
     HexEven, Iso88591, LowerHex, LowerHexEven, Numeric, Track2, UpperAlpha, UpperAlphanum, UpperAsciiPrintable, UpperHex, UpperHexEven,

@@ -213,9 +213,7 @@ pub struct NoTrailingFields;
 pub struct Empty;
 /// Structural BER-TLV representation as a Serde map or sequence of
 /// `(tag, value)` pairs. Tags and values are uppercase hex, such as `"9F02"` and
-/// `"000000012345"`; an empty value is `""`. Only the `extras` of a
-/// `wire_type!` BER-TLV record, which sit beside named fields, use
-/// `t9F02_unknown` keys.
+/// `"000000012345"`; an empty value is `""`.
 ///
 /// Order and duplicates are preserved if the chosen collection type preserves
 /// them: a sequence keeps every entry, while a std map keeps the last value of a
@@ -265,13 +263,12 @@ pub struct OptionAs<Inner, Absent>(PhantomData<(Inner, Absent)>);
 pub struct FixedAreaList<Len, Inner, Absent, const WIDTH: usize, const MAX: usize>(PhantomData<(Len, Inner, Absent)>);
 pub struct Separator<const BYTE: u8>;
 
+#[cfg(feature = "serde")]
 mod bertlv;
 mod tlv;
-#[doc(hidden)]
-pub use bertlv::decode_ber_tlv_collection_entry;
 pub use tlv::TlvExtras;
 #[doc(hidden)]
-pub use tlv::{MAX_TLV_TAG, TlvTag, decode_tlv_field, decode_tlv_tag, encode_tlv_tag};
+pub use tlv::{MAX_TLV_TAG, TlvTag, decode_tlv_field, decode_tlv_tag, encode_tlv_tag, skip_tlv_padding};
 #[cfg(feature = "serde")]
 mod bertlv_serde;
 mod repeated;
@@ -358,6 +355,10 @@ mod tests {
     }
 
     type A4Ebcdic = Field<Ascii<4, 4>, Fixed<4>, Ebcdic037>;
+    /// A BER-TLV value: the field's format behind a BER length.
+    type BerFramed<F> = Frame<crate::BerLength, F>;
+    /// Unknown BER-TLV values as hex text.
+    type BerHexValue = Field<crate::UpperHexEven<0, 1024>, crate::BerLength, crate::PackNibbles<UpperHexDigits>>;
     type FramedFixedTailFmt = Frame<AsciiLength<2>, FixedTail>;
     type FramedHexFixedTailFmt = Frame<AsciiLength<2>, FixedTail, UnpackNibbles<UpperHexDigits>>;
     type Blank3 = AbsentBytes<crate::Fill<b' ', 3>>;
@@ -393,13 +394,13 @@ mod tests {
         }
 
         #[derive(Debug, PartialEq, Eq, Serialize)]
-        #[wire(ber_tlv)]
+        #[wire(tlv(tag = crate::BerTag))]
         struct BorrowedTlv<'a> {
-            #[wire(tag = "59", fmt = A4)]
+            #[wire(tag = "59", fmt = BerFramed<A4>)]
             ascii: &'a str,
-            #[wire(tag = "5A", fmt = A4Ebcdic)]
+            #[wire(tag = "5A", fmt = BerFramed<A4Ebcdic>)]
             ebcdic: &'a str,
-            #[wire(tag = "DF23")]
+            #[wire(tag = "DF23", fmt = BerFramed<BorrowedConcat<'a>>)]
             tail: Option<BorrowedConcat<'a>>,
         }
 
@@ -438,40 +439,40 @@ mod tests {
 
         /// Test record for a named BER-TLV struct.
         #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-        #[wire(ber_tlv)]
+        #[wire(tlv(tag = crate::BerTag))]
         struct TlvData {
-            #[wire(tag = "59", fmt = A4)]
+            #[wire(tag = "59", fmt = BerFramed<A4>)]
             t59_code: String,
-            #[wire(tag = "DF23")]
+            #[wire(tag = "DF23", fmt = BerFramed<FixedTail>)]
             tdf23_tail: Option<FixedTail>,
         }
 
         #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-        #[wire(ber_tlv)]
+        #[wire(tlv(tag = crate::BerTag))]
         struct TlvNoDefault {
-            #[wire(tag = "59", fmt = A4)]
+            #[wire(tag = "59", fmt = BerFramed<A4>)]
             t59_code: String,
-            #[wire(tag = "DF23")]
+            #[wire(tag = "DF23", fmt = BerFramed<FixedTail>)]
             tdf23_tail: Option<FixedTail>,
         }
 
         #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-        #[wire(ber_tlv)]
+        #[wire(tlv(tag = crate::BerTag))]
         struct TlvWithExtras {
-            #[wire(tag = "59", fmt = A4)]
+            #[wire(tag = "59", fmt = BerFramed<A4>)]
             t59_code: String,
-            #[wire(extras)]
-            #[serde(flatten)]
+            #[wire(extras, fmt = BerHexValue)]
+            #[serde(flatten, with = "crate::extras::unknown_tag_keys")]
             extras: BTreeMap<String, String>,
         }
 
         #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-        #[wire(ber_tlv)]
+        #[wire(tlv(tag = crate::BerTag))]
         struct TlvWithExtrasNoDefault {
-            #[wire(tag = "59", fmt = A4)]
+            #[wire(tag = "59", fmt = BerFramed<A4>)]
             t59_code: String,
-            #[wire(extras)]
-            #[serde(flatten)]
+            #[wire(extras, fmt = BerHexValue)]
+            #[serde(flatten, with = "crate::extras::unknown_tag_keys")]
             extras: BTreeMap<String, String>,
         }
     }
@@ -745,23 +746,23 @@ mod tests {
         }
 
         #[derive(Debug, PartialEq, Eq)]
-        #[wire(ber_tlv)]
+        #[wire(tlv(tag = crate::BerTag))]
         struct FieldSyntaxBerTlv {
-            #[wire(fmt = SerdeScalar<N2>, tag = "02")]
+            #[wire(fmt = BerFramed<SerdeScalar<N2>>, tag = "02")]
             serde_value: Stan,
-            #[wire(fmt = N2, tag = "03")]
+            #[wire(fmt = BerFramed<N2>, tag = "03")]
             direct_value: ManualStan,
-            #[wire(tag = "04")]
+            #[wire(tag = "04", fmt = BerFramed<FixedTail>)]
             nested_value: FixedTail,
-            #[wire(fmt = SerdeScalar<N2>, tag = "05")]
+            #[wire(fmt = BerFramed<SerdeScalar<N2>>, tag = "05")]
             optional_serde: Option<Stan>,
-            #[wire(fmt = N2, tag = "06")]
+            #[wire(fmt = BerFramed<N2>, tag = "06")]
             optional_direct: Option<ManualStan>,
-            #[wire(tag = "07")]
+            #[wire(tag = "07", fmt = BerFramed<FixedTail>)]
             optional_nested: Option<FixedTail>,
-            #[wire(fmt = Field<Numeric<2, 2>, Fixed<2>>, tag = "08")]
+            #[wire(fmt = BerFramed<Field<Numeric<2, 2>, Fixed<2>>>, tag = "08")]
             optional_direct_inline: Option<ManualStan>,
-            #[wire(fmt = Frame<AsciiLength<2>, FixedTail>, tag = "09")]
+            #[wire(fmt = BerFramed<Frame<AsciiLength<2>, FixedTail>>, tag = "09")]
             optional_nested_inline: Option<FixedTail>,
         }
     }
@@ -824,11 +825,11 @@ mod tests {
             }
 
             #[derive(Debug, PartialEq)]
-            #[wire(ber_tlv)]
+            #[wire(tlv(tag = crate::BerTag))]
             struct Ber<'a> {
-                #[wire(tag = ASCII_TAG, fmt = A4)]
+                #[wire(tag = ASCII_TAG, fmt = BerFramed<A4>)]
                 ascii: &'a str,
-                #[wire(tag = "5A", fmt = A4Ebcdic)]
+                #[wire(tag = "5A", fmt = BerFramed<A4Ebcdic>)]
                 ebcdic: Option<&'a str>,
             }
         }
@@ -2035,7 +2036,7 @@ mod tests {
         let decoded = TlvWithExtras::decode_field(&mut input, &mut scratch.as_mut_slice()).unwrap();
         assert!(input.is_empty());
         assert_eq!(decoded.t59_code, "ABCD");
-        assert_eq!(decoded.extras.get("t9F02_unknown").map(String::as_str), Some("1234"));
+        assert_eq!(decoded.extras.get("9F02").map(String::as_str), Some("1234"));
         let json = serde_json::to_value(&decoded).unwrap();
         assert_eq!(json["t59_code"], "ABCD");
         assert_eq!(json["t9F02_unknown"], "1234");
@@ -2054,36 +2055,36 @@ mod tests {
     fn test_named_ber_padding_is_local_and_opt_in() {
         crate::wire_type! {
             #[derive(Debug, PartialEq)]
-            #[wire(ber_tlv(allow_zero_padding))]
+            #[wire(tlv(tag = crate::BerTag, padding = 0x00))]
             struct Padded {
-                #[wire(tag = "59", fmt = A4)]
+                #[wire(tag = "59", fmt = BerFramed<A4>)]
                 t59_code: String,
-                #[wire(tag = "DF23")]
+                #[wire(tag = "DF23", fmt = BerFramed<FixedTail>)]
                 tdf23_tail: Option<FixedTail>,
             }
 
             #[derive(Debug, PartialEq)]
-            #[wire(ber_tlv(allow_zero_padding))]
+            #[wire(tlv(tag = crate::BerTag, padding = 0x00))]
             struct PaddedExtras {
-                #[wire(tag = "59", fmt = A4)]
+                #[wire(tag = "59", fmt = BerFramed<A4>)]
                 t59_code: String,
-                #[wire(extras)]
+                #[wire(extras, fmt = BerHexValue)]
                 extras: BTreeMap<String, String>,
             }
 
             #[derive(Debug, PartialEq, Serialize)]
-            #[wire(ber_tlv(allow_zero_padding))]
+            #[wire(tlv(tag = crate::BerTag, padding = 0x00))]
             struct Borrowed<'a> {
-                #[wire(tag = "59", fmt = A4)]
+                #[wire(tag = "59", fmt = BerFramed<A4>)]
                 code: &'a str,
             }
 
             #[derive(Debug, PartialEq, Serialize)]
-            #[wire(ber_tlv(allow_zero_padding))]
+            #[wire(tlv(tag = crate::BerTag, padding = 0x00))]
             struct BorrowedExtras<'a> {
-                #[wire(tag = "59", fmt = A4)]
+                #[wire(tag = "59", fmt = BerFramed<A4>)]
                 code: &'a str,
-                #[wire(extras)]
+                #[wire(extras, fmt = BerHexValue)]
                 extras: BTreeMap<String, String>,
             }
         }
@@ -2116,7 +2117,7 @@ mod tests {
             assert_eq!(&output[..used], b"\x59\x04ABCD");
         }
         let wire = b"\0\x59\x04ABCD\0\xFF\x01\x02\0\xFF\0";
-        let extras = BTreeMap::from([("tFF01_unknown".into(), "00FF".into())]);
+        let extras = BTreeMap::from([("FF01".into(), "00FF".into())]);
         assert_eq!(
             PaddedExtras::decode_field(&mut wire.as_slice(), &mut &mut [0; 64][..]).unwrap(),
             PaddedExtras {
@@ -2135,16 +2136,16 @@ mod tests {
 
         crate::wire_type! {
             #[derive(Debug, PartialEq)]
-            #[wire(ber_tlv(allow_zero_padding))]
+            #[wire(tlv(tag = crate::BerTag, padding = 0x00))]
             struct StrictInner {
-                #[wire(tag = "E1")]
+                #[wire(tag = "E1", fmt = BerFramed<TlvData>)]
                 inner: TlvData,
             }
 
             #[derive(Debug, PartialEq)]
-            #[wire(ber_tlv(allow_zero_padding))]
+            #[wire(tlv(tag = crate::BerTag, padding = 0x00))]
             struct PaddedInner {
-                #[wire(tag = "E1")]
+                #[wire(tag = "E1", fmt = BerFramed<Padded>)]
                 inner: Padded,
             }
         }
@@ -2168,21 +2169,21 @@ mod tests {
     fn test_ber_tlv_extras_reject_declared_tags() {
         crate::wire_type! {
             #[derive(Serialize, Deserialize)]
-            #[wire(ber_tlv)]
+            #[wire(tlv(tag = crate::BerTag))]
             struct Record {
-                #[wire(extras)]
-                #[serde(flatten)]
+                #[wire(extras, fmt = BerHexValue)]
+                #[serde(flatten, with = "crate::extras::unknown_tag_keys")]
                 extras: BTreeMap<String, String>,
-                #[wire(tag = "59", fmt = A4)]
+                #[wire(tag = "59", fmt = BerFramed<A4>)]
                 code: Option<String>,
             }
 
             #[derive(Serialize)]
-            #[wire(ber_tlv)]
+            #[wire(tlv(tag = crate::BerTag))]
             struct BorrowedRecord<'a> {
-                #[wire(extras)]
+                #[wire(extras, fmt = BerHexValue)]
                 extras: BTreeMap<String, String>,
-                #[wire(tag = "59", fmt = A4)]
+                #[wire(tag = "59", fmt = BerFramed<A4>)]
                 code: Option<&'a str>,
             }
         }
@@ -2210,7 +2211,7 @@ mod tests {
         let bytes = b"\x59\x04ABCD\x9F\x02\x01\x01\x9F\x02\x01\x02";
         let mut scratch = [0u8; 64];
         let decoded = TlvWithExtras::decode_field(&mut &bytes[..], &mut scratch.as_mut_slice()).unwrap();
-        assert_eq!(decoded.extras, BTreeMap::from([("t9F02_unknown".to_owned(), "02".to_owned())]));
+        assert_eq!(decoded.extras, BTreeMap::from([("9F02".to_owned(), "02".to_owned())]));
     }
 
     #[test]
@@ -2221,7 +2222,7 @@ mod tests {
         };
         let invalid_value = TlvWithExtras {
             t59_code: "ABCD".into(),
-            extras: BTreeMap::from([("t9F02_unknown".to_owned(), "12fg".to_owned())]),
+            extras: BTreeMap::from([("9F02".to_owned(), "12fg".to_owned())]),
         };
         let mut output = [0u8; 64];
         let mut scratch = [0u8; 64];
@@ -2262,8 +2263,8 @@ mod tests {
     }
 
     #[test]
-    fn ber_tlv_text_reuses_decode_scratch_per_entry() {
-        // Ten entries need 210 bytes of key and hex text in total, but each is
+    fn ber_tlv_list_text_reuses_decode_scratch_per_entry() {
+        // Ten entries need 120 bytes of tag and hex text in total, but each is
         // parsed into an owned value before the next, so one entry's worth is enough.
         let wire: Vec<u8> = (0..10u8).flat_map(|i| [0x9F, i + 1, 0x04, 0xDE, 0xAD, 0xBE, 0xEF]).collect();
         let mut scratch = [0u8; 21];
@@ -2273,9 +2274,6 @@ mod tests {
         let map =
             <BerTlvList as FieldDecode<'_, BTreeMap<String, String>>>::decode_field(&mut wire.as_slice(), &mut &mut scratch[..]).unwrap();
         assert_eq!(map.len(), 10);
-        let with_known = [&b"\x59\x04ABCD"[..], &wire].concat();
-        let extras = TlvWithExtras::decode_field(&mut with_known.as_slice(), &mut &mut scratch[..]).unwrap();
-        assert_eq!(extras.extras.len(), 10);
     }
 
     #[test]
@@ -2379,7 +2377,7 @@ mod tests {
     fn test_ber_tlv_with_extras_decode_without_default() {
         let value = TlvWithExtrasNoDefault {
             t59_code: "ABCD".into(),
-            extras: BTreeMap::from([("t9F02_unknown".to_owned(), "1234".to_owned())]),
+            extras: BTreeMap::from([("9F02".to_owned(), "1234".to_owned())]),
         };
         let mut output = [0u8; 96];
         let mut scratch = [0u8; 96];
@@ -2404,13 +2402,6 @@ pub use scalar_serde::SerdeScalar;
 
 pub trait ListSeparatorPolicy {
     const BYTE: Option<u8>;
-}
-
-pub trait BerTlvExtras {
-    /// Encode extras, rejecting tags declared in `known_tags`, even if their fields are absent.
-    /// The declarations use uppercase tag hex; pass an empty slice for standalone extras.
-    fn encode_unknowns(&self, output: &mut &mut [u8], scratch: &mut [u8], known_tags: &[&str]) -> Result<(), Error>;
-    fn decode_unknown(&mut self, tag: &[u8], value: &[u8], scratch: &mut &mut [u8]) -> Result<(), Error>;
 }
 
 #[inline(always)]
@@ -2481,38 +2472,6 @@ pub const fn check_bitmap_fields(layout: crate::bitmap::BitmapLayout, bits: &[Op
     Ok(())
 }
 
-/// Check a BER-TLV record's tags: each must be one valid tag in uppercase
-/// hex, as `9F02`, and none may repeat. `None` is the extras collection, of
-/// which there is at most one. `wire_type!` evaluates this at compile time and
-/// reports the message.
-#[doc(hidden)]
-pub const fn check_ber_tags(tags: &[Option<&str>]) -> Result<(), &'static str> {
-    let mut extras = false;
-    let mut rest = tags;
-    while let [tag, later @ ..] = rest {
-        match *tag {
-            None if extras => return Err("a BER-TLV record has at most one extras field"),
-            None => extras = true,
-            Some(tag) => {
-                if !is_ber_tag_hex(tag.as_bytes()) {
-                    return Err("a BER tag must be one valid tag in uppercase hex, such as \"9F02\"");
-                }
-                let mut others = later;
-                while let [other, after @ ..] = others {
-                    if let Some(other) = *other
-                        && const_bytes_eq(tag.as_bytes(), other.as_bytes())
-                    {
-                        return Err("duplicate declared BER tag");
-                    }
-                    others = after;
-                }
-            }
-        }
-        rest = later;
-    }
-    Ok(())
-}
-
 /// Check a TLV record's declared tags, `None` for its extras field: no tag may
 /// repeat, and there is at most one extras field. `wire_type!` evaluates this
 /// at compile time and reports the message.
@@ -2542,41 +2501,6 @@ pub const fn check_tlv_tags(tags: &[Option<&str>]) -> Result<(), &'static str> {
         rest = later;
     }
     Ok(())
-}
-
-/// Whether `hex` is one BER tag of at most four bytes in uppercase hex, by the
-/// rules `decode_ber_tag` frames with: one byte unless its low five bits are
-/// all set, then continuation bytes with the high bit set, the first not
-/// `80`, ending with one below `80`.
-const fn is_ber_tag_hex(hex: &[u8]) -> bool {
-    const fn nibble(digit: u8) -> Option<u8> {
-        match digit {
-            b'0'..=b'9' => Some(digit - b'0'),
-            b'A'..=b'F' => Some(digit - b'A' + 10),
-            _ => None,
-        }
-    }
-    const fn byte(high: u8, low: u8) -> Option<u8> {
-        match (nibble(high), nibble(low)) {
-            (Some(high), Some(low)) => Some(high << 4 | low),
-            _ => None,
-        }
-    }
-    const fn multi(first: Option<u8>) -> bool {
-        matches!(first, Some(first) if first & 0x1F == 0x1F)
-    }
-    match *hex {
-        [a, b] => matches!(byte(a, b), Some(first) if first & 0x1F != 0x1F && first != 0),
-        [a, b, c, d] => multi(byte(a, b)) && matches!(byte(c, d), Some(0x01..=0x7F)),
-        [a, b, c, d, e, f] => multi(byte(a, b)) && matches!(byte(c, d), Some(0x81..=0xFF)) && matches!(byte(e, f), Some(0x00..=0x7F)),
-        [a, b, c, d, e, f, g, h] => {
-            multi(byte(a, b))
-                && matches!(byte(c, d), Some(0x81..=0xFF))
-                && matches!(byte(e, f), Some(0x80..=0xFF))
-                && matches!(byte(g, h), Some(0x00..=0x7F))
-        }
-        _ => false,
-    }
 }
 
 const fn const_bytes_eq(a: &[u8], b: &[u8]) -> bool {
@@ -2727,61 +2651,6 @@ pub fn wrap_composite_error<E: Into<CompositeError>>(error: E, field: &'static s
     error.into().with_field(field)
 }
 
-#[inline(always)]
-#[doc(hidden)]
-pub fn encode_ber_tlv_field<F>(
-    output: &mut &mut [u8],
-    scratch: &mut [u8],
-    tag_hex: &str,
-    field: &'static str,
-    encode_value: F,
-) -> Result<(), CompositeError>
-where
-    F: FnOnce(&mut &mut [u8], &mut [u8]) -> Result<(), CompositeError>,
-{
-    let mut tag = [0; crate::primitive::bertlv::MAX_BER_TAG_BYTES];
-    let tag = crate::primitive::bertlv::pack_ber_tag_hex(&mut tag, tag_hex);
-    // Stage the value, so the head can state its length before it.
-    let (value, _) = encode_staged(scratch, encode_value).map_err(|error| wrap_composite_error(error, field))?;
-    crate::primitive::bertlv::encode_ber_tlv_head(output, tag, value.len()).map_err(|error| wrap_composite_error(error, field))?;
-    copy_bytes(output, value).map_err(|error| wrap_composite_error(error, field))?;
-    Ok(())
-}
-
-#[inline(always)]
-#[doc(hidden)]
-pub fn decode_ber_tlv_field<'a, T, D>(
-    wire_tag_hex: &[u8],
-    tag_hex: &str,
-    value_input: &mut &'a [u8],
-    scratch: &mut &'a mut [u8],
-    field_value: &mut Option<T>,
-    field: &'static str,
-    decode_value: D,
-) -> Result<bool, CompositeError>
-where
-    D: FnOnce(&mut &'a [u8], &mut &'a mut [u8]) -> Result<T, CompositeError>,
-{
-    debug_assert!(
-        crate::primitive::bertlv::parse_ber_tag_hex(tag_hex).is_ok(),
-        "a BER tag literal must be a valid tag in uppercase hex"
-    );
-    if wire_tag_hex != tag_hex.as_bytes() {
-        return Ok(false);
-    }
-    if field_value.is_some() {
-        crate::utils::cold_path();
-        return Err(wrap_composite_error(Error::Invalid, field));
-    }
-    let value = decode_value(value_input, scratch).map_err(|error| wrap_composite_error(error, field))?;
-    if !value_input.is_empty() {
-        crate::utils::cold_path();
-        return Err(wrap_composite_error(Error::Invalid, field));
-    }
-    *field_value = Some(value);
-    Ok(true)
-}
-
 /// Encode through `encode`, then, in debug builds only, pass the bytes it wrote
 /// to `check`. Release builds encode straight into the output.
 #[inline(always)]
@@ -2914,36 +2783,6 @@ pub fn match_literal<'a, F: ScalarFmt>(input: &mut &'a [u8], scratch: &mut &'a m
     })?;
     advance_input(input, consumed)?;
     Ok(true)
-}
-
-#[cfg(test)]
-mod ber_tag_boundary_tests {
-    use super::*;
-
-    #[test]
-    fn malformed_configured_tags_are_debug_errors() {
-        for tag in ["9F", "5A5B", "00", "9f02"] {
-            let encoded =
-                std::panic::catch_unwind(|| encode_ber_tlv_field(&mut &mut [0u8; 16][..], &mut [0u8; 16][..], tag, "field", |_, _| Ok(())));
-            assert_eq!(encoded.is_err(), cfg!(debug_assertions));
-            // Decoding compares literals as written; a malformed one is caught in debug builds.
-            let result = std::panic::catch_unwind(|| {
-                decode_ber_tlv_field(
-                    b"5A",
-                    tag,
-                    &mut &[][..],
-                    &mut &mut [0u8; 16][..],
-                    &mut None::<()>,
-                    "field",
-                    |_, _| Ok(()),
-                )
-            });
-            assert_eq!(result.is_err(), cfg!(debug_assertions));
-            if let Ok(matched) = result {
-                assert_eq!(matched, Ok(false));
-            }
-        }
-    }
 }
 
 #[cfg(test)]

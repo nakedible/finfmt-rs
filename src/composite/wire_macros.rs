@@ -26,26 +26,31 @@
 ///   does not declare. Fields without a `bit` come first and are the header,
 ///   written before the bitmap, such as the MTI; they cannot be `Option`. The
 ///   numbers are checked against the layout at compile time.
-/// - `#[wire(ber_tlv)]`: BER-TLV entries, one per field with a `tag`. Encoding
-///   writes them in declaration order; decoding accepts them in any order and
-///   rejects a repeated known tag. An `Option` field is absent when its tag
-///   is; a required field's tag must appear. `Some` of an empty value writes
-///   the tag with a zero length. Unknown tags are rejected unless the record
-///   has an `extras` field. `#[wire(ber_tlv(allow_zero_padding))]` also
-///   accepts `00` bytes before, between and after entries; encoding never
-///   writes them.
-/// - `#[wire(tlv(tag = T))]`: tagged entries of any other kind. Each entry is
-///   a tag written by the scalar format `T`, then the value in its field's
-///   own format, which carries its own length, if any:
+/// - `#[wire(tlv(tag = T))]`: tagged entries, one per field with a `tag`.
+///   Each entry is a tag written by the scalar format `T`, then the value in
+///   its field's own format, which carries its own length, if any:
 ///   `Field<Ascii<0, 99>, AsciiLength<2>>` for one tag, a three-digit length
-///   or none at all for another. Decoding matches each declared tag's
-///   encoding as a prefix, in declaration order, so tags may differ in length
+///   or none at all for another. Encoding writes the entries in declaration
+///   order; decoding accepts them in any order and rejects a repeated known
+///   tag. An `Option` field is absent when its tag is; a required field's tag
+///   must appear. Decoding matches each declared tag's encoding as a prefix,
+///   in declaration order, so tags may differ in length
 ///   (`Field<UpperAlphanum<1, 8>, Rest, Ebcdic037>` for `"AEVV"` and `"XID"`)
 ///   and overlapping ones are ordered by the user. A binary tag uses a format
-///   that shows it as hex. Otherwise it behaves like `ber_tlv`: declaration
-///   order on encode, any order on decode, a repeated known tag is rejected,
-///   and unknown tags need an `extras` field, whose tag format `T` must then
-///   read a tag of a known width, such as `Field<Alphanum<2, 2>, Fixed<2>>`.
+///   that shows it as hex. Unknown tags are rejected unless the record has an
+///   `extras` field, whose tag format `T` must then read a tag of a known
+///   width, such as `Field<Alphanum<2, 2>, Fixed<2>>`.
+///
+///   BER-TLV is `#[wire(tlv(tag = BerTag))]` with values framed by
+///   [`BerLength`](crate::BerLength): `Frame<BerLength, Record>`, or
+///   `Field<UpperHexEven<0, 64>, BerLength, PackNibbles<UpperHexDigits>>` for
+///   hex text. [`BerTag`](crate::BerTag) accepts tags padded with leading zero
+///   bits, [`StrictBerTag`](crate::StrictBerTag) does not. `Some` of an empty
+///   value writes the tag with a zero length.
+///
+///   `#[wire(tlv(tag = T, padding = 0x00))]` also accepts that byte before,
+///   between and after entries; encoding never writes it, and no declared tag
+///   may start with it, which debug builds assert.
 ///
 /// An `Option` field is recognized by its spelling: `Option<T>`, or a path
 /// such as `std::option::Option<T>`; a type alias for one is a required
@@ -57,10 +62,10 @@
 ///   format itself, such as another wire struct; for an `Option<T>` field,
 ///   `T` must.
 /// - `bit = N`: the field's number in a bitmap record.
-/// - `tag = "9F02"`: the field's tag in a BER-TLV record, in uppercase hex; a
-///   constant works too. Tags are checked at compile time: each must be one
-///   valid tag, and none may repeat. In a `tlv` record, the tag is the text
-///   the tag format reads, such as `"05"`; none may repeat.
+/// - `tag = "9F02"`: the field's tag in a TLV record, the text the tag format
+///   reads, such as `"05"` or the BER tag `"9F02"`; a constant works too. No
+///   tag may repeat, which is checked at compile time; one the tag format
+///   cannot write is asserted in debug builds.
 /// - `fixed_value = "H"`, with `fmt`: a constant written through the format
 ///   on a field of type `()`, for a spec field whose value never changes.
 ///   Decoding reads a value with the format and requires it to equal the
@@ -71,7 +76,7 @@
 ///   `[u8; N]`, `&[u8; N]` or `&[u8]`. Decoding requires exactly these bytes.
 ///   Uses [`FixedBytes`](crate::FixedBytes).
 ///
-///   Fixed fields work in every layout: in a bitmap or BER-TLV record they
+///   Fixed fields work in every layout: in a bitmap or TLV record they
 ///   take a `bit` or `tag` like any field, and may be `Option<()>`. A
 ///   mismatch is `Invalid` with the field's name in the error path. Mark them
 ///   `#[serde(skip)]` when the struct is also serialized.
@@ -85,21 +90,21 @@
 ///   [`AbsentFmt`](crate::AbsentFmt). Decoding matches the pattern first and
 ///   otherwise decodes with the format, whose errors are returned. A present
 ///   value that encodes like the pattern reads back as `None`. The field is
-///   required by its container: a bitmap sets its bit and BER-TLV writes its
+///   required by its container: a bitmap sets its bit and TLV writes its
 ///   tag even for `None`, and in a concat record it is not part of the
 ///   optional tail.
-/// - `extras`: in a BER-TLV or TLV record, the field collecting unknown tags.
-///   In BER-TLV it is such as a `BTreeMap<String, String>` of uppercase hex
-///   values keyed like `t9F03_unknown`. In TLV, `fmt` reads every unknown
-///   tag's value, and the key is the tag's text: `#[wire(extras, fmt =
-///   Field<Ascii<0, 99>, AsciiLength<2>>)]` on a `BTreeMap<String, String>`.
-///   At most one; it takes no `fmt` or `tag` and is written at its declared
+/// - `extras`, with `fmt`: in a TLV record, the field collecting unknown
+///   tags. `fmt` reads every unknown tag's value, and the key is the tag's
+///   text: `#[wire(extras, fmt = Field<Ascii<0, 99>, AsciiLength<2>>)]` on a
+///   `BTreeMap<String, String>`, which keeps the last value of a repeated
+///   tag. At most one; it takes no `tag` and is written at its declared
 ///   position. Encoding rejects an entry that claims a declared tag, even one
-///   whose field is absent.
+///   whose field is absent. For serde, [`unknown_tag_keys`](crate::extras::unknown_tag_keys)
+///   flattens the entries beside the named fields as `t9F03_unknown` keys.
 ///
 /// - `select = field`: the field is a selected enum, decoded by the value of
-///   an earlier text field of the same record, such as the MTI. Not in
-///   BER-TLV records.
+///   an earlier text field of the same record, such as the MTI. Not in TLV
+///   records.
 ///
 ///   `select = func(a, b)` takes the key from a function of earlier fields
 ///   instead: it receives a reference to each and returns anything that is
@@ -229,7 +234,7 @@
 /// ```
 ///
 /// A struct without a layout, a required field after an `Option` one in a
-/// concat record, a bitmap field number out of order, a repeated BER tag, an
+/// concat record, a bitmap field number out of order, a repeated TLV tag, an
 /// unknown argument, and `#[cfg]` on an item, field or variant are compile
 /// errors:
 ///
@@ -271,9 +276,9 @@
 /// ```
 ///
 /// ```compile_fail
-/// type Text = finfmt::Field<finfmt::Ascii<0, 9>, finfmt::Rest>;
+/// type Text = finfmt::Field<finfmt::Ascii<0, 9>, finfmt::BerLength>;
 /// finfmt::wire_type! {
-///     #[wire(ber_tlv)]
+///     #[wire(tlv(tag = finfmt::BerTag))]
 ///     struct Repeated {
 ///         #[wire(tag = "9F02", fmt = Text)]
 ///         first: String,
@@ -359,14 +364,8 @@ macro_rules! __finfmt_wire_item {
     ($kept:tt [bitmap = $format:ty ,]; ; $vis:vis struct $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
         $crate::__finfmt_wire_fields! { ([bitmap $format] $kept $vis $name $lt $de [] [0]) []; $($body)* }
     };
-    ($kept:tt [ber_tlv ,]; ; $vis:vis struct $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
-        $crate::__finfmt_wire_fields! { ([ber_tlv false] $kept $vis $name $lt $de [] [0]) []; $($body)* }
-    };
-    ($kept:tt [ber_tlv(allow_zero_padding) ,]; ; $vis:vis struct $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
-        $crate::__finfmt_wire_fields! { ([ber_tlv true] $kept $vis $name $lt $de [] [0]) []; $($body)* }
-    };
-    ($kept:tt [tlv(tag = $tag:ty $(,)?) ,]; ; $vis:vis struct $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
-        $crate::__finfmt_wire_fields! { ([tlv ($tag)] $kept $vis $name $lt $de [] [0]) []; $($body)* }
+    ($kept:tt [tlv(tag = $tag:ty $(, padding = $padding:expr)? $(,)?) ,]; ; $vis:vis struct $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
+        $crate::__finfmt_wire_fields! { ([tlv ($tag) [$($padding)?]] $kept $vis $name $lt $de [] [0]) []; $($body)* }
     };
     ($kept:tt [$kind:ident ,]; ; $vis:vis enum $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
         $crate::__finfmt_wire_variants! { ($kind $kept $vis $name $lt $de []) []; $($body)* }
@@ -913,7 +912,7 @@ macro_rules! __finfmt_wire_emit {
             }
         };
     };
-    ([tlv ($tagfmt:ty)] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
+    ([tlv ($tagfmt:ty) [$($padding:expr)?]] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
         [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident $pos:tt ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]) => {
         $crate::__finfmt_wire_no_cfg! { $($kept)* $($($fkept)*)* }
         $($kept)*
@@ -921,7 +920,7 @@ macro_rules! __finfmt_wire_emit {
             $($($fkept)* $fvis $field: $ty,)*
         }
 
-        const _: () = if let Err(message) = $crate::composite::check_tlv_tags(&[$($crate::__finfmt_wire_args! { {__finfmt_wire_ber @tag} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* }),*]) {
+        const _: () = if let Err(message) = $crate::composite::check_tlv_tags(&[$($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @tag} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* }),*]) {
             panic!("{}", message);
         };
 
@@ -936,7 +935,7 @@ macro_rules! __finfmt_wire_emit {
                     let _ = (&output, &scratch, value);
                     // Extras must not use a declared tag, even one whose field is absent.
                     #[allow(dead_code)]
-                    const KNOWN_TAGS: &[&str] = &[$($crate::__finfmt_wire_args! { {__finfmt_wire_ber @known} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* }),*];
+                    const KNOWN_TAGS: &[&str] = &[$($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @known} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* }),*];
                     $($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @encode value, output, scratch, KNOWN_TAGS, ($tagfmt);} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
                     Ok(())
                 }
@@ -953,9 +952,16 @@ macro_rules! __finfmt_wire_emit {
                     scratch: &mut &$de mut [u8],
                 ) -> Result<Self, $crate::CompositeError> {
                     let _ = (&input, &scratch);
-                    $($crate::__finfmt_wire_args! { {__finfmt_wire_ber @init} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
+                    $($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @init} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
                     // Each declared tag's wire bytes, by field position; entries match them as prefixes.
                     let tags = [$($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @wire_tag scratch, ($tagfmt);} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* }),*];
+                    // Padding may come before, between and after entries; encoding writes none.
+                    const PADDING: &[u8] = &[$($padding)?];
+                    debug_assert!(
+                        !tags.iter().any(|tag| tag.starts_with_any(PADDING)),
+                        "a declared tag starts with the record's padding byte"
+                    );
+                    $crate::composite::skip_tlv_padding(input, PADDING);
                     while !input.is_empty() {
                         let mut matched = false;
                         $($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @match tags, $pos, input, scratch, matched;} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
@@ -964,69 +970,9 @@ macro_rules! __finfmt_wire_emit {
                             $crate::__private::cold_path();
                             return Err($crate::CompositeError::from($crate::Error::Invalid));
                         }
+                        $crate::composite::skip_tlv_padding(input, PADDING);
                     }
-                    $($crate::__finfmt_wire_args! { {__finfmt_wire_ber @finish} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
-                    Ok($name { $($field),* })
-                }
-            }
-        };
-    };
-    ([ber_tlv $padding:tt] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
-        [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident $pos:tt ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]) => {
-        $crate::__finfmt_wire_no_cfg! { $($kept)* $($($fkept)*)* }
-        $($kept)*
-        $vis struct $name $(<$lt>)? {
-            $($($fkept)* $fvis $field: $ty,)*
-        }
-
-        const _: () = if let Err(message) = $crate::composite::check_ber_tags(&[$($crate::__finfmt_wire_args! { {__finfmt_wire_ber @tag} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* }),*]) {
-            panic!("{}", message);
-        };
-
-        const _: () = {
-            // Generated constants for fixed and absent fields, and the format impls.
-            $crate::__finfmt_wire_consts! { @all ber_tlv $name [$($lt)?] [$({ $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*] }
-
-            impl $(<$lt>)? $crate::composite::FieldEncode<$name $(<$lt>)?> for $name $(<$lt>)? {
-                #[inline(always)]
-                #[allow(unused_assignments, unused_mut, unused_variables)]
-                fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &Self) -> Result<(), $crate::CompositeError> {
-                    let _ = (&output, &scratch, value);
-                    // Extras must not use a declared tag, even one whose field is absent.
-                    #[allow(dead_code)]
-                    const KNOWN_TAGS: &[&str] = &[$($crate::__finfmt_wire_args! { {__finfmt_wire_ber @known} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* }),*];
-                    $($crate::__finfmt_wire_args! { {__finfmt_wire_ber @encode value, output, scratch, KNOWN_TAGS;} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
-                    Ok(())
-                }
-            }
-
-            impl<$de> $crate::composite::FieldDecode<$de, $name $(<$lt>)?> for $name $(<$lt>)? {
-                // Entries are read until the input ends.
-                const TAKES_REST: bool = true;
-
-                #[inline(always)]
-                #[allow(unused_assignments, unused_mut, unused_variables)]
-                fn decode_field(
-                    input: &mut &$de [u8],
-                    scratch: &mut &$de mut [u8],
-                ) -> Result<Self, $crate::CompositeError> {
-                    let _ = (&input, &scratch);
-                    $($crate::__finfmt_wire_args! { {__finfmt_wire_ber @init} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
-                    while let Some(entry) =
-                        $crate::composite::decode_ber_tlv_collection_entry::<$padding>(input).map_err($crate::CompositeError::from)?
-                    {
-                        let mut value_input = entry.value;
-                        let mut matched = false;
-                        let mut tag_hex = [0; $crate::primitive::bertlv::MAX_BER_TAG_HEX];
-                        let tag_hex = $crate::primitive::bertlv::format_ber_tag_hex(&mut tag_hex, entry.tag);
-                        $($crate::__finfmt_wire_args! { {__finfmt_wire_ber @match tag_hex, value_input, scratch, matched;} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
-                        $($crate::__finfmt_wire_args! { {__finfmt_wire_ber @unknown entry, value_input, scratch, matched;} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
-                        if !matched {
-                            $crate::__private::cold_path();
-                            return Err($crate::CompositeError::from($crate::Error::Invalid));
-                        }
-                    }
-                    $($crate::__finfmt_wire_args! { {__finfmt_wire_ber @finish} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
+                    $($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @finish} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
                     Ok($name { $($field),* })
                 }
             }
@@ -1212,9 +1158,6 @@ macro_rules! __finfmt_wire_consts {
     };
 
     (@check_select $layout:ident $kind:ident []) => {};
-    (@check_select ber_tlv $kind:ident [$($select:tt)+]) => {
-        compile_error!("wire_type!: `select` is not for BER-TLV records, whose entries arrive in any order");
-    };
     (@check_select tlv $kind:ident [$($select:tt)+]) => {
         compile_error!("wire_type!: `select` is not for TLV records, whose entries arrive in any order");
     };
@@ -1223,17 +1166,6 @@ macro_rules! __finfmt_wire_consts {
     (@check concat $kind:ident [] [] []) => {};
     (@check delimited $kind:ident [] [] []) => {};
     (@check bitmap $kind:ident $bit:tt [] []) => {};
-    (@check ber_tlv $kind:ident [] [$($tag:tt)+] []) => {};
-    (@check ber_tlv req [] [] [extras]) => {};
-    (@check ber_tlv $kind:ident [] [] [extras ($fmt:ty)]) => {
-        compile_error!("wire_type!: a BER-TLV `extras` field takes no `fmt`; its values are hex");
-    };
-    (@check ber_tlv opt [] [] [extras]) => {
-        compile_error!("wire_type!: an `extras` field cannot be an Option");
-    };
-    (@check ber_tlv $kind:ident [] [] []) => {
-        compile_error!("wire_type!: a BER-TLV field needs a `tag`, or `extras` for the unknown-tag collection");
-    };
     (@check tlv $kind:ident [] [$($tag:tt)+] []) => {};
     (@check tlv req [] [] [extras ($fmt:ty)]) => {};
     (@check tlv $kind:ident [] [] [extras]) => {
@@ -1249,10 +1181,10 @@ macro_rules! __finfmt_wire_consts {
         compile_error!("wire_type!: `bit` is for bitmap records");
     };
     (@check $layout:ident $kind:ident $bit:tt [$($tag:tt)+] $extras:tt) => {
-        compile_error!("wire_type!: `tag` is for BER-TLV and TLV records");
+        compile_error!("wire_type!: `tag` is for TLV records");
     };
     (@check $layout:ident $kind:ident $bit:tt $tag:tt [extras $($fmt:tt)*]) => {
-        compile_error!("wire_type!: `extras` is for BER-TLV and TLV records");
+        compile_error!("wire_type!: `extras` is for TLV records");
     };
 
     (@item $name:ident $lt:tt []) => {};
@@ -1500,11 +1432,11 @@ macro_rules! __finfmt_wire_bitmap {
     (@body_decode $($rest:tt)*) => {};
 }
 
-/// One phase of a BER-TLV record for one field: a tagged field, or the
-/// `extras` collection.
+/// One phase of a TLV record for one field: a tagged field, or the `extras`
+/// collection.
 #[macro_export]
 #[doc(hidden)]
-macro_rules! __finfmt_wire_ber {
+macro_rules! __finfmt_wire_tlv {
     (@tag $kind:ident $field:ident ($fmt:ty) $bit:tt [$tag:expr] $($slots:tt)*) => {
         Some($tag)
     };
@@ -1519,54 +1451,12 @@ macro_rules! __finfmt_wire_ber {
         ""
     };
 
-    (@encode $value:ident, $output:ident, $scratch:ident, $known:ident; req $field:ident ($fmt:ty) $bit:tt [$tag:expr] $($slots:tt)*) => {
-        $crate::composite::encode_ber_tlv_field($output, $scratch, $tag, stringify!($field), |value_out, scratch| {
-            <$fmt as $crate::composite::FieldEncode<_>>::encode_field(value_out, scratch, &$value.$field)
-        })?;
-    };
-    (@encode $value:ident, $output:ident, $scratch:ident, $known:ident; opt $field:ident ($fmt:ty) $bit:tt [$tag:expr] $($slots:tt)*) => {
-        if let Some(inner) = $value.$field.as_ref() {
-            $crate::composite::encode_ber_tlv_field($output, $scratch, $tag, stringify!($field), |value_out, scratch| {
-                <$fmt as $crate::composite::FieldEncode<_>>::encode_field(value_out, scratch, inner)
-            })?;
-        }
-    };
-    (@encode $value:ident, $output:ident, $scratch:ident, $known:ident; req $field:ident ($fmt:ty) $bit:tt [] [extras] $($slots:tt)*) => {
-        $crate::composite::BerTlvExtras::encode_unknowns(&$value.$field, $output, $scratch, $known)
-            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
-    };
-    (@encode $($rest:tt)*) => {};
-
     (@init $kind:ident $field:ident ($fmt:ty) $bit:tt [$tag:expr] $($slots:tt)*) => {
         let mut $field = None;
     };
     (@init $kind:ident $field:ident ($fmt:ty) $bit:tt [] $($slots:tt)*) => {
         let mut $field = ::core::default::Default::default();
     };
-
-    (@match $tag_hex:ident, $value_input:ident, $scratch:ident, $matched:ident; $kind:ident $field:ident ($fmt:ty) $bit:tt [$tag:expr] $($slots:tt)*) => {
-        if !$matched {
-            $matched = $crate::composite::decode_ber_tlv_field(
-                $tag_hex,
-                $tag,
-                &mut $value_input,
-                $scratch,
-                &mut $field,
-                stringify!($field),
-                |value_input, scratch| <$fmt as $crate::composite::FieldDecode<'_, _>>::decode_field(value_input, scratch),
-            )?;
-        }
-    };
-    (@match $($rest:tt)*) => {};
-
-    (@unknown $entry:ident, $value_input:ident, $scratch:ident, $matched:ident; $kind:ident $field:ident ($fmt:ty) $bit:tt [] [extras] $($slots:tt)*) => {
-        if !$matched {
-            $crate::composite::BerTlvExtras::decode_unknown(&mut $field, $entry.tag, $value_input, $scratch)
-                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
-            $matched = true;
-        }
-    };
-    (@unknown $($rest:tt)*) => {};
 
     (@finish req $field:ident ($fmt:ty) $bit:tt [$tag:expr] $($slots:tt)*) => {
         let $field = match $field {
@@ -1578,14 +1468,7 @@ macro_rules! __finfmt_wire_ber {
         };
     };
     (@finish $($rest:tt)*) => {};
-}
 
-/// One phase of a generic TLV record for one field: a tagged field, or the
-/// `extras` collection. Tags, declarations and finishing are shared with
-/// [`__finfmt_wire_ber`].
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __finfmt_wire_tlv {
     (@encode $value:ident, $output:ident, $scratch:ident, $known:ident, ($tagfmt:ty); req $field:ident ($fmt:ty) $bit:tt [$tag:expr] $($slots:tt)*) => {
         $crate::composite::encode_tlv_tag::<$tagfmt>($output, $scratch, $tag, stringify!($field))?;
         <$fmt as $crate::composite::FieldEncode<_>>::encode_field($output, $scratch, &$value.$field)
@@ -1810,27 +1693,29 @@ mod tests {
         }
     }
 
-    type Hex4 = Field<crate::UpperHexEven<0, 16>, crate::Rest, crate::PackNibbles<crate::primitive::nibble::UpperHexDigits>>;
+    /// A BER-TLV value: hex text of the bytes behind a BER length.
+    type BerHex<const MAX: usize> =
+        Field<crate::UpperHexEven<0, MAX>, crate::BerLength, crate::PackNibbles<crate::primitive::nibble::UpperHexDigits>>;
     const AMOUNT: &str = "9F02";
 
     crate::wire_type! {
         #[derive(Debug, Clone, PartialEq)]
-        #[wire(ber_tlv)]
+        #[wire(tlv(tag = crate::BerTag))]
         struct Emv {
-            #[wire(tag = AMOUNT, fmt = Hex4)]
+            #[wire(tag = AMOUNT, fmt = BerHex<16>)]
             amount: String,
-            #[wire(extras)]
+            #[wire(extras, fmt = BerHex<512>)]
             extras: std::collections::BTreeMap<String, String>,
-            #[wire(fmt = Hex4, tag = "5F2A")]
+            #[wire(fmt = BerHex<16>, tag = "5F2A")]
             currency: Option<String>,
         }
 
         #[derive(Debug, Clone, PartialEq)]
-        #[wire(ber_tlv(allow_zero_padding))]
+        #[wire(tlv(tag = crate::BerTag, padding = 0x00))]
         struct Strict<'a> {
-            #[wire(tag = "9F02", fmt = Field<Ascii<0, 8>, crate::Rest>)]
+            #[wire(tag = "9F02", fmt = Field<Ascii<0, 8>, crate::BerLength>)]
             amount: &'a str,
-            #[wire(tag = "9F36", fmt = Hex4)]
+            #[wire(tag = "9F36", fmt = BerHex<16>)]
             counter: Option<String>,
         }
     }
@@ -1838,7 +1723,7 @@ mod tests {
     #[test]
     fn ber_tlv_records_roundtrip_extras_and_padding() {
         let mut extras = std::collections::BTreeMap::new();
-        extras.insert("t9F03_unknown".to_owned(), "00".to_owned());
+        extras.insert("9F03".to_owned(), "00".to_owned());
         let value = Emv {
             amount: "000000012345".into(),
             extras,
@@ -1860,7 +1745,7 @@ mod tests {
             assert_eq!((error.kind, error.path()), (Error::Invalid, &[PathSegment::Field("amount")][..]));
         }
         let mut claimed = std::collections::BTreeMap::new();
-        claimed.insert("t5F2A_unknown".to_owned(), "00".to_owned());
+        claimed.insert("5F2A".to_owned(), "00".to_owned());
         let value = Emv {
             amount: "00".into(),
             extras: claimed,
@@ -1881,32 +1766,6 @@ mod tests {
         let mut scratch = [0; 128];
         let error = crate::decode::<Strict, Strict>(b"\x9F\x02\x02AB\x9F\x03\x01\x00", &mut scratch).unwrap_err();
         assert_eq!((error.kind, error.path()), (Error::Invalid, &[][..]));
-    }
-
-    #[test]
-    fn ber_tag_check_agrees_with_the_tag_parser() {
-        let check = |bytes: &[u8]| {
-            let hex: std::string::String = bytes.iter().map(|byte| format!("{byte:02X}")).collect();
-            let valid = crate::primitive::bertlv::parse_ber_tag_hex(&hex).is_ok();
-            assert_eq!(crate::composite::check_ber_tags(&[Some(&hex)]).is_ok(), valid, "{hex}");
-        };
-        for first in 0..=255u8 {
-            check(&[first]);
-            for second in 0..=255u8 {
-                check(&[first, second]);
-            }
-            for rest in [[0x81, 0x01], [0x80, 0x01], [0x81, 0x80], [0xFF, 0x7F]] {
-                check(&[first, rest[0], rest[1]]);
-                check(&[first, rest[0], rest[1], 0x01]);
-                check(&[first, rest[0], rest[1], 0x80]);
-            }
-        }
-        for tag in ["9f02", "9F0", "", "9F02X1", "1F8181817F"] {
-            assert!(crate::composite::check_ber_tags(&[Some(tag)]).is_err(), "{tag}");
-        }
-        assert!(crate::composite::check_ber_tags(&[Some("9F02"), None, Some("9F02")]).is_err());
-        assert!(crate::composite::check_ber_tags(&[None, Some("5A"), None]).is_err());
-        assert!(crate::composite::check_ber_tags(&[None, Some("5A"), Some("9F02")]).is_ok());
     }
 
     type A1 = Field<Ascii<1, 1>, Fixed<1>>;
@@ -1950,11 +1809,12 @@ mod tests {
         }
 
         #[derive(Debug, Default, PartialEq)]
-        #[wire(ber_tlv)]
+        #[wire(tlv(tag = crate::BerTag))]
         struct FixedBer {
-            #[wire(tag = "9F35", fixed_bytes = b"\x22")]
+            /// The constant includes its BER length.
+            #[wire(tag = "9F35", fixed_bytes = b"\x01\x22")]
             terminal_type: (),
-            #[wire(tag = "9F02", fmt = Hex4)]
+            #[wire(tag = "9F02", fmt = BerHex<16>)]
             amount: String,
         }
     }
@@ -2168,9 +2028,10 @@ mod tests {
         }
 
         #[derive(Debug, Default, PartialEq)]
-        #[wire(ber_tlv)]
+        #[wire(tlv(tag = crate::BerTag))]
         struct AbsentBer {
-            #[wire(tag = "9F02", fmt = Field<Ascii<0, 6>, crate::Rest>, absent_bytes = b"")]
+            /// Absent is a zero BER length.
+            #[wire(tag = "9F02", fmt = Field<Ascii<0, 6>, crate::BerLength>, absent_bytes = b"\x00")]
             amount: Option<String>,
         }
     }
@@ -2270,11 +2131,11 @@ mod tests {
         }
 
         #[derive(Debug, PartialEq)]
-        #[wire(ber_tlv)]
+        #[wire(tlv(tag = crate::BerTag))]
         struct Tags {
-            #[wire(tag = "5A", fmt = Text)]
+            #[wire(tag = "5A", fmt = Field<Ascii<0, 20>, crate::BerLength>)]
             a: Option<String>,
-            #[wire(tag = "5B", fmt = Text)]
+            #[wire(tag = "5B", fmt = Field<Ascii<0, 20>, crate::BerLength>)]
             b: Option<String>,
         }
 
