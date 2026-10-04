@@ -83,7 +83,17 @@
 ///
 /// - `select = field`: the field is a selected enum, decoded by the value of
 ///   an earlier text field of the same record, such as the MTI. Not in
-///   BER-TLV records, and not on an `Option` field yet.
+///   BER-TLV records.
+///
+///   `select = func(a, b)` takes the key from a function of earlier fields
+///   instead: it receives a reference to each and returns anything that is
+///   `AsRef<str>`. That covers a key that is part of a field, a key made from
+///   several fields, many codes sharing one variant, and a key field that is
+///   an `Option`: `fn kind(k: &Option<String>) -> &str { k.as_deref().unwrap_or("none") }`
+///   with a variant `#[wire(rename = "none")]`.
+///
+///   The selected field may itself be an `Option`, present as its container
+///   says: a bitmap bit, a concat tail, a non-empty delimited segment.
 ///
 /// Enums state their kind too:
 ///
@@ -938,8 +948,8 @@ macro_rules! __finfmt_wire_args {
     ($phase:tt $kind:ident $field:ident $pos:tt $default:tt; $fmt:tt $bit:tt $tag:tt [extras] $fixed:tt $absent:tt $select:tt;) => {
         compile_error!("wire_type!: an `extras` field takes no `fmt`, `bit`, `tag`, `select`, fixed value or absent form")
     };
-    ($phase:tt $kind:ident $field:ident $pos:tt $default:tt; $fmt:tt $bit:tt $tag:tt [] $fixed:tt $absent:tt [$select:ident];) => {
-        $crate::__finfmt_wire_args! { @select $phase $kind $field $pos $default; $fmt $bit $tag [] $fixed $absent [$select]; }
+    ($phase:tt $kind:ident $field:ident $pos:tt $default:tt; $fmt:tt $bit:tt $tag:tt [] $fixed:tt $absent:tt [$($select:tt)+];) => {
+        $crate::__finfmt_wire_args! { @select $phase $kind $field $pos $default; $fmt $bit $tag [] $fixed $absent [$($select)+]; }
     };
     // Fixed fields.
     ($phase:tt $kind:ident $field:ident $pos:tt $default:tt; $fmt:tt $bit:tt $tag:tt [] [$($fixed:tt)+] [$($absent:tt)+] [];) => {
@@ -994,13 +1004,13 @@ macro_rules! __finfmt_wire_args {
         $crate::$target! { $($phase)* $kind $field ($default) $bit $tag [] [] [] }
     };
     // A field decoded by a selected enum, keyed by an earlier field.
-    (@select {$target:ident $($phase:tt)*} $kind:ident $field:ident $pos:tt ($default:ty); [$fmt:ty] $bit:tt $tag:tt [] [] [] [$select:ident];) => {
-        $crate::$target! { $($phase)* $kind $field ($fmt) $bit $tag [] [$select] [] }
+    (@select {$target:ident $($phase:tt)*} $kind:ident $field:ident $pos:tt ($default:ty); [$fmt:ty] $bit:tt $tag:tt [] [] [] [$($select:tt)+];) => {
+        $crate::$target! { $($phase)* $kind $field ($fmt) $bit $tag [] [$($select)+] [] }
     };
-    (@select {$target:ident $($phase:tt)*} $kind:ident $field:ident $pos:tt ($default:ty); [] $bit:tt $tag:tt [] [] [] [$select:ident];) => {
-        $crate::$target! { $($phase)* $kind $field ($default) $bit $tag [] [$select] [] }
+    (@select {$target:ident $($phase:tt)*} $kind:ident $field:ident $pos:tt ($default:ty); [] $bit:tt $tag:tt [] [] [] [$($select:tt)+];) => {
+        $crate::$target! { $($phase)* $kind $field ($default) $bit $tag [] [$($select)+] [] }
     };
-    (@select $phase:tt $kind:ident $field:ident $pos:tt $default:tt; $fmt:tt $bit:tt $tag:tt [] $fixed:tt $absent:tt [$select:ident];) => {
+    (@select $phase:tt $kind:ident $field:ident $pos:tt $default:tt; $fmt:tt $bit:tt $tag:tt [] $fixed:tt $absent:tt [$($select:tt)+];) => {
         compile_error!("wire_type!: a `select` field has no fixed value or absent form")
     };
     // One argument at a time, each at most once.
@@ -1041,6 +1051,12 @@ macro_rules! __finfmt_wire_args {
         $crate::__finfmt_wire_args! { $phase $kind $field $pos $default; $fmt $bit $tag $extras $fixed [type $absent] $select; $($($rest)*)? }
     };
     ($phase:tt $kind:ident $field:ident $pos:tt $default:tt; $fmt:tt $bit:tt $tag:tt $extras:tt $fixed:tt $absent:tt [];
+        select = $($func:ident)::+ ($($arg:ident),+ $(,)?) $(, $($rest:tt)*)?) => {
+        $crate::__finfmt_wire_args! {
+            $phase $kind $field $pos $default; $fmt $bit $tag $extras $fixed $absent [($($func)::+) ($($arg),+)]; $($($rest)*)?
+        }
+    };
+    ($phase:tt $kind:ident $field:ident $pos:tt $default:tt; $fmt:tt $bit:tt $tag:tt $extras:tt $fixed:tt $absent:tt [];
         select = $select:ident $(, $($rest:tt)*)?) => {
         $crate::__finfmt_wire_args! { $phase $kind $field $pos $default; $fmt $bit $tag $extras $fixed $absent [$select]; $($($rest)*)? }
     };
@@ -1065,10 +1081,13 @@ macro_rules! __finfmt_wire_consts {
         false
     };
     (@rest concat $de:lifetime $ty:tt $inner:tt opt $($rest:tt)*) => { true };
+    (@rest $layout:ident $de:lifetime $ty:tt ($inner:ty) opt $field:ident ($fmt:ty) $bit:tt $tag:tt [] [$($select:tt)+] $items:tt) => {
+        <$fmt as $crate::composite::ContextDecode<$de, $inner, str>>::TAKES_REST
+    };
     (@rest $layout:ident $de:lifetime $ty:tt ($inner:ty) opt $field:ident ($fmt:ty) $($slots:tt)*) => {
         <$fmt as $crate::composite::FieldDecode<$de, $inner>>::TAKES_REST
     };
-    (@rest $layout:ident $de:lifetime ($ty:ty) $inner:tt req $field:ident ($fmt:ty) $bit:tt $tag:tt [] [$select:ident] $items:tt) => {
+    (@rest $layout:ident $de:lifetime ($ty:ty) $inner:tt req $field:ident ($fmt:ty) $bit:tt $tag:tt [] [$($select:tt)+] $items:tt) => {
         <$fmt as $crate::composite::ContextDecode<$de, $ty, str>>::TAKES_REST
     };
     (@rest $layout:ident $de:lifetime ($ty:ty) $inner:tt req $field:ident ($fmt:ty) $($slots:tt)*) => {
@@ -1085,13 +1104,10 @@ macro_rules! __finfmt_wire_consts {
     };
 
     (@check_select $layout:ident $kind:ident []) => {};
-    (@check_select ber_tlv $kind:ident [$select:ident]) => {
+    (@check_select ber_tlv $kind:ident [$($select:tt)+]) => {
         compile_error!("wire_type!: `select` is not for BER-TLV records, whose entries arrive in any order");
     };
-    (@check_select $layout:ident opt [$select:ident]) => {
-        compile_error!("wire_type!: a `select` field cannot be an Option yet");
-    };
-    (@check_select $layout:ident req [$select:ident]) => {};
+    (@check_select $layout:ident $kind:ident [$($select:tt)+]) => {};
 
     (@check concat $kind:ident [] [] []) => {};
     (@check delimited $kind:ident [] [] []) => {};
@@ -1139,6 +1155,24 @@ macro_rules! __finfmt_wire_consts {
     };
 }
 
+/// The key text a `select` field passes to its selected enum: an earlier
+/// field's text, or what a function of earlier fields returns.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __finfmt_wire_key {
+    ($select:ident) => {
+        ::core::convert::AsRef::<str>::as_ref(&$select)
+    };
+    // Each argument is tied to its field's type first, so the function's
+    // parameter types do not decide how the field decodes.
+    (($($func:ident)::+) ($($arg:ident),+)) => {
+        ::core::convert::AsRef::<str>::as_ref(&{
+            $($crate::__private::same_type(&$arg, |record: &Self| &record.$arg);)+
+            $($func)::+($(&$arg),+)
+        })
+    };
+}
+
 /// One concat field: written in order; `Option` fields form the tail.
 #[macro_export]
 #[doc(hidden)]
@@ -1159,13 +1193,19 @@ macro_rules! __finfmt_wire_concat {
             (true, None) => {}
         }
     };
-    (@decode $input:ident, $scratch:ident; req $field:ident ($fmt:ty) $bit:tt $tag:tt $extras:tt [$select:ident] $items:tt) => {
-        let $field = <$fmt as $crate::composite::ContextDecode<'_, _, str>>::decode_with(
-            $input,
-            $scratch,
-            ::core::convert::AsRef::<str>::as_ref(&$select),
-        )
-        .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
+    (@decode $input:ident, $scratch:ident; req $field:ident ($fmt:ty) $bit:tt $tag:tt $extras:tt [$($select:tt)+] $items:tt) => {
+        let $field = <$fmt as $crate::composite::ContextDecode<'_, _, str>>::decode_with($input, $scratch, $crate::__finfmt_wire_key!($($select)+))
+            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
+    };
+    (@decode $input:ident, $scratch:ident; opt $field:ident ($fmt:ty) $bit:tt $tag:tt $extras:tt [$($select:tt)+] $items:tt) => {
+        let $field = if $input.is_empty() {
+            None
+        } else {
+            Some(
+                <$fmt as $crate::composite::ContextDecode<'_, _, str>>::decode_with($input, $scratch, $crate::__finfmt_wire_key!($($select)+))
+                    .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
+            )
+        };
     };
     (@decode $input:ident, $scratch:ident; req $field:ident ($fmt:ty) $($slots:tt)*) => {
         let $field = <$fmt as $crate::composite::FieldDecode<'_, _>>::decode_field($input, $scratch)
@@ -1207,11 +1247,21 @@ macro_rules! __finfmt_wire_delimited {
             $crate::composite::encode_delimiter($output, $separator)?;
         }
     };
-    (@decode $input:ident, $scratch:ident, $separator:ident, $more:expr; req $field:ident ($fmt:ty) $bit:tt $tag:tt $extras:tt [$select:ident] $items:tt) => {
+    (@decode $input:ident, $scratch:ident, $separator:ident, $more:expr; req $field:ident ($fmt:ty) $bit:tt $tag:tt $extras:tt [$($select:tt)+] $items:tt) => {
         let segment = $crate::composite::decode_delimited_field($input, $separator, $more)?;
-        let $field =
-            $crate::composite::decode_delimited_context::<_, str, $fmt>(segment, $scratch, ::core::convert::AsRef::<str>::as_ref(&$select))
-                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
+        let $field = $crate::composite::decode_delimited_context::<_, str, $fmt>(segment, $scratch, $crate::__finfmt_wire_key!($($select)+))
+            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
+    };
+    (@decode $input:ident, $scratch:ident, $separator:ident, $more:expr; opt $field:ident ($fmt:ty) $bit:tt $tag:tt $extras:tt [$($select:tt)+] $items:tt) => {
+        let segment = $crate::composite::decode_delimited_field($input, $separator, $more)?;
+        let $field = if segment.is_empty() {
+            None
+        } else {
+            Some(
+                $crate::composite::decode_delimited_context::<_, str, $fmt>(segment, $scratch, $crate::__finfmt_wire_key!($($select)+))
+                    .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
+            )
+        };
     };
     (@decode $input:ident, $scratch:ident, $separator:ident, $more:expr; req $field:ident ($fmt:ty) $($slots:tt)*) => {
         let segment = $crate::composite::decode_delimited_field($input, $separator, $more)?;
@@ -1284,14 +1334,20 @@ macro_rules! __finfmt_wire_bitmap {
     };
     (@clear $($rest:tt)*) => {};
 
-    (@body_decode $bitmap:ident, $input:ident, $scratch:ident; req $field:ident ($fmt:ty) [$bit:literal] $tag:tt $extras:tt [$select:ident] $items:tt) => {
+    (@body_decode $bitmap:ident, $input:ident, $scratch:ident; opt $field:ident ($fmt:ty) [$bit:literal] $tag:tt $extras:tt [$($select:tt)+] $items:tt) => {
         let $field = if $bitmap.get($bit) {
-            <$fmt as $crate::composite::ContextDecode<'_, _, str>>::decode_with(
-                $input,
-                $scratch,
-                ::core::convert::AsRef::<str>::as_ref(&$select),
+            Some(
+                <$fmt as $crate::composite::ContextDecode<'_, _, str>>::decode_with($input, $scratch, $crate::__finfmt_wire_key!($($select)+))
+                    .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
             )
-            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?
+        } else {
+            None
+        };
+    };
+    (@body_decode $bitmap:ident, $input:ident, $scratch:ident; req $field:ident ($fmt:ty) [$bit:literal] $tag:tt $extras:tt [$($select:tt)+] $items:tt) => {
+        let $field = if $bitmap.get($bit) {
+            <$fmt as $crate::composite::ContextDecode<'_, _, str>>::decode_with($input, $scratch, $crate::__finfmt_wire_key!($($select)+))
+                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?
         } else {
             $crate::__private::cold_path();
             return Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)));
@@ -2300,6 +2356,135 @@ mod tests {
         assert_eq!(Body::Echo.wire_name(), Some("0800"));
         assert_eq!(Body::Request(Inner { code: "07".into() }).wire_name(), Some("0100"));
         assert_eq!(Body::Unknown("X".into()).wire_name(), None);
+    }
+
+    fn kind_key(kind: &Option<String>) -> &str {
+        kind.as_deref().unwrap_or("none")
+    }
+
+    fn prefix_key(code: &str) -> &str {
+        code.get(..2).unwrap_or_default()
+    }
+
+    fn pair_key(code: &str, flag: &str) -> &'static str {
+        if code.starts_with('9') || flag == "L" { "02" } else { "01" }
+    }
+
+    crate::wire_type! {
+        #[derive(Debug, Clone, PartialEq)]
+        #[wire(selected)]
+        enum Keyed {
+            #[wire(rename = "01")]
+            Short(#[wire(fmt = N2)] String),
+            #[wire(rename = "02")]
+            Long(#[wire(fmt = N4)] String),
+            #[wire(rename = "none")]
+            Plain(#[wire(fmt = A1)] String),
+        }
+
+        #[derive(Debug, Clone, PartialEq)]
+        #[wire(bitmap = HexBitmap)]
+        struct KeyedBitmap {
+            #[wire(fmt = N2, bit = 2)]
+            kind: Option<String>,
+            #[wire(bit = 3, select = kind_key(kind))]
+            body: Option<Keyed>,
+        }
+
+        #[derive(Debug, Clone, PartialEq)]
+        #[wire(concat)]
+        struct KeyedConcat<'a> {
+            #[wire(fmt = N4)]
+            code: &'a str,
+            #[wire(fmt = A1)]
+            flag: &'a str,
+            #[wire(select = prefix_key(code))]
+            first: Keyed,
+            #[wire(select = self::pair_key(code, flag))]
+            second: Option<Keyed>,
+        }
+
+        #[derive(Debug, Clone, PartialEq)]
+        #[wire(delimited = b'|')]
+        struct KeyedDelimited {
+            #[wire(fmt = N2)]
+            kind: Option<String>,
+            #[wire(select = kind_key(kind))]
+            body: Option<Keyed>,
+        }
+    }
+
+    #[test]
+    fn select_functions_key_by_parts_pairs_and_missing_fields() {
+        // An absent key field selects through the function's fallback name.
+        for (value, wire) in [
+            (
+                KeyedBitmap {
+                    kind: Some("01".into()),
+                    body: Some(Keyed::Short("12".into())),
+                },
+                &b"60000000000000000112"[..],
+            ),
+            (
+                KeyedBitmap {
+                    kind: None,
+                    body: Some(Keyed::Plain("X".into())),
+                },
+                b"2000000000000000X",
+            ),
+            (
+                KeyedBitmap {
+                    kind: Some("02".into()),
+                    body: None,
+                },
+                b"400000000000000002",
+            ),
+        ] {
+            assert_eq!(encode::<KeyedBitmap, _>(&value).as_deref(), Ok(wire));
+            let mut scratch = [0; 64];
+            assert_eq!(crate::decode::<KeyedBitmap, KeyedBitmap>(wire, &mut scratch), Ok(value));
+        }
+        let mut scratch = [0; 64];
+        let error = crate::decode::<KeyedBitmap, KeyedBitmap>(b"60000000000000000312", &mut scratch).unwrap_err();
+        assert_eq!((error.kind, error.path()), (Error::Invalid, &[PathSegment::Field("body")][..]));
+
+        // A key from part of a field, and one from two fields; the tail may be omitted.
+        let value = KeyedConcat {
+            code: "0199",
+            flag: "L",
+            first: Keyed::Short("34".into()),
+            second: Some(Keyed::Long("5678".into())),
+        };
+        assert_eq!(encode::<KeyedConcat, _>(&value).as_deref(), Ok(&b"0199L345678"[..]));
+        let mut scratch = [0; 64];
+        assert_eq!(crate::decode::<KeyedConcat, KeyedConcat>(b"0199L345678", &mut scratch), Ok(value));
+        let mut scratch = [0; 64];
+        assert_eq!(
+            crate::decode::<KeyedConcat, KeyedConcat>(b"0299S1234", &mut scratch).map(|value| (value.first, value.second)),
+            Ok((Keyed::Long("1234".into()), None))
+        );
+
+        // Delimited: an empty segment is an absent key or body.
+        for (value, wire) in [
+            (
+                KeyedDelimited {
+                    kind: None,
+                    body: Some(Keyed::Plain("X".into())),
+                },
+                &b"|X"[..],
+            ),
+            (
+                KeyedDelimited {
+                    kind: Some("01".into()),
+                    body: None,
+                },
+                b"01|",
+            ),
+        ] {
+            assert_eq!(encode::<KeyedDelimited, _>(&value).as_deref(), Ok(wire));
+            let mut scratch = [0; 64];
+            assert_eq!(crate::decode::<KeyedDelimited, KeyedDelimited>(wire, &mut scratch), Ok(value));
+        }
     }
 
     #[test]

@@ -85,6 +85,10 @@ pub mod __private {
         }
     }
 
+    /// Infer a decoded binding's type from the record field it fills.
+    #[inline(always)]
+    pub fn same_type<R, T: ?Sized>(_value: &T, _field: fn(&R) -> &T) {}
+
     #[inline(always)]
     pub fn cold_path() {
         crate::utils::cold_path();
