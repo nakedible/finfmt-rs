@@ -378,6 +378,38 @@ pub fn decode_overpunch_digit(input: u8) -> Result<(bool, u8), Error> {
     Ok((negative, digit))
 }
 
+/// Encode a prevalidated decimal digit (0-9) as an ASCII overpunch character:
+/// `{` and `A`-`I` for +0..+9, `}` and `J`-`R` for -0..-9, the ASCII spelling
+/// of the EBCDIC zoned digits. Debug builds assert the digit domain.
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub fn encode_ascii_overpunch_digit(negative: bool, digit: u8) -> u8 {
+    debug_assert!(digit <= 9, "overpunch requires a decimal digit");
+    match (negative, digit) {
+        (false, 0) => b'{',
+        (true, 0) => b'}',
+        (false, digit) => b'A' + digit - 1,
+        (true, digit) => b'J' + digit - 1,
+    }
+}
+
+/// Decode an ASCII overpunch character, or a plain digit as positive.
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub fn decode_ascii_overpunch_digit(input: u8) -> Result<(bool, u8), Error> {
+    match input {
+        b'{' => Ok((false, 0)),
+        b'}' => Ok((true, 0)),
+        b'A'..=b'I' => Ok((false, input - b'A' + 1)),
+        b'J'..=b'R' => Ok((true, input - b'J' + 1)),
+        b'0'..=b'9' => Ok((false, input - b'0')),
+        _ => {
+            cold_path();
+            Err(Error::Invalid)
+        }
+    }
+}
+
 /// Decode a packed-decimal sign or EBCDIC overpunch zone: A/C/E/F are
 /// positive and B/D are negative. This is the set IBM COBOL accepts under
 /// `NUMPROC(NOPFD)`; encoders always write the preferred C, D or F:
@@ -405,18 +437,30 @@ pub fn packed_decimal_max_digits(bytes_len: usize) -> usize {
 /// Encode prevalidated ASCII digits that fit the zoned output width.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub(crate) fn encode_zoned_decimal_digits(output: &mut &mut [u8], digits: &[u8], negative: bool, len: usize) -> Result<(), Error> {
+pub(crate) fn encode_zoned_decimal_digits<const ASCII: bool>(
+    output: &mut &mut [u8],
+    digits: &[u8],
+    negative: bool,
+    len: usize,
+) -> Result<(), Error> {
     let output = reserve_bytes(output, len)?;
     debug_assert!(validate_numeric(digits, 1, usize::MAX).is_ok());
     debug_assert!(digits.len() <= output.len(), "digits must fit the zoned width");
     if let ([body @ .., last], [out @ .., last_out]) = (digits, output) {
         let pad = out.len().saturating_sub(body.len());
         let (padding, target) = out.split_at_mut(pad);
-        padding.fill(0xF0);
+        // ASCII digits are already the wire bytes; EBCDIC adds the F zone.
+        let zone = if ASCII { 0 } else { 0xC0 };
+        padding.fill(b'0'.wrapping_add(zone));
         for (out, &digit) in target.iter_mut().zip(body) {
-            *out = digit.wrapping_add(0xC0);
+            *out = digit.wrapping_add(zone);
         }
-        *last_out = encode_overpunch_digit(negative, last.wrapping_sub(b'0'));
+        let digit = last.wrapping_sub(b'0');
+        *last_out = if ASCII {
+            encode_ascii_overpunch_digit(negative, digit)
+        } else {
+            encode_overpunch_digit(negative, digit)
+        };
     }
     Ok(())
 }
@@ -585,7 +629,17 @@ pub fn decode_ebcdic_decimal_blank_zero_fixed(input: &mut &[u8], len: usize) -> 
 pub fn encode_zoned_decimal_signed_fixed(output: &mut &mut [u8], input: &[u8], len: usize) -> Result<(), Error> {
     debug_assert!(len != 0, "zoned decimal width must be nonzero");
     let (negative, digits) = parse_signed_decimal(input, len)?;
-    encode_zoned_decimal_digits(output, digits, negative, len)
+    encode_zoned_decimal_digits::<false>(output, digits, negative, len)
+}
+
+/// [`encode_zoned_decimal_signed_fixed`] in ASCII: digits with the sign
+/// overpunched on the last one, `{A-I}` positive and `}J-R` negative.
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub fn encode_ascii_zoned_decimal_signed_fixed(output: &mut &mut [u8], input: &[u8], len: usize) -> Result<(), Error> {
+    debug_assert!(len != 0, "zoned decimal width must be nonzero");
+    let (negative, digits) = parse_signed_decimal(input, len)?;
+    encode_zoned_decimal_digits::<true>(output, digits, negative, len)
 }
 
 /// Reserve `len + 1` scratch bytes and return the canonical signed digits within
@@ -593,23 +647,45 @@ pub fn encode_zoned_decimal_signed_fixed(output: &mut &mut [u8], input: &[u8], l
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn decode_zoned_decimal_signed_fixed<'a>(input: &mut &[u8], output: &mut &'a mut [u8], len: usize) -> Result<&'a mut [u8], Error> {
+    decode_zoned_signed::<false>(input, output, len)
+}
+
+/// [`decode_zoned_decimal_signed_fixed`] in ASCII; a plain last digit reads as
+/// positive.
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub fn decode_ascii_zoned_decimal_signed_fixed<'a>(
+    input: &mut &[u8],
+    output: &mut &'a mut [u8],
+    len: usize,
+) -> Result<&'a mut [u8], Error> {
+    decode_zoned_signed::<true>(input, output, len)
+}
+
+#[inline(always)]
+fn decode_zoned_signed<'a, const ASCII: bool>(input: &mut &[u8], output: &mut &'a mut [u8], len: usize) -> Result<&'a mut [u8], Error> {
     let input = take_bytes(input, len)?;
     let Some((&last, body)) = input.split_last() else {
         cold_path();
         return Err(Error::Invalid);
     };
     let buf = reserve_bytes(output, input.len() + 1)?;
-    let (negative, last_digit) = decode_overpunch_digit(last)?;
+    let (negative, last_digit) = if ASCII {
+        decode_ascii_overpunch_digit(last)?
+    } else {
+        decode_overpunch_digit(last)?
+    };
     let [_, digits @ .., last_out] = &mut *buf else {
         cold_path();
         return Err(Error::BufferOverflow);
     };
-    if !body.iter().all(|byte| (0xF0..=0xF9).contains(byte)) {
+    let zero = if ASCII { b'0' } else { 0xF0 };
+    if !body.iter().all(|byte| (zero..=zero + 9).contains(byte)) {
         cold_path();
         return Err(Error::Invalid);
     }
     for (digit, &byte) in digits.iter_mut().zip(body) {
-        *digit = byte - 0xC0;
+        *digit = byte - zero + b'0';
     }
     *last_out = b'0' + last_digit;
     Ok(canonical_signed_digits(buf, negative))

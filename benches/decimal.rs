@@ -110,6 +110,12 @@ fn bench_implied(suite: &mut Suite) {
 fn bench_overpunch_packed_sign(suite: &mut Suite) {
     suite.group("overpunch_packed_sign", |group| {
         quick(group);
+        group.bench("encode_ascii_overpunch_digit_for", |b| {
+            b.iter(|| black_box(encode_ascii_overpunch_digit_for(black_box(true), black_box(7))))
+        });
+        group.bench("decode_ascii_overpunch_digit_byte", |b| {
+            b.iter(|| black_box(decode_ascii_overpunch_digit_byte(black_box(b'P'))))
+        });
         group.bench("encode_overpunch_digit_for", |b| {
             b.iter(|| black_box(encode_overpunch_digit_for(black_box(true), black_box(7))))
         });
@@ -221,6 +227,23 @@ fn bench_signed_zoned(suite: &mut Suite) {
                 let mut buf = [0u8; 8];
                 let mut out = &mut buf[..];
                 let _ = encode_zoned_decimal_signed_fixed_8(&mut out, black_box(b"-1234567"));
+                black_box(buf)
+            })
+        });
+        group.bench("encode_ascii_zoned_decimal_signed_fixed_8", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 8];
+                let mut out = &mut buf[..];
+                let _ = encode_ascii_zoned_decimal_signed_fixed_8(&mut out, black_box(b"-1234567"));
+                black_box(buf)
+            })
+        });
+        group.bench("decode_ascii_zoned_decimal_signed_fixed_8", |b| {
+            b.iter(|| {
+                let mut input = black_box(&b"0123456P"[..]);
+                let mut buf = [0u8; 16];
+                let mut out = &mut buf[..];
+                let _ = decode_ascii_zoned_decimal_signed_fixed_8(&mut input, &mut out);
                 black_box(buf)
             })
         });

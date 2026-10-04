@@ -3,11 +3,12 @@ use core::mem::size_of;
 
 use crate::primitive::bytes::{copy_bytes, is_filled, take_bytes};
 use crate::primitive::decimal::{
-    decode_implied_decimal_digits, decode_negative_prefix, decode_packed_decimal_fixed, decode_packed_decimal_signed_fixed, decode_sign,
-    decode_zoned_decimal_signed_fixed, encode_implied_decimal, encode_negative_prefix, encode_packed_decimal_digits,
-    encode_packed_decimal_fixed, encode_packed_decimal_signed_fixed, encode_sign, encode_zoned_decimal_digits,
-    encode_zoned_decimal_signed_fixed, encoded_implied_decimal_len, packed_decimal_max_digits, parse_signed_decimal,
-    parse_unsigned_decimal, prepend_minus, split_signed_input,
+    decode_ascii_zoned_decimal_signed_fixed, decode_implied_decimal_digits, decode_negative_prefix, decode_packed_decimal_fixed,
+    decode_packed_decimal_signed_fixed, decode_sign, decode_zoned_decimal_signed_fixed, encode_ascii_zoned_decimal_signed_fixed,
+    encode_implied_decimal, encode_negative_prefix, encode_packed_decimal_digits, encode_packed_decimal_fixed,
+    encode_packed_decimal_signed_fixed, encode_sign, encode_zoned_decimal_digits, encode_zoned_decimal_signed_fixed,
+    encoded_implied_decimal_len, packed_decimal_max_digits, parse_signed_decimal, parse_unsigned_decimal, prepend_minus,
+    split_signed_input,
 };
 use crate::primitive::int::{
     decode_binary_i64_be_fixed, decode_binary_u64_be_fixed, decode_nibble_int_fixed, decode_signed_magnitude_i64,
@@ -32,6 +33,9 @@ use crate::{Error, ScalarFmt};
 /// sign is `Invalid`, and zero always carries the positive sign. Typed numeric
 /// methods delegate the magnitude to the inner numeric codec.
 pub struct SignPrefix<F, const POS: u8 = b'C', const NEG: u8 = b'D'>(PhantomData<F>);
+/// [`SignPrefix`] with the sign byte after the magnitude, such as `000125C`.
+/// The inner format must have a fixed width, so the sign follows a known end.
+pub struct SignSuffix<F, const POS: u8 = b'C', const NEG: u8 = b'D'>(PhantomData<F>);
 /// Prefix negative magnitudes only. The inner format represents a nonnegative
 /// magnitude as decimal digits, and `NEG` must never start one of its encodings.
 /// A second sign is `Invalid`, and zero is never prefixed. Arbitrary binary
@@ -50,6 +54,10 @@ pub struct FixedSignedBinaryBe<const N: usize>;
 pub struct FixedComp3<const N: usize>;
 pub struct FixedSignedComp3<const N: usize>;
 pub struct FixedSignedZonedEbcdic<const N: usize>;
+/// [`FixedSignedZonedEbcdic`] in ASCII: `N` digits, zero padded, with the
+/// sign overpunched on the last one, `{` and `A`-`I` for +0..+9, `}` and
+/// `J`-`R` for -0..-9. Decoding also reads a plain last digit as positive.
+pub struct FixedSignedZonedAscii<const N: usize>;
 pub struct ImpliedDecimal<F, const SCALE: usize>(PhantomData<F>);
 
 trait FixedDecimalCodec: ScalarFmt {
@@ -89,6 +97,21 @@ impl<const N: usize> FixedDecimalCodec for FixedSignedComp3<N> {
     }
 }
 
+impl<const N: usize> FixedDecimalCodec for FixedSignedZonedAscii<N> {
+    const WIRE_LEN: usize = N;
+    #[inline(always)]
+    fn max_digits() -> usize {
+        const { assert!(N != 0, "zoned decimal width must be nonzero") };
+        N
+    }
+    const SIGNED: bool = true;
+    #[inline(always)]
+    fn encode_digits(output: &mut &mut [u8], digits: &[u8], negative: bool) -> Result<(), Error> {
+        const { assert!(N != 0, "zoned decimal width must be nonzero") };
+        encode_zoned_decimal_digits::<true>(output, digits, negative, N)
+    }
+}
+
 impl<const N: usize> FixedDecimalCodec for FixedSignedZonedEbcdic<N> {
     const WIRE_LEN: usize = N;
     #[inline(always)]
@@ -100,7 +123,7 @@ impl<const N: usize> FixedDecimalCodec for FixedSignedZonedEbcdic<N> {
     #[inline(always)]
     fn encode_digits(output: &mut &mut [u8], digits: &[u8], negative: bool) -> Result<(), Error> {
         const { assert!(N != 0, "zoned decimal width must be nonzero") };
-        encode_zoned_decimal_digits(output, digits, negative, N)
+        encode_zoned_decimal_digits::<false>(output, digits, negative, N)
     }
 }
 
@@ -209,6 +232,95 @@ impl<F: ScalarFmt, const POS: u8, const NEG: u8> ScalarFmt for SignPrefix<F, POS
         Self::assert_distinct_signs();
         let negative = decode_sign(input, POS, NEG)?;
         let magnitude = F::decode_u64(input, scratch)?;
+        decode_signed_magnitude_i64(negative, magnitude)
+    }
+}
+
+impl<F: ScalarFmt, const POS: u8, const NEG: u8> SignSuffix<F, POS, NEG> {
+    #[inline(always)]
+    fn assert_distinct_signs() {
+        const { assert!(POS != NEG, "SignSuffix needs distinct sign bytes") }
+        const { assert!(!F::TAKES_REST, "SignSuffix needs an inner format of fixed width") }
+    }
+}
+
+impl<F: ScalarFmt, const POS: u8, const NEG: u8> ScalarFmt for SignSuffix<F, POS, NEG> {
+    const TAKES_REST: bool = false;
+
+    #[inline(always)]
+    fn encoded_len(input: &[u8]) -> Result<usize, Error> {
+        Self::assert_distinct_signs();
+        let (_, digits) = split_wrapped_sign(input)?;
+        F::encoded_len(digits)?.checked_add(1).ok_or_else(|| {
+            cold_path();
+            Error::BufferOverflow
+        })
+    }
+
+    #[inline(always)]
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
+        Self::assert_distinct_signs();
+        let (negative, digits) = split_wrapped_sign(input)?;
+        F::encode(output, scratch, digits)?;
+        encode_sign(output, negative, POS, NEG)
+    }
+
+    #[inline(always)]
+    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
+        Self::assert_distinct_signs();
+        let digits = F::decode(input, scratch)?;
+        let negative = decode_sign(input, POS, NEG)?;
+        join_wrapped_sign(scratch, negative, digits)
+    }
+
+    #[inline(always)]
+    fn encoded_len_u64(input: u64) -> Result<usize, Error> {
+        Self::assert_distinct_signs();
+        F::encoded_len_u64(input)?.checked_add(1).ok_or_else(|| {
+            cold_path();
+            Error::BufferOverflow
+        })
+    }
+
+    #[inline(always)]
+    fn encode_u64(output: &mut &mut [u8], scratch: &mut [u8], input: u64) -> Result<(), Error> {
+        Self::assert_distinct_signs();
+        F::encode_u64(output, scratch, input)?;
+        encode_sign(output, false, POS, NEG)
+    }
+
+    #[inline(always)]
+    fn decode_u64<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<u64, Error> {
+        Self::assert_distinct_signs();
+        let magnitude = F::decode_u64(input, scratch)?;
+        if decode_sign(input, POS, NEG)? {
+            cold_path();
+            return Err(Error::Invalid);
+        }
+        Ok(magnitude)
+    }
+
+    #[inline(always)]
+    fn encoded_len_i64(input: i64) -> Result<usize, Error> {
+        Self::assert_distinct_signs();
+        F::encoded_len_u64(input.unsigned_abs())?.checked_add(1).ok_or_else(|| {
+            cold_path();
+            Error::BufferOverflow
+        })
+    }
+
+    #[inline(always)]
+    fn encode_i64(output: &mut &mut [u8], scratch: &mut [u8], input: i64) -> Result<(), Error> {
+        Self::assert_distinct_signs();
+        F::encode_u64(output, scratch, input.unsigned_abs())?;
+        encode_sign(output, input < 0, POS, NEG)
+    }
+
+    #[inline(always)]
+    fn decode_i64<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<i64, Error> {
+        Self::assert_distinct_signs();
+        let magnitude = F::decode_u64(input, scratch)?;
+        let negative = decode_sign(input, POS, NEG)?;
         decode_signed_magnitude_i64(negative, magnitude)
     }
 }
@@ -530,6 +642,27 @@ impl<const N: usize> ScalarFmt for FixedSignedComp3<N> {
     }
 }
 
+impl<const N: usize> ScalarFmt for FixedSignedZonedAscii<N> {
+    #[inline(always)]
+    fn encoded_len(input: &[u8]) -> Result<usize, Error> {
+        const { assert!(N != 0, "zoned decimal width must be nonzero") };
+        parse_signed_decimal(input, N)?;
+        Ok(N)
+    }
+
+    #[inline(always)]
+    fn encode(output: &mut &mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<(), Error> {
+        const { assert!(N != 0, "zoned decimal width must be nonzero") };
+        encode_ascii_zoned_decimal_signed_fixed(output, input, N)
+    }
+
+    #[inline(always)]
+    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
+        const { assert!(N != 0, "zoned decimal width must be nonzero") };
+        decode_ascii_zoned_decimal_signed_fixed(input, scratch, N).map(|buf| &*buf)
+    }
+}
+
 impl<const N: usize> ScalarFmt for FixedSignedZonedEbcdic<N> {
     #[inline(always)]
     fn encoded_len(input: &[u8]) -> Result<usize, Error> {
@@ -576,8 +709,8 @@ impl<F: FixedDecimalCodec, const SCALE: usize> ScalarFmt for ImpliedDecimal<F, S
 #[cfg(test)]
 mod tests {
     use super::{
-        FixedBinaryBe, FixedComp3, FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedEbcdic, ImpliedDecimal,
-        MinusPrefix, SignPrefix,
+        FixedBinaryBe, FixedComp3, FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedAscii, FixedSignedZonedEbcdic,
+        ImpliedDecimal, MinusPrefix, SignPrefix, SignSuffix,
     };
     use crate::primitive::nibble::{EbcdicHexDigits, LowerHexDigits, UpperHexDigits};
     use crate::{Error, ScalarFmt};
@@ -844,6 +977,55 @@ mod tests {
         assert_eq!(decode_padded::<Cd>(b"D000"), Ok(b"0".to_vec()));
         assert_eq!(decode_padded::<Minus>(b"-000"), Ok(b"0".to_vec()));
         assert_eq!(decode_padded::<Cd>(b"D012"), Ok(b"-12".to_vec()));
+    }
+
+    #[test]
+    fn sign_suffix_writes_the_sign_after_the_magnitude() {
+        type Digits = crate::Field<crate::Numeric<1, 3>, crate::Fixed<3>, crate::PadLeft<3, b'0', 1>>;
+        type Cd = SignSuffix<Digits>;
+        type PlusMinus = SignSuffix<Digits, b'+', b'-'>;
+        assert_eq!(encode_padded::<Cd>(b"-12"), Ok(b"012D".to_vec()));
+        assert_eq!(encode_padded::<Cd>(b"-0"), Ok(b"000C".to_vec()));
+        assert_eq!(encode_padded::<PlusMinus>(b"125"), Ok(b"125+".to_vec()));
+        assert_eq!(decode_padded::<Cd>(b"012D"), Ok(b"-12".to_vec()));
+        assert_eq!(decode_padded::<Cd>(b"000D"), Ok(b"0".to_vec()));
+        assert_eq!(decode_padded::<PlusMinus>(b"012 "), Err(Error::Invalid));
+        assert_eq!(Cd::encoded_len(b"--1"), Err(Error::Invalid));
+        for value in [0, 1, 255, i64::MAX, i64::MIN, -1] {
+            numeric_roundtrip::<SignSuffix<FixedBinaryBe<8>>>(value, value as u64);
+        }
+        assert_eq!(encode_i64::<SignSuffix<FixedBinaryBe<1>, b'+', b'-'>>(-5), Ok(vec![5, b'-']));
+        assert_eq!(decode_u64::<SignSuffix<FixedBinaryBe<1>>>(&[0, b'D']), Err(Error::Invalid));
+    }
+
+    #[test]
+    fn ascii_zoned_decimal_overpunches_the_last_digit() {
+        type Amount = FixedSignedZonedAscii<11>;
+        assert_eq!(encode_i64::<FixedSignedZonedAscii<4>>(-12), Ok(b"001K".to_vec()));
+        assert_eq!(encode_i64::<FixedSignedZonedAscii<4>>(12), Ok(b"001B".to_vec()));
+        assert_eq!(encode_i64::<FixedSignedZonedAscii<4>>(0), Ok(b"000{".to_vec()));
+        assert_eq!(decode_i64::<Amount>(b"0000001234E"), Ok(12345));
+        assert_eq!(decode_i64::<Amount>(b"0000000050}"), Ok(-500));
+        assert_eq!(decode_i64::<FixedSignedZonedAscii<12>>(b"00000002551B"), Ok(25512));
+        // A plain last digit reads as positive; zone letters outside the scheme do not.
+        assert_eq!(decode_i64::<FixedSignedZonedAscii<4>>(b"0012"), Ok(12));
+        assert_eq!(decode_i64::<FixedSignedZonedAscii<4>>(b"001S"), Err(Error::Invalid));
+        assert_eq!(decode_i64::<FixedSignedZonedAscii<4>>(b"0A1B"), Err(Error::Invalid));
+        assert_eq!(decode_padded::<FixedSignedZonedAscii<4>>(b"001K"), Ok(b"-12".to_vec()));
+        assert_eq!(
+            encode_padded::<ImpliedDecimal<FixedSignedZonedAscii<5>, 2>>(b"-1.23"),
+            Ok(b"0012L".to_vec())
+        );
+        // The ASCII spelling of each EBCDIC zoned byte.
+        for value in [-99_999i64, -10, -1, 0, 1, 9, 10, 99_999] {
+            let ascii = encode_i64::<FixedSignedZonedAscii<5>>(value).unwrap();
+            let ebcdic = encode_i64::<FixedSignedZonedEbcdic<5>>(value).unwrap();
+            let translated: Vec<u8> = ebcdic
+                .iter()
+                .map(|&byte| crate::primitive::ebcdic::EBCDIC_037_TO_ASCII[usize::from(byte)])
+                .collect();
+            assert_eq!(ascii, translated, "{value}");
+        }
     }
 
     #[test]

@@ -1,8 +1,9 @@
 use crate::Error;
 use crate::primitive::decimal::{
-    MAX_INTEGER_TEXT_LEN, decode_ascii_decimal_fixed, decode_ebcdic_decimal_blank_zero_fixed, decode_ebcdic_decimal_fixed,
-    decode_implied_decimal, decode_negative_prefix, decode_overpunch_digit, decode_packed_decimal_fixed,
-    decode_packed_decimal_signed_fixed, decode_packed_sign, decode_sign, decode_zoned_decimal_signed_fixed, encode_ascii_decimal_fixed,
+    MAX_INTEGER_TEXT_LEN, decode_ascii_decimal_fixed, decode_ascii_overpunch_digit, decode_ascii_zoned_decimal_signed_fixed,
+    decode_ebcdic_decimal_blank_zero_fixed, decode_ebcdic_decimal_fixed, decode_implied_decimal, decode_negative_prefix,
+    decode_overpunch_digit, decode_packed_decimal_fixed, decode_packed_decimal_signed_fixed, decode_packed_sign, decode_sign,
+    decode_zoned_decimal_signed_fixed, encode_ascii_decimal_fixed, encode_ascii_overpunch_digit, encode_ascii_zoned_decimal_signed_fixed,
     encode_ebcdic_decimal_blank_zero_fixed, encode_ebcdic_decimal_fixed, encode_implied_decimal, encode_negative_prefix,
     encode_overpunch_digit, encode_packed_decimal_fixed, encode_packed_decimal_signed_fixed, encode_packed_sign, encode_sign,
     encode_zoned_decimal_signed_fixed, encoded_implied_decimal_len, format_i64, format_u64, packed_decimal_max_digits, parse_i64,
@@ -149,6 +150,26 @@ pub fn decode_ebcdic_decimal_fixed_2(input: &mut &[u8]) -> Result<usize, Error> 
 #[inline(never)]
 pub fn decode_ebcdic_decimal_blank_zero_fixed_2(input: &mut &[u8]) -> Result<usize, Error> {
     decode_ebcdic_decimal_blank_zero_fixed(input, 2)
+}
+
+#[inline(never)]
+pub fn encode_ascii_overpunch_digit_for(negative: bool, digit: u8) -> u8 {
+    encode_ascii_overpunch_digit(negative, digit)
+}
+
+#[inline(never)]
+pub fn decode_ascii_overpunch_digit_byte(input: u8) -> Result<(bool, u8), Error> {
+    decode_ascii_overpunch_digit(input)
+}
+
+#[inline(never)]
+pub fn encode_ascii_zoned_decimal_signed_fixed_8(output: &mut &mut [u8], input: &[u8]) -> Result<(), Error> {
+    encode_ascii_zoned_decimal_signed_fixed(output, input, 8)
+}
+
+#[inline(never)]
+pub fn decode_ascii_zoned_decimal_signed_fixed_8<'a>(input: &mut &[u8], output: &mut &'a mut [u8]) -> Result<&'a mut [u8], Error> {
+    decode_ascii_zoned_decimal_signed_fixed(input, output, 8)
 }
 
 #[inline(never)]

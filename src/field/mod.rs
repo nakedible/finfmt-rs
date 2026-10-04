@@ -34,8 +34,8 @@ pub(crate) use format::{decode_framed, encode_length, encode_steps};
 pub use length::{AsciiLength, BlankableEbcdicLength, EbcdicLength, Fixed, Length, LengthSpec, Offset, Per, Rest};
 pub use nibble::{PackNibbles, PackNibblesLeft, PackNibblesRight, UnpackNibbles};
 pub use numeric::{
-    FixedBinaryBe, FixedComp3, FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedEbcdic, ImpliedDecimal, MinusPrefix,
-    SignPrefix,
+    FixedBinaryBe, FixedComp3, FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedAscii, FixedSignedZonedEbcdic,
+    ImpliedDecimal, MinusPrefix, SignPrefix, SignSuffix,
 };
 pub use step::{Chain, Count, DecodeCheck, Step};
 pub use text::{Identity, PadLeft, PadLeftEven, PadRight, PadRightEven};
