@@ -1,10 +1,10 @@
-use crate::Error;
 use crate::primitive::validation::{
-    validate_alpha, validate_alphanum, validate_ascii, validate_ascii_printable, validate_bcd_bytes, validate_bcdz, validate_byte_length,
-    validate_bytes, validate_ebcdic_037_ascii, validate_ebcdic_1142_text, validate_ebcdic_printable, validate_hex, validate_hex_even,
-    validate_iso8859_1_str, validate_lower_hex, validate_lower_hex_even, validate_numeric, validate_track2_chars, validate_upper_alpha,
-    validate_upper_alphanum, validate_upper_ascii_printable, validate_upper_hex, validate_upper_hex_even,
+    validate_alpha, validate_alphanum, validate_ascii, validate_ascii_printable, validate_ascii_subset, validate_bcd_bytes, validate_bcdz,
+    validate_byte_length, validate_bytes, validate_ebcdic_printable, validate_hex, validate_hex_even, validate_lower_hex,
+    validate_lower_hex_even, validate_numeric, validate_page_text, validate_track2_chars, validate_upper_alpha, validate_upper_alphanum,
+    validate_upper_ascii_printable, validate_upper_hex, validate_upper_hex_even,
 };
+use crate::{Cp037, Cp1142, Error, Latin1};
 
 #[inline(never)]
 pub fn validate_numeric_1_19(input: &[u8]) -> Result<usize, Error> {
@@ -97,18 +97,18 @@ pub fn validate_byte_length_1_99(input: &[u8]) -> Result<usize, Error> {
 }
 
 #[inline(never)]
-pub fn validate_iso8859_1_str_1_99(input: &str) -> Result<usize, Error> {
-    validate_iso8859_1_str(input, 1, 99)
+pub fn validate_latin1_text_1_99(input: &str) -> Result<usize, Error> {
+    validate_page_text::<Latin1>(input, 1, 99)
 }
 
 #[inline(never)]
-pub fn validate_ebcdic_1142_text_1_99(input: &str) -> Result<usize, Error> {
-    validate_ebcdic_1142_text(input, 1, 99)
+pub fn validate_1142_text_1_99(input: &str) -> Result<usize, Error> {
+    validate_page_text::<Cp1142>(input, 1, 99)
 }
 
 #[inline(never)]
-pub fn validate_ebcdic_037_ascii_1_99(input: &[u8]) -> Result<usize, Error> {
-    validate_ebcdic_037_ascii(input, 1, 99)
+pub fn validate_037_ascii_subset_1_99(input: &[u8]) -> Result<usize, Error> {
+    validate_ascii_subset::<Cp037>(input, 1, 99)
 }
 
 #[inline(never)]

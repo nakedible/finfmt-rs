@@ -48,7 +48,7 @@ harness = false
 required-features = ["asm-inspect"]
 
 [[bench]]
-name = "ebcdic"
+name = "codepage"
 harness = false
 required-features = ["asm-inspect"]
 

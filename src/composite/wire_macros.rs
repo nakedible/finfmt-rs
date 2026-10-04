@@ -38,7 +38,7 @@
 ///   tag. An `Option` field is absent when its tag is; a required field's tag
 ///   must appear. Decoding matches each declared tag's encoding as a prefix,
 ///   in declaration order, so tags may differ in length
-///   (`Field<UpperAlphanum<1, 8>, Rest, Ebcdic037>` for `"AEVV"` and `"XID"`)
+///   (`Field<UpperAlphanum<1, 8>, Rest, AsciiSubset<Cp037>>` for `"AEVV"` and `"XID"`)
 ///   and overlapping ones are ordered by the user. A binary tag uses a format
 ///   that shows it as hex. Unknown tags are rejected unless the record has an
 ///   `extras` field, whose tag format `T` must then read a tag of a known
@@ -2424,7 +2424,7 @@ mod tests {
     }
 
     type N1 = Field<Numeric<1, 2>, Fixed<2>, crate::PadLeft<2, b'0', 1>>;
-    type Ebcdic2 = Field<Ascii<2, 2>, Fixed<2>, crate::Ebcdic037>;
+    type Ebcdic2 = Field<Ascii<2, 2>, Fixed<2>, crate::AsciiSubset<crate::Cp037>>;
     type Rest = Field<Ascii<0, 20>, crate::Rest>;
 
     crate::wire_type! {
@@ -2676,16 +2676,16 @@ mod tests {
         }
     }
 
-    type LiteralTag = Field<crate::UpperAlphanum<1, 8>, crate::Rest, crate::Ebcdic037>;
+    type LiteralTag = Field<crate::UpperAlphanum<1, 8>, crate::Rest, crate::AsciiSubset<crate::Cp037>>;
     type Bin2 = Field<crate::UpperHexEven<4, 4>, Fixed<2>, crate::PackNibbles<crate::primitive::nibble::UpperHexDigits>>;
 
     crate::wire_type! {
         #[derive(Debug, Clone, PartialEq)]
         #[wire(concat)]
         struct LiteralTagged {
-            #[wire(fmt = Field<Ascii<5, 5>, Fixed<5>, crate::Ebcdic037>, fixed_value = "AXASK")]
+            #[wire(fmt = Field<Ascii<5, 5>, Fixed<5>, crate::AsciiSubset<crate::Cp037>>, fixed_value = "AXASK")]
             prefix: (),
-            #[wire(fmt = Field<Numeric<2, 2>, Fixed<2>, crate::Ebcdic037>)]
+            #[wire(fmt = Field<Numeric<2, 2>, Fixed<2>, crate::AsciiSubset<crate::Cp037>>)]
             eci: String,
             parts: LiteralParts,
         }

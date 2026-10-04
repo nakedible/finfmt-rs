@@ -254,7 +254,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Ascii, AsciiLength, Ebcdic037, Field, Fixed, Rest};
+    use crate::{Ascii, AsciiLength, AsciiSubset, Cp037, Field, Fixed, Rest};
 
     type Text = Field<Ascii<0, 64>, Rest>;
     type One = Field<Ascii<1, 1>, Fixed<1>>;
@@ -352,7 +352,7 @@ mod tests {
         for wire in [b"2AB".as_slice(), b"3A|B"] {
             assert_eq!(decode::<Counted>(wire), Err(Error::Invalid));
         }
-        type Encoded = BoundedList<AsciiLength<1>, Field<Ascii<1, 1>, Fixed<1>, Ebcdic037>, Separator<0xC1>, 0, 4>;
+        type Encoded = BoundedList<AsciiLength<1>, Field<Ascii<1, 1>, Fixed<1>, AsciiSubset<Cp037>>, Separator<0xC1>, 0, 4>;
         assert!(rejected_in_debug::<Encoded>(&["A", "B"]));
         roundtrip::<Encoded>(&["B", "A"], b"2\xC2\xC1\xC1");
         let mut output = [0; 4];
@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn list_items_can_borrow_disjoint_scratch() {
-        type Borrowed = Field<Ascii<1, 1>, Fixed<1>, Ebcdic037>;
+        type Borrowed = Field<Ascii<1, 1>, Fixed<1>, AsciiSubset<Cp037>>;
         type List = BoundedList<AsciiLength<1>, Borrowed, Separator<b'|'>, 0, 4>;
         let mut input = &b"2\xC1|\xC2"[..];
         let mut scratch = [0; 2];
@@ -546,7 +546,7 @@ mod tests {
                 crate::primitive::bytes::copy_bytes(output, b"_").map(|_| ())
             }
         }
-        type Borrowed = Field<Ascii<1, 1>, Fixed<1>, Ebcdic037>;
+        type Borrowed = Field<Ascii<1, 1>, Fixed<1>, AsciiSubset<Cp037>>;
         type Area = FixedAreaList<AsciiLength<1>, Borrowed, Canonical, 1, 4>;
         let mut input = &b"1\xC1___TAIL"[..];
         let mut scratch = [0; 3];

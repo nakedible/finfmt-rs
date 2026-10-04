@@ -37,12 +37,12 @@ pub trait Step {
     const HAS_COUNT: bool = false;
 
     /// Input lengths count Unicode scalar values rather than bytes, as for
-    /// `Ebcdic1142`. A field's check supplies such a count; a `Frame` has only
+    /// `Charset`. A field's check supplies such a count; a `Frame` has only
     /// its body's byte length, so it rejects these steps.
     const INPUT_IN_CHARS: bool = false;
 
     /// Exact encoded byte count from logical input length. Built-in steps use
-    /// bytes, except `Ebcdic1142`, which uses Unicode scalar values.
+    /// bytes, except `Charset`, which uses Unicode scalar values.
     fn encoded_len(input_len: usize) -> Result<usize, Error>;
 
     /// The length a field's length counts, for this input length: the length
@@ -92,7 +92,7 @@ pub trait Step {
 /// Encode through `A` then `B`, and decode in reverse order.
 /// Intermediate boundaries use compatible byte units. `A::encoded_len` applied
 /// to the input byte count must bound its encoded size; this may reserve extra
-/// scratch for UTF-8 input to `Ebcdic1142` without rescanning its characters.
+/// scratch for UTF-8 input to `Charset` without rescanning its characters.
 /// At most one of the two may contain the [`Count`] marker.
 pub struct Chain<A, B>(PhantomData<(A, B)>);
 /// Validate encoded bytes before decoding with `S`; encoding passes through.
@@ -193,7 +193,7 @@ impl<First: Step, Rest: Step> Step for Chain<First, Rest> {
         if Rest::ENCODE_APPENDING {
             // `First` writes at the start of the output, and `Rest` finishes
             // there. Its written length decides the area: for UTF-8 input to
-            // `Ebcdic1142`, `encoded_len` is only a bound.
+            // `Charset`, `encoded_len` is only a bound.
             let area = core::mem::take(output);
             let written = {
                 let mut first_out = &mut *area;
@@ -310,15 +310,18 @@ mod tests {
     #[test]
     fn in_place_encoding_composes_without_scratch() {
         encode_without_scratch::<Field<Ascii<3, 3>, Fixed<3>>>(b"ABC", b"ABC");
-        encode_without_scratch::<Field<Ascii<3, 3>, Fixed<3>, Ebcdic037>>(b"ABC", &[0xC1, 0xC2, 0xC3]);
-        encode_without_scratch::<Field<Ascii<3, 3>, Fixed<3>, Chain<Identity, Ebcdic037>>>(b"ABC", &[0xC1, 0xC2, 0xC3]);
-        encode_without_scratch::<Field<Ascii<0, 8>, Fixed<8>, Chain<PadRight<8>, Ebcdic037>>>(
+        encode_without_scratch::<Field<Ascii<3, 3>, Fixed<3>, AsciiSubset<Cp037>>>(b"ABC", &[0xC1, 0xC2, 0xC3]);
+        encode_without_scratch::<Field<Ascii<3, 3>, Fixed<3>, Chain<Identity, AsciiSubset<Cp037>>>>(b"ABC", &[0xC1, 0xC2, 0xC3]);
+        encode_without_scratch::<Field<Ascii<0, 8>, Fixed<8>, Chain<PadRight<8>, AsciiSubset<Cp037>>>>(
             b"ABC",
             &[0xC1, 0xC2, 0xC3, 0x40, 0x40, 0x40, 0x40, 0x40],
         );
         // Padding after a transform fills around what the transform wrote.
-        encode_without_scratch::<Field<Ascii<3, 3>, Fixed<3>, crate::chain!(Ebcdic037, Count, PadRight<5>)>>(b"ABC", b"\xC1\xC2\xC3  ");
-        encode_without_scratch::<Field<Ebcdic1142Text<0, 3>, Fixed<4>, crate::chain!(Ebcdic1142, PadRight<4, 0x40>)>>(
+        encode_without_scratch::<Field<Ascii<3, 3>, Fixed<3>, crate::chain!(AsciiSubset<Cp037>, Count, PadRight<5>)>>(
+            b"ABC",
+            b"\xC1\xC2\xC3  ",
+        );
+        encode_without_scratch::<Field<CharsetText<Cp1142, 0, 3>, Fixed<4>, crate::chain!(Charset<Cp1142>, PadRight<4, 0x40>)>>(
             "Æ".as_bytes(),
             b"\x7B\x40\x40\x40",
         );
@@ -329,11 +332,11 @@ mod tests {
 
     #[test]
     fn character_counting_shows_through_unchanged_steps() {
-        use crate::{Ebcdic1142, Identity, UnpackNibbles, chain};
+        use crate::{Charset, Cp1142, Identity, UnpackNibbles, chain};
         const {
-            assert!(<chain!(Count, Ebcdic1142)>::INPUT_IN_CHARS);
-            assert!(<chain!(Identity, Count, Ebcdic1142)>::INPUT_IN_CHARS);
-            assert!(!<chain!(UnpackNibbles<crate::primitive::nibble::UpperHexDigits>, Ebcdic1142)>::INPUT_IN_CHARS);
+            assert!(<chain!(Count, Charset<Cp1142>)>::INPUT_IN_CHARS);
+            assert!(<chain!(Identity, Count, Charset<Cp1142>)>::INPUT_IN_CHARS);
+            assert!(!<chain!(UnpackNibbles<crate::primitive::nibble::UpperHexDigits>, Charset<Cp1142>)>::INPUT_IN_CHARS);
         }
     }
 

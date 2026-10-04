@@ -1,25 +1,29 @@
+use core::marker::PhantomData;
+
 use crate::primitive::bytes::{copy_bytes, reserve_bytes};
-use crate::primitive::ebcdic::{
-    ASCII_TO_EBCDIC_037, EBCDIC_037_TO_ASCII, decode_ebcdic_1142, encode_ebcdic_1142, translate_bytes, translate_bytes_inplace,
-};
+use crate::primitive::codepage::{CodePage, decode_ascii_subset, decode_text, encode_ascii_subset, encode_text};
 use crate::{Error, Step};
 
-/// Permissive conversion between ASCII bytes and their CP037 counterparts.
-/// Supported characters, including ASCII controls, round-trip exactly. Encoding
-/// replaces each non-ASCII byte with CP037 SUB (0x3F); decoding replaces each
-/// CP037 byte outside the ASCII repertoire with ASCII SUB (0x1A).
+/// Permissive conversion between ASCII bytes and the ASCII characters of code
+/// page `P`, for every field not expected to hold characters outside ASCII.
+/// Supported characters, including ASCII controls, round-trip exactly.
+/// Encoding replaces every other byte with the page's SUB; decoding replaces
+/// every page byte outside the ASCII repertoire with ASCII SUB (0x1A).
 /// This is byte conversion, not UTF-8 character decoding.
 ///
 /// Strict callers validate before conversion: use an `Ascii` field check on
-/// encode and `DecodeCheck<Ebcdic037, Ebcdic037Ascii<MIN, MAX>>` on decode.
-/// Validation after conversion cannot distinguish replacements from genuine SUB.
-pub struct Ebcdic037;
-/// Strict conversion between UTF-8 text and IBM1142 wire bytes. Encoding
-/// rejects invalid UTF-8 and characters outside IBM1142; pair it with
-/// `Ebcdic1142Text` to also check the length, which counts Unicode scalars.
-pub struct Ebcdic1142;
+/// encode and `DecodeCheck<AsciiSubset<P>, AsciiSubsetBytes<P, MIN, MAX>>` on
+/// decode. Validation after conversion cannot distinguish replacements from
+/// genuine SUB.
+pub struct AsciiSubset<P: CodePage>(PhantomData<P>);
 
-impl Step for Ebcdic037 {
+/// Strict conversion between UTF-8 text and code page `P`. Encoding rejects
+/// invalid UTF-8 and characters outside the page, and decoding rejects
+/// unmapped bytes; pair it with `CharsetText` to also check the length, which
+/// counts Unicode scalars.
+pub struct Charset<P: CodePage>(PhantomData<P>);
+
+impl<P: CodePage> Step for AsciiSubset<P> {
     const ENCODE_IN_PLACE: bool = true;
 
     #[inline(always)]
@@ -30,25 +34,25 @@ impl Step for Ebcdic037 {
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
         let buf = copy_bytes(output, input)?;
-        translate_bytes_inplace(buf, &ASCII_TO_EBCDIC_037);
+        encode_ascii_subset::<P>(buf);
         Ok(buf)
     }
 
     #[inline(always)]
     fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], _len: Option<usize>) -> Result<&'a [u8], Error> {
         let buf = reserve_bytes(scratch, input.len())?;
-        translate_bytes(buf, input, &EBCDIC_037_TO_ASCII)?;
+        decode_ascii_subset::<P>(buf, input)?;
         Ok(buf)
     }
 
     #[inline(always)]
     fn encode_in_place(buf: &mut [u8], _input_len: usize) -> Result<(), Error> {
-        translate_bytes_inplace(buf, &ASCII_TO_EBCDIC_037);
+        encode_ascii_subset::<P>(buf);
         Ok(())
     }
 }
 
-impl Step for Ebcdic1142 {
+impl<P: CodePage> Step for Charset<P> {
     const INPUT_IN_CHARS: bool = true;
 
     #[inline(always)]
@@ -58,11 +62,11 @@ impl Step for Ebcdic1142 {
 
     #[inline(always)]
     fn encode<'a>(output: &mut &'a mut [u8], _scratch: &mut [u8], input: &[u8]) -> Result<&'a mut [u8], Error> {
-        encode_ebcdic_1142(output, input)
+        encode_text::<P>(output, input)
     }
 
     #[inline(always)]
     fn decode<'a>(input: &'a [u8], scratch: &mut &'a mut [u8], _len: Option<usize>) -> Result<&'a [u8], Error> {
-        decode_ebcdic_1142(scratch, input).map(|buf| &*buf)
+        decode_text::<P>(scratch, input).map(|buf| &*buf)
     }
 }

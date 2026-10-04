@@ -6,7 +6,7 @@
 use no_panic::no_panic;
 
 use crate::Error;
-use crate::primitive::ebcdic::{EBCDIC_037_TO_ASCII, encode_ebcdic_1142_char};
+use crate::primitive::codepage::{CodePage, Tables, encode_char, is_ascii_subset_byte};
 use crate::utils::cold_path;
 
 /// Validate that every byte satisfies `predicate` and that the byte count is
@@ -191,21 +191,13 @@ pub fn validate_byte_length(input: impl AsRef<[u8]>, minlen: usize, maxlen: usiz
     validate_bytes(input, minlen, maxlen, |_| true)
 }
 
-/// Validate Unicode characters representable in Latin-1, returning the character
-/// count. The input is a Rust string; the `Iso88591` field instead accepts raw bytes.
+/// Validate text representable in code page `P`, returning its Unicode
+/// character count. Unrepresentable characters return `Invalid`.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_iso8859_1_str(input: &str, minlen: usize, maxlen: usize) -> Result<usize, Error> {
-    validate_chars(input, minlen, maxlen, |c| (c as u32) <= 0xFF)
-}
-
-/// Validate text representable in IBM1142, returning its Unicode character count.
-/// Unrepresentable characters return `Invalid`.
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_ebcdic_1142_text(input: &str, minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_page_text<P: CodePage>(input: &str, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     debug_assert!(minlen <= maxlen, "minlen must be <= maxlen");
-    if input.is_ascii() {
+    if P::ASCII_COMPLETE && input.is_ascii() {
         let len = input.len();
         if len < minlen || len > maxlen {
             cold_path();
@@ -213,19 +205,17 @@ pub fn validate_ebcdic_1142_text(input: &str, minlen: usize, maxlen: usize) -> R
         }
         return Ok(len);
     }
-    validate_chars(input, minlen, maxlen, |ch| encode_ebcdic_1142_char(ch).is_some())
+    validate_chars(input, minlen, maxlen, |ch| encode_char::<P>(ch).is_some())
 }
 
-/// Validate CP037 wire bytes representing ASCII characters, including controls,
-/// and return their byte count. Use before lossy CP037-to-ASCII conversion when
-/// unsupported characters must be rejected instead of replaced with SUB.
+/// Validate code page `P` wire bytes representing ASCII characters, including
+/// controls, and return their byte count. Use before the lossy ASCII subset
+/// decoding when unsupported characters must be rejected instead of replaced
+/// with SUB.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_ebcdic_037_ascii(input: &[u8], minlen: usize, maxlen: usize) -> Result<usize, Error> {
-    validate_bytes(input, minlen, maxlen, |&byte| {
-        // Only canonical CP037 SUB may map to ASCII SUB without substitution.
-        EBCDIC_037_TO_ASCII[byte as usize] != 0x1A || byte == 0x3F
-    })
+pub fn validate_ascii_subset<P: CodePage>(input: &[u8], minlen: usize, maxlen: usize) -> Result<usize, Error> {
+    validate_bytes(input, minlen, maxlen, |&byte| is_ascii_subset_byte::<P>(byte))
 }
 
 /// Validate the EBCDIC byte range 0x40..=0xFE, returning the byte count. For
@@ -240,6 +230,7 @@ pub fn validate_ebcdic_printable(input: &[u8], minlen: usize, maxlen: usize) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::primitive::codepage::{Cp037, Cp1142, Iso646Fi, Latin1};
 
     // Helper: validate with unbounded length
     fn vb<T: AsRef<[u8]>>(input: T, pred: impl Fn(&u8) -> bool) -> Result<usize, Error> {
@@ -430,21 +421,24 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_iso8859_1_str() {
-        assert_eq!(validate_iso8859_1_str("hello", 0, 99), Ok(5));
-        assert_eq!(validate_iso8859_1_str("héllo", 0, 99), Ok(5)); // é is Latin-1
-        assert_eq!(validate_iso8859_1_str("ÿ", 0, 99), Ok(1)); // U+00FF, max Latin-1
-        assert_eq!(validate_iso8859_1_str("hello", 10, 20), Err(Error::InvalidValueLength));
-        assert_eq!(validate_iso8859_1_str("Ā", 0, 99), Err(Error::Invalid)); // U+0100
-        assert_eq!(validate_iso8859_1_str("こんにちは", 0, 99), Err(Error::Invalid));
+    fn test_validate_latin1_text() {
+        assert_eq!(validate_page_text::<Latin1>("hello", 0, 99), Ok(5));
+        assert_eq!(validate_page_text::<Latin1>("héllo", 0, 99), Ok(5)); // é is Latin-1
+        assert_eq!(validate_page_text::<Latin1>("ÿ", 0, 99), Ok(1)); // U+00FF, max Latin-1
+        assert_eq!(validate_page_text::<Latin1>("hello", 10, 20), Err(Error::InvalidValueLength));
+        assert_eq!(validate_page_text::<Latin1>("Ā", 0, 99), Err(Error::Invalid)); // U+0100
+        assert_eq!(validate_page_text::<Latin1>("こんにちは", 0, 99), Err(Error::Invalid));
     }
 
     #[test]
-    fn test_validate_ebcdic_1142_text() {
-        assert_eq!(validate_ebcdic_1142_text("ABC", 0, 99), Ok(3));
-        assert_eq!(validate_ebcdic_1142_text("ABCÆØÅæøå€", 0, 99), Ok(10));
-        assert_eq!(validate_ebcdic_1142_text("ABCÆØÅæøå€", 0, 9), Err(Error::InvalidValueLength));
-        assert_eq!(validate_ebcdic_1142_text("emoji: 😀", 0, 99), Err(Error::Invalid));
+    fn test_validate_page_text() {
+        assert_eq!(validate_page_text::<Cp1142>("ABC", 0, 99), Ok(3));
+        assert_eq!(validate_page_text::<Cp1142>("ABCÆØÅæøå€", 0, 99), Ok(10));
+        assert_eq!(validate_page_text::<Cp1142>("ABCÆØÅæøå€", 0, 9), Err(Error::InvalidValueLength));
+        assert_eq!(validate_page_text::<Cp1142>("emoji: 😀", 0, 99), Err(Error::Invalid));
+        // Without every ASCII character, ASCII text is checked per character.
+        assert_eq!(validate_page_text::<Iso646Fi>("AÄ", 0, 99), Ok(2));
+        assert_eq!(validate_page_text::<Iso646Fi>("A$", 0, 99), Err(Error::Invalid));
     }
 
     #[test]
@@ -455,26 +449,24 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_ebcdic_037_ascii() {
-        use crate::primitive::ebcdic::ASCII_TO_EBCDIC_037;
-
+    fn test_validate_ascii_subset() {
         for byte in 0..=u8::MAX {
-            let expected = if ASCII_TO_EBCDIC_037[..128].contains(&byte) {
+            let expected = if Cp037::ASCII_TO_PAGE[..128].contains(&byte) {
                 Ok(1)
             } else {
                 Err(Error::Invalid)
             };
-            assert_eq!(validate_ebcdic_037_ascii(&[byte], 1, 1), expected, "wire byte {byte:02X}");
+            assert_eq!(validate_ascii_subset::<Cp037>(&[byte], 1, 1), expected, "wire byte {byte:02X}");
         }
-        assert_eq!(validate_ebcdic_037_ascii(&[0xC1, 0xF1, 0x40], 3, 3), Ok(3));
-        assert_eq!(validate_ebcdic_037_ascii(b"\0\x3F", 2, 2), Ok(2));
-        assert_eq!(validate_ebcdic_037_ascii(b"", 0, 0), Ok(0));
-        assert_eq!(validate_ebcdic_037_ascii(b"", 1, 1), Err(Error::InvalidValueLength));
-        assert_eq!(validate_ebcdic_037_ascii(&[0xC1], 2, 2), Err(Error::InvalidValueLength));
-        assert_eq!(validate_ebcdic_037_ascii(&[0xC1], 0, 0), Err(Error::InvalidValueLength));
+        assert_eq!(validate_ascii_subset::<Cp037>(&[0xC1, 0xF1, 0x40], 3, 3), Ok(3));
+        assert_eq!(validate_ascii_subset::<Cp037>(b"\0\x3F", 2, 2), Ok(2));
+        assert_eq!(validate_ascii_subset::<Cp037>(b"", 0, 0), Ok(0));
+        assert_eq!(validate_ascii_subset::<Cp037>(b"", 1, 1), Err(Error::InvalidValueLength));
+        assert_eq!(validate_ascii_subset::<Cp037>(&[0xC1], 2, 2), Err(Error::InvalidValueLength));
+        assert_eq!(validate_ascii_subset::<Cp037>(&[0xC1], 0, 0), Err(Error::InvalidValueLength));
         for input in [[0x4A, 0xC1], [0xC1, 0x4A]] {
             for (min, max) in [(0, 0), (2, 2), (3, 3)] {
-                assert_eq!(validate_ebcdic_037_ascii(&input, min, max), Err(Error::Invalid));
+                assert_eq!(validate_ascii_subset::<Cp037>(&input, min, max), Err(Error::Invalid));
             }
         }
     }
@@ -521,19 +513,19 @@ mod tests {
     fn test_input_representations_and_length_units() {
         assert_eq!(validate_byte_length("é", 2, 2), Ok(2));
         assert_eq!(validate_byte_length("é".as_bytes(), 2, 2), Ok(2));
-        assert_eq!(validate_iso8859_1_str("é", 1, 1), Ok(1));
-        assert_eq!(validate_iso8859_1_str("Ā", 10, 10), Err(Error::Invalid));
+        assert_eq!(validate_page_text::<Latin1>("é", 1, 1), Ok(1));
+        assert_eq!(validate_page_text::<Latin1>("Ā", 10, 10), Err(Error::Invalid));
         assert_eq!(validate_bcd_bytes(b"\x12", 1, 1), Ok(1));
         assert_eq!(validate_ebcdic_printable(b"\x41\xCA", 2, 2), Ok(2));
-        assert_eq!(validate_ebcdic_1142_text("A€", 2, 2), Ok(2));
+        assert_eq!(validate_page_text::<Cp1142>("A€", 2, 2), Ok(2));
         for invalid in ["¤", "😀"] {
             for (min, max) in [(0, 0), (0, 10), (10, 10)] {
-                assert_eq!(validate_ebcdic_1142_text(invalid, min, max), Err(Error::Invalid));
+                assert_eq!(validate_page_text::<Cp1142>(invalid, min, max), Err(Error::Invalid));
             }
         }
-        assert_eq!(validate_ebcdic_1142_text("A€", 0, 1), Err(Error::InvalidValueLength));
-        assert_eq!(validate_ebcdic_1142_text("A€", 3, 3), Err(Error::InvalidValueLength));
-        assert_eq!(validate_ebcdic_1142_text("", 0, 0), Ok(0));
+        assert_eq!(validate_page_text::<Cp1142>("A€", 0, 1), Err(Error::InvalidValueLength));
+        assert_eq!(validate_page_text::<Cp1142>("A€", 3, 3), Err(Error::InvalidValueLength));
+        assert_eq!(validate_page_text::<Cp1142>("", 0, 0), Ok(0));
     }
 }
 
@@ -542,6 +534,7 @@ mod proptests {
     use proptest::prelude::*;
 
     use super::*;
+    use crate::primitive::codepage::{Cp037, Latin1};
 
     proptest! {
         // Character class validation: arbitrary inputs, validate expected result
@@ -631,25 +624,24 @@ mod proptests {
             prop_assert_eq!(validate_byte_length(&v, 0, usize::MAX), Ok(v.len()));
         }
 
-        // ISO-8859-1 str: char count vs byte count
+        // Latin-1 text: char count vs byte count
         #[test]
-        fn iso8859_1_char_counting(v in proptest::collection::vec(0u8..=255, 0..100)) {
+        fn latin1_char_counting(v in proptest::collection::vec(0u8..=255, 0..100)) {
             let s: String = v.iter().map(|&b| b as char).collect();
-            prop_assert_eq!(validate_iso8859_1_str(&s, 0, usize::MAX), Ok(s.chars().count()));
+            prop_assert_eq!(validate_page_text::<Latin1>(&s, 0, usize::MAX), Ok(s.chars().count()));
         }
 
         #[test]
-        fn ebcdic_037_ascii_validation(v in prop::collection::vec(any::<u8>(), 0..100), min in 0usize..=100, extra in 0usize..=100) {
-            use crate::primitive::ebcdic::ASCII_TO_EBCDIC_037;
+        fn ascii_subset_validation(v in prop::collection::vec(any::<u8>(), 0..100), min in 0usize..=100, extra in 0usize..=100) {
             let max = min + extra;
-            let expected = if !v.iter().all(|b| ASCII_TO_EBCDIC_037[..128].contains(b)) {
+            let expected = if !v.iter().all(|b| Cp037::ASCII_TO_PAGE[..128].contains(b)) {
                 Err(Error::Invalid)
             } else if !(min..=max).contains(&v.len()) {
                 Err(Error::InvalidValueLength)
             } else {
                 Ok(v.len())
             };
-            prop_assert_eq!(validate_ebcdic_037_ascii(&v, min, max), expected);
+            prop_assert_eq!(validate_ascii_subset::<Cp037>(&v, min, max), expected);
         }
 
         // EBCDIC printable range: 0x40-0xFE

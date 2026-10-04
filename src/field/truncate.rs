@@ -106,7 +106,7 @@ impl<F: ScalarFmt, const MAX_LEN: usize, const KEEP_RIGHT: bool> ScalarFmt for T
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Ascii, AsciiLength, Binary, Ebcdic037, Field, Fixed, FixedBinaryBe, FixedSignedBinaryBe};
+    use crate::{Ascii, AsciiLength, AsciiSubset, Binary, Cp037, Field, Fixed, FixedBinaryBe, FixedSignedBinaryBe};
 
     type Text = Field<Ascii<0, 8>, AsciiLength<1>>;
 
@@ -150,7 +150,7 @@ mod tests {
         assert_eq!(input, b"!");
         assert_eq!(space.len(), 12);
 
-        type Converted = Truncate<Field<Ascii<0, 8>, AsciiLength<1>, Ebcdic037>, 4>;
+        type Converted = Truncate<Field<Ascii<0, 8>, AsciiLength<1>, AsciiSubset<Cp037>>, 4>;
         let scratch_start = space.as_ptr();
         let mut input = &b"5\xC1\xC2\xC3\xC4\xC5!"[..];
         let value = Converted::decode(&mut input, &mut space).unwrap();

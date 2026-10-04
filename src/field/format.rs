@@ -142,11 +142,11 @@ impl<C: Check, L: LengthSpec, S: Step> ScalarFmt for Field<C, L, S> {
 mod tests {
     use super::Field;
     use crate::field::{
-        Ascii, Count, Ebcdic1142, Ebcdic1142Text, EbcdicLength, Fixed, FixedBinaryBe, FixedNibbleInt, Length, MinusPrefix, Numeric,
+        Ascii, Charset, CharsetText, Count, EbcdicLength, Fixed, FixedBinaryBe, FixedNibbleInt, Length, MinusPrefix, Numeric,
         PackNibblesLeft, PackNibblesRight, PadLeft, PadLeftEven, PadRight, PadRightEven, SignPrefix, Track2,
     };
     use crate::primitive::nibble::{BcdzDigits, EbcdicHexDigits, UpperHexDigits};
-    use crate::{AsciiLength, Ebcdic037, Error, ScalarFmt};
+    use crate::{AsciiLength, AsciiSubset, Cp037, Cp1142, Error, ScalarFmt};
 
     // The prefix counts the digits padded to 19, not the packing nibble.
     type LlvarPan = Field<
@@ -155,7 +155,8 @@ mod tests {
         crate::chain!(PadRight<19, b'?'>, Count, PadLeftEven<b'0'>, PackNibblesRight<BcdzDigits, 0>),
     >;
     type LlvarTrack2 = Field<Track2<0, 37>, EbcdicLength<2>, crate::chain!(PadRightEven<b'?'>, PackNibblesLeft<BcdzDigits, 0x0F>)>;
-    type LlvarHexAscii = Field<Ascii<0, 2>, EbcdicLength<2>, crate::chain!(Count, crate::Ebcdic037, PackNibblesRight<EbcdicHexDigits, 0>)>;
+    type LlvarHexAscii =
+        Field<Ascii<0, 2>, EbcdicLength<2>, crate::chain!(Count, crate::AsciiSubset<crate::Cp037>, PackNibblesRight<EbcdicHexDigits, 0>)>;
     type N16 = Field<Numeric<1, 16>, EbcdicLength<2>, crate::chain!(PadLeft<16, b'0', 1>, Count, PackNibblesRight<BcdzDigits, 0>)>;
     type CdAmount = SignPrefix<N16>;
     type PlusMinusAmount = SignPrefix<N16, b'+', b'-'>;
@@ -165,14 +166,15 @@ mod tests {
     type FixedEbcdicNumeric2 = Field<
         Numeric<1, 2>,
         Fixed<2>,
-        crate::chain!(PadLeft<2, b'0', 1>, crate::DecodeCheck<crate::Ebcdic037, crate::EbcdicPrintable<2, 2>>),
+        crate::chain!(PadLeft<2, b'0', 1>, crate::DecodeCheck<crate::AsciiSubset<crate::Cp037>, crate::EbcdicPrintable<2, 2>>),
     >;
-    type FixedIbm1142<const N: usize> = Field<Ebcdic1142Text<0, N>, Fixed<N>, crate::chain!(Ebcdic1142, PadRight<N, 0x40>)>;
+    type FixedIbm1142<const N: usize> = Field<CharsetText<Cp1142, 0, N>, Fixed<N>, crate::chain!(Charset<Cp1142>, PadRight<N, 0x40>)>;
     // The prefix counts the packed bytes, not the area's fill.
     type PaddedHex =
         Field<crate::UpperHexEven<0, 8>, EbcdicLength<2>, crate::chain!(PackNibblesRight<UpperHexDigits, 0>, Count, PadRight<4, 0x40>)>;
-    type FixedAsciiViaEbcdic = Field<Ascii<1, 1>, Fixed<1>, crate::Ebcdic037>;
-    type StrictFixedAsciiViaEbcdic = Field<Ascii<1, 1>, Fixed<1>, crate::DecodeCheck<crate::Ebcdic037, crate::EbcdicPrintable<1, 1>>>;
+    type FixedAsciiViaEbcdic = Field<Ascii<1, 1>, Fixed<1>, crate::AsciiSubset<crate::Cp037>>;
+    type StrictFixedAsciiViaEbcdic =
+        Field<Ascii<1, 1>, Fixed<1>, crate::DecodeCheck<crate::AsciiSubset<crate::Cp037>, crate::EbcdicPrintable<1, 1>>>;
 
     fn encode_field<F: ScalarFmt>(input: &[u8], out_len: usize, scratch_len: usize) -> Result<Vec<u8>, Error> {
         let mut out = vec![0u8; out_len];
@@ -218,7 +220,7 @@ mod tests {
     #[test]
     fn text_checks_see_strings_once() {
         use crate::Check;
-        type Text = Field<Ebcdic1142Text<1, 3>, AsciiLength<1>, Ebcdic1142>;
+        type Text = Field<CharsetText<Cp1142, 1, 3>, AsciiLength<1>, Charset<Cp1142>>;
         let mut wire = [0; 8];
         let mut out = wire.as_mut_slice();
         Text::encode_str(&mut out, &mut [][..], "ÆØÅ").unwrap();
@@ -226,8 +228,8 @@ mod tests {
         let mut scratch = [0; 16];
         assert_eq!(Text::decode_str(&mut &wire[..4], &mut &mut scratch[..]), Ok("ÆØÅ"));
         assert_eq!(Text::encoded_len_str("ÆØÅÆ"), Err(Error::InvalidValueLength));
-        assert_eq!(Ebcdic1142Text::<0, 3>::validate(b"\x80"), Err(Error::Invalid));
-        assert_eq!(Ebcdic1142Text::<0, 3>::validate_str("€"), Ok(1));
+        assert_eq!(CharsetText::<Cp1142, 0, 3>::validate(b"\x80"), Err(Error::Invalid));
+        assert_eq!(CharsetText::<Cp1142, 0, 3>::validate_str("€"), Ok(1));
     }
 
     #[test]
@@ -408,8 +410,12 @@ mod tests {
 
     #[test]
     fn cp037_strict_decoding_is_opt_in() {
-        type Permissive = Field<Ascii<0, 99>, crate::Rest, crate::Ebcdic037>;
-        type Strict = Field<Ascii<0, 99>, crate::Rest, crate::DecodeCheck<crate::Ebcdic037, crate::Ebcdic037Ascii<0, 99>>>;
+        type Permissive = Field<Ascii<0, 99>, crate::Rest, crate::AsciiSubset<crate::Cp037>>;
+        type Strict = Field<
+            Ascii<0, 99>,
+            crate::Rest,
+            crate::DecodeCheck<crate::AsciiSubset<crate::Cp037>, crate::AsciiSubsetBytes<crate::Cp037, 0, 99>>,
+        >;
         for (wire, ascii) in [
             (&b""[..], &b""[..]),
             (&b"\xC1\xF1\x40"[..], &b"A1 "[..]),
@@ -465,8 +471,8 @@ mod tests {
         type Borrowed = Field<Ascii<3, 3>, Fixed<3>>;
         type BorrowedChain = Field<Ascii<0, 8>, Fixed<8>, crate::chain!(PadLeft<8>, PadRight<8>)>;
         type Padded = Field<Ascii<0, 8>, AsciiLength<1>, crate::chain!(Count, PadRight<8>)>;
-        type Translated = Field<Ascii<3, 3>, Fixed<5>, crate::chain!(Ebcdic037, PadRight<5, 0x40>)>;
-        type Utf8 = Field<Ebcdic1142Text<1, 1>, Fixed<1>, Ebcdic1142>;
+        type Translated = Field<Ascii<3, 3>, Fixed<5>, crate::chain!(AsciiSubset<Cp037>, PadRight<5, 0x40>)>;
+        type Utf8 = Field<CharsetText<Cp1142, 1, 1>, Fixed<1>, Charset<Cp1142>>;
         assert_eq!(decode::<Borrowed>(b"ABCtail", 0), (Ok(b"ABC".to_vec()), 4, 0));
         assert_eq!(decode::<BorrowedChain>(b"     ABCtail", 0), (Ok(b"ABC".to_vec()), 4, 0));
         assert_eq!(decode::<Padded>(b"3ABC     tail", 0), (Ok(b"ABC".to_vec()), 4, 0));
@@ -509,7 +515,7 @@ mod tests {
 
     #[test]
     fn chained_borrows_survive_later_fields() {
-        type F = Field<Ascii<0, 8>, AsciiLength<1>, crate::chain!(PadRight<4>, Ebcdic037)>;
+        type F = Field<Ascii<0, 8>, AsciiLength<1>, crate::chain!(PadRight<4>, AsciiSubset<Cp037>)>;
         let mut wire = &b"4\xC1\x40\x40\x404\xC2\xC3\x40\x40"[..];
         let mut scratch = [0; 64];
         let mut arena = scratch.as_mut_slice();
@@ -518,7 +524,7 @@ mod tests {
         assert_eq!(a, b"A");
         assert_eq!(b, b"BC");
         assert!(wire.is_empty());
-        type U = Field<Ebcdic1142Text<0, 8>, AsciiLength<1>, Ebcdic1142>;
+        type U = Field<CharsetText<Cp1142, 0, 8>, AsciiLength<1>, Charset<Cp1142>>;
         let mut wire = &b"1\x5A1\xC1"[..];
         let euro = U::decode(&mut wire, &mut arena).unwrap();
         let letter = U::decode(&mut wire, &mut arena).unwrap();
@@ -531,7 +537,7 @@ mod tests {
 
     #[test]
     fn wire_extent_is_framed_before_decoding_capacity() {
-        type F = Field<Ebcdic1142Text<0, { usize::MAX }>, Length<FixedBinaryBe<8>>, Ebcdic1142>;
+        type F = Field<CharsetText<Cp1142, 0, { usize::MAX }>, Length<FixedBinaryBe<8>>, Charset<Cp1142>>;
         type Counted =
             Field<crate::Binary<0, { usize::MAX }>, Length<FixedBinaryBe<8>>, crate::chain!(Count, crate::UnpackNibbles<UpperHexDigits>)>;
         assert_eq!(decode_field::<Counted>(&(usize::MAX as u64).to_be_bytes(), 0), Err(Error::Invalid));
@@ -543,7 +549,7 @@ mod tests {
         for input in ["😀".as_bytes(), "\u{A4}".as_bytes(), b"\xFF"] {
             let mut output = [0; 8];
             assert_eq!(
-                <Ebcdic1142 as crate::Step>::encode(&mut &mut output[..], &mut [][..], input).map(|_| ()),
+                <Charset<Cp1142> as crate::Step>::encode(&mut &mut output[..], &mut [][..], input).map(|_| ()),
                 Err(Error::Invalid)
             );
         }
@@ -566,8 +572,8 @@ mod tests {
     #[test]
     #[cfg(debug_assertions)]
     fn incompatible_length_units_are_diagnosed_in_debug() {
-        type WrongBytes = Field<Ebcdic1142Text<1, 1>, AsciiLength<2>>;
-        type WrongScalars = Field<crate::Binary<1, 3>, AsciiLength<2>, Ebcdic1142>;
+        type WrongBytes = Field<CharsetText<Cp1142, 1, 1>, AsciiLength<2>>;
+        type WrongScalars = Field<crate::Binary<1, 3>, AsciiLength<2>, Charset<Cp1142>>;
         fn fails<F: ScalarFmt>() {
             assert!(
                 std::panic::catch_unwind(|| {
@@ -613,9 +619,9 @@ mod proptests {
 
         #[test]
         fn cp1142_field_preserves_values_and_character_prefix(bytes in prop::collection::vec(any::<u8>(), 0..64)) {
-            use crate::primitive::ebcdic::EBCDIC_1142_TO_UNICODE;
-            type F = Field<Ebcdic1142Text<0, 99>, AsciiLength<2>, Ebcdic1142>;
-            let text: String = bytes.iter().map(|&b| char::from_u32(EBCDIC_1142_TO_UNICODE[b as usize] as u32).unwrap()).collect();
+            use crate::CodePage;
+            type F = Field<CharsetText<Cp1142, 0, 99>, AsciiLength<2>, Charset<Cp1142>>;
+            let text: String = bytes.iter().map(|&b| char::from_u32(Cp1142::DECODE[b as usize] as u32).unwrap()).collect();
             let expected = F::encoded_len(text.as_bytes()).unwrap();
             prop_assert_eq!(expected, bytes.len() + 2);
             let mut output = vec![0; expected];

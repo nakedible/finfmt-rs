@@ -12,8 +12,8 @@
 pub mod bertlv;
 pub mod bitmap;
 pub mod bytes;
+pub mod codepage;
 pub mod decimal;
-pub mod ebcdic;
 pub mod int;
 pub mod nibble;
 pub mod text;

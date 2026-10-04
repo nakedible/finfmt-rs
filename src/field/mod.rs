@@ -2,8 +2,8 @@
 
 mod bertlv;
 mod check;
+mod codepage;
 mod constant;
-mod ebcdic;
 mod format;
 mod length;
 mod nibble;
@@ -24,11 +24,11 @@ macro_rules! chain {
 
 pub use bertlv::{BerLength, BerTag, StrictBerTag};
 pub use check::{
-    Alpha, Alphanum, Ascii, AsciiPrintable, Bcd, BcdBytes, Bcdz, Binary, Check, Ebcdic037Ascii, Ebcdic1142Text, EbcdicPrintable, Hex,
-    HexEven, Iso88591, LowerHex, LowerHexEven, Numeric, Track2, UpperAlpha, UpperAlphanum, UpperAsciiPrintable, UpperHex, UpperHexEven,
+    Alpha, Alphanum, Ascii, AsciiPrintable, AsciiSubsetBytes, Bcd, BcdBytes, Bcdz, Binary, CharsetText, Check, EbcdicPrintable, Hex,
+    HexEven, LowerHex, LowerHexEven, Numeric, Track2, UpperAlpha, UpperAlphanum, UpperAsciiPrintable, UpperHex, UpperHexEven,
 };
+pub use codepage::{AsciiSubset, Charset};
 pub use constant::{ConstBytes, Fill};
-pub use ebcdic::{Ebcdic037, Ebcdic1142};
 pub use format::Field;
 pub(crate) use format::{decode_framed, encode_length, encode_steps};
 pub use length::{AsciiLength, BlankableEbcdicLength, EbcdicLength, Fixed, Length, LengthSpec, Offset, Per, Rest};

@@ -1020,10 +1020,8 @@ mod tests {
         for value in [-99_999i64, -10, -1, 0, 1, 9, 10, 99_999] {
             let ascii = encode_i64::<FixedSignedZonedAscii<5>>(value).unwrap();
             let ebcdic = encode_i64::<FixedSignedZonedEbcdic<5>>(value).unwrap();
-            let translated: Vec<u8> = ebcdic
-                .iter()
-                .map(|&byte| crate::primitive::ebcdic::EBCDIC_037_TO_ASCII[usize::from(byte)])
-                .collect();
+            let mut translated = vec![0; ebcdic.len()];
+            crate::primitive::codepage::decode_ascii_subset::<crate::Cp037>(&mut translated, &ebcdic).unwrap();
             assert_eq!(ascii, translated, "{value}");
         }
     }

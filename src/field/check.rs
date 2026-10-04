@@ -1,8 +1,11 @@
+use core::marker::PhantomData;
+
 use crate::Error;
+use crate::primitive::codepage::CodePage;
 use crate::primitive::validation::{
-    validate_alpha, validate_alphanum, validate_ascii, validate_ascii_printable, validate_bcd_bytes, validate_bcdz, validate_byte_length,
-    validate_ebcdic_037_ascii, validate_ebcdic_1142_text, validate_ebcdic_printable, validate_hex, validate_hex_even, validate_lower_hex,
-    validate_lower_hex_even, validate_numeric, validate_track2_chars, validate_upper_alpha, validate_upper_alphanum,
+    validate_alpha, validate_alphanum, validate_ascii, validate_ascii_printable, validate_ascii_subset, validate_bcd_bytes, validate_bcdz,
+    validate_byte_length, validate_ebcdic_printable, validate_hex, validate_hex_even, validate_lower_hex, validate_lower_hex_even,
+    validate_numeric, validate_page_text, validate_track2_chars, validate_upper_alpha, validate_upper_alphanum,
     validate_upper_ascii_printable, validate_upper_hex, validate_upper_hex_even,
 };
 use crate::utils::cold_path;
@@ -11,7 +14,7 @@ use crate::utils::cold_path;
 ///
 /// A field runs its check on the value before encoding it, and on the decoded
 /// value after decoding it. The built-in checks take `MIN` and `MAX` as an
-/// inclusive length range. They count bytes, except `Ebcdic1142Text`, which
+/// inclusive length range. They count bytes, except `CharsetText`, which
 /// counts characters. The field's first `Step` and length spec must count in the
 /// same unit. Content errors return `Invalid` and take precedence over length
 /// errors, which return `InvalidValueLength`. When decoding, fields report
@@ -207,24 +210,14 @@ impl<const MIN: usize, const MAX: usize> Check for Binary<MIN, MAX> {
     }
 }
 
-/// Placeholder for Latin-1 text. Currently accepts any bytes and checks only
-/// the length.
-pub struct Iso88591<const MIN: usize, const MAX: usize>;
-impl<const MIN: usize, const MAX: usize> Check for Iso88591<MIN, MAX> {
+/// Wire bytes: code page `P` bytes that map to ASCII, including controls. Use
+/// `DecodeCheck<AsciiSubset<P>, AsciiSubsetBytes<P, MIN, MAX>>` to reject,
+/// rather than replace, characters outside ASCII when decoding.
+pub struct AsciiSubsetBytes<P: CodePage, const MIN: usize, const MAX: usize>(PhantomData<P>);
+impl<P: CodePage, const MIN: usize, const MAX: usize> Check for AsciiSubsetBytes<P, MIN, MAX> {
     #[inline(always)]
     fn validate(input: &[u8]) -> Result<usize, Error> {
-        validate_byte_length(input, MIN, MAX)
-    }
-}
-
-/// Wire bytes: CP037 bytes that map to ASCII, including controls. Use
-/// `DecodeCheck<Ebcdic037, Ebcdic037Ascii<MIN, MAX>>` to reject, rather than
-/// replace, characters outside ASCII when decoding.
-pub struct Ebcdic037Ascii<const MIN: usize, const MAX: usize>;
-impl<const MIN: usize, const MAX: usize> Check for Ebcdic037Ascii<MIN, MAX> {
-    #[inline(always)]
-    fn validate(input: &[u8]) -> Result<usize, Error> {
-        validate_ebcdic_037_ascii(input, MIN, MAX)
+        validate_ascii_subset::<P>(input, MIN, MAX)
     }
 }
 
@@ -239,21 +232,21 @@ impl<const MIN: usize, const MAX: usize> Check for EbcdicPrintable<MIN, MAX> {
     }
 }
 
-/// UTF-8 text whose characters all exist in IBM1142. `MIN` and `MAX` count
-/// characters, not bytes.
-pub struct Ebcdic1142Text<const MIN: usize, const MAX: usize>;
-impl<const MIN: usize, const MAX: usize> Check for Ebcdic1142Text<MIN, MAX> {
+/// UTF-8 text whose characters all exist in code page `P`. `MIN` and `MAX`
+/// count characters, not bytes.
+pub struct CharsetText<P: CodePage, const MIN: usize, const MAX: usize>(PhantomData<P>);
+impl<P: CodePage, const MIN: usize, const MAX: usize> Check for CharsetText<P, MIN, MAX> {
     #[inline(always)]
     fn validate(input: &[u8]) -> Result<usize, Error> {
         let text = core::str::from_utf8(input).map_err(|_| {
             cold_path();
             Error::Invalid
         })?;
-        validate_ebcdic_1142_text(text, MIN, MAX)
+        validate_page_text::<P>(text, MIN, MAX)
     }
 
     #[inline(always)]
     fn validate_str(input: &str) -> Result<usize, Error> {
-        validate_ebcdic_1142_text(input, MIN, MAX)
+        validate_page_text::<P>(input, MIN, MAX)
     }
 }

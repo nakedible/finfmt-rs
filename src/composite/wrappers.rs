@@ -28,7 +28,7 @@ pub(super) fn encode_frame<L: LengthSpec, Steps: Step, const MIN: usize, const M
         assert!(MIN <= MAX, "a frame's MIN exceeds its MAX");
         assert!(
             !Steps::INPUT_IN_CHARS,
-            "a frame counts its body in bytes; a step counting characters, such as Ebcdic1142, cannot follow it"
+            "a frame counts its body in bytes; a step counting characters, such as Charset<Cp1142>, cannot follow it"
         );
     };
     let (body, scratch) = encode_staged(scratch, encode)?;
@@ -358,7 +358,7 @@ impl<T: Default> FieldDecode<'_, T> for Empty {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Ascii, AsciiLength, Ebcdic037, Field, Fill, Fixed, Numeric, PadLeft, Rest};
+    use crate::{Ascii, AsciiLength, AsciiSubset, Cp037, Field, Fill, Fixed, Numeric, PadLeft, Rest};
 
     #[test]
     fn fixed_formats_write_and_check_constants() {
@@ -493,7 +493,7 @@ mod tests {
             assert_eq!(input.is_empty(), expected == Ok(true));
         }
 
-        type Text = Field<Ascii<3, 3>, Fixed<3>, Ebcdic037>;
+        type Text = Field<Ascii<3, 3>, Fixed<3>, AsciiSubset<Cp037>>;
         type OptionalText = OptionAs<Text, Dashes>;
         for capacity in [6, 32] {
             let mut scratch = [0; 32];

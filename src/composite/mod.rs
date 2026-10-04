@@ -189,13 +189,13 @@ pub struct FixedBytes<P>(PhantomData<P>);
 /// accept. `MIN` and `MAX` bound the inner encoding, before the steps, for a
 /// limit a specification states beyond what the inner format and `L` imply. A
 /// frame padded to an area sets `MAX` to its width, as padding does not cut.
-/// A step counting characters rather than bytes, such as `Ebcdic1142`, is
+/// A step counting characters rather than bytes, such as `Charset`, is
 /// rejected at compile time: the frame has only its body's byte length.
 ///
 /// ```compile_fail
-/// use finfmt::{AsciiLength, Binary, Ebcdic1142, Field, Frame, Rest};
+/// use finfmt::{AsciiLength, Binary, Charset, Cp1142, Field, Frame, Rest};
 /// type Text = Field<Binary<0, 30>, Rest>;
-/// let _ = finfmt::encode::<Frame<AsciiLength<1>, Text, Ebcdic1142>, _>(&mut [0; 8], &mut [0; 32], "A");
+/// let _ = finfmt::encode::<Frame<AsciiLength<1>, Text, Charset<Cp1142>>, _>(&mut [0; 8], &mut [0; 32], "A");
 /// ```
 ///
 /// Encoding stages the inner value with [`encode_staged`]. A body outside
@@ -277,8 +277,8 @@ mod tests {
     use crate::field::Length;
     use crate::primitive::nibble::{BcdzDigits, UpperHexDigits};
     use crate::{
-        Ascii, AsciiLength, Count, Ebcdic037, EbcdicLength, Error, Field, Fixed, Identity, Numeric, PadLeft, PadRightEven, SignPrefix,
-        Track2, UnpackNibbles,
+        Ascii, AsciiLength, AsciiSubset, Count, Cp037, EbcdicLength, Error, Field, Fixed, Identity, Numeric, PadLeft, PadRightEven,
+        SignPrefix, Track2, UnpackNibbles,
     };
 
     type N6 = Field<Numeric<6, 6>, Fixed<6>>;
@@ -343,7 +343,7 @@ mod tests {
         }
     }
 
-    type A4Ebcdic = Field<Ascii<4, 4>, Fixed<4>, Ebcdic037>;
+    type A4Ebcdic = Field<Ascii<4, 4>, Fixed<4>, AsciiSubset<Cp037>>;
     /// A BER-TLV value: the field's format behind a BER length.
     type BerFramed<F> = Frame<crate::BerLength, F>;
     /// Unknown BER-TLV values as hex text.
@@ -2791,7 +2791,7 @@ mod literal_tests {
             );
             assert_eq!(input.len(), if expected == b"1" { 0 } else { 2 });
         }
-        type Ebcdic = Field<Ascii<1, 1>, Fixed<1>, crate::Ebcdic037>;
+        type Ebcdic = Field<Ascii<1, 1>, Fixed<1>, crate::AsciiSubset<crate::Cp037>>;
         for expected in [b"A", b"B"] {
             let mut input = &b"\xC1!"[..];
             let mut workspace = &mut scratch[..1];
