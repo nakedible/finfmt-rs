@@ -252,8 +252,8 @@ pub struct Separator<const BYTE: u8>;
 
 mod tlv;
 #[doc(hidden)]
-pub use tlv::{MAX_TLV_TAG, TlvEntry, TlvTag, decode_tlv_field, decode_tlv_unknown, encode_tlv_tag, skip_tlv_padding};
-pub use tlv::{NoPadding, PaddingByte, TlvExtras, TlvList, TlvPadding};
+pub use tlv::{MAX_TLV_TAG, TlvEntryFrame, TlvPair, TlvTag, decode_tlv_field, decode_tlv_unknown, encode_tlv_tag, skip_tlv_padding};
+pub use tlv::{NoPadding, PaddingByte, TlvEntry, TlvExtras, TlvList, TlvPadding};
 mod repeated;
 mod scalar;
 #[cfg(feature = "serde")]

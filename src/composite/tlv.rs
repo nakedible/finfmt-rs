@@ -4,6 +4,7 @@
 use core::str::FromStr;
 
 use super::*;
+use crate::field::{LengthSpec, Step};
 use crate::utils::cold_path;
 
 /// The longest tag a TLV record reads, in decoded bytes; a longer one is
@@ -22,10 +23,10 @@ pub trait TlvExtras {
     /// The value of each entry.
     type Value;
 
-    /// Encode the entries, each tag through `T` and value through `F`,
-    /// rejecting tags in `known_tags`, a record's declared tags, even if
-    /// their fields are absent.
-    fn encode_unknowns<T: ScalarFmt, F: FieldEncode<Self::Value>>(
+    /// Encode the entries, each tag through `T` and value through `F`, each
+    /// entry framed by `E`, rejecting tags in `known_tags`, a record's
+    /// declared tags, even if their fields are absent.
+    fn encode_unknowns<T: ScalarFmt, F: FieldEncode<Self::Value>, E: TlvEntryFrame>(
         &self,
         output: &mut &mut [u8],
         scratch: &mut [u8],
@@ -44,18 +45,18 @@ pub trait TlvExtras {
 /// An entry borrowed from a collection: `(&K, &V)` from a map, `&(K, V)`
 /// from a sequence of pairs.
 #[doc(hidden)]
-pub trait TlvEntry<'a, K: 'a, V: 'a> {
+pub trait TlvPair<'a, K: 'a, V: 'a> {
     fn parts(self) -> (&'a K, &'a V);
 }
 
-impl<'a, K, V> TlvEntry<'a, K, V> for (&'a K, &'a V) {
+impl<'a, K, V> TlvPair<'a, K, V> for (&'a K, &'a V) {
     #[inline(always)]
     fn parts(self) -> (&'a K, &'a V) {
         self
     }
 }
 
-impl<'a, K, V> TlvEntry<'a, K, V> for &'a (K, V) {
+impl<'a, K, V> TlvPair<'a, K, V> for &'a (K, V) {
     #[inline(always)]
     fn parts(self) -> (&'a K, &'a V) {
         (&self.0, &self.1)
@@ -65,13 +66,13 @@ impl<'a, K, V> TlvEntry<'a, K, V> for &'a (K, V) {
 impl<C, K, V> TlvExtras for C
 where
     C: IntoIterator<Item = (K, V)> + Extend<(K, V)>,
-    for<'a> &'a C: IntoIterator<Item: TlvEntry<'a, K, V>>,
+    for<'a> &'a C: IntoIterator<Item: TlvPair<'a, K, V>>,
     K: AsRef<str> + FromStr,
 {
     type Value = V;
 
     #[inline(always)]
-    fn encode_unknowns<T: ScalarFmt, F: FieldEncode<V>>(
+    fn encode_unknowns<T: ScalarFmt, F: FieldEncode<V>, E: TlvEntryFrame>(
         &self,
         output: &mut &mut [u8],
         scratch: &mut [u8],
@@ -84,8 +85,10 @@ where
                 cold_path();
                 return Err(Error::Invalid.into());
             }
-            T::encode(output, scratch, key.as_bytes())?;
-            F::encode_field(output, scratch, value)?;
+            E::encode(output, scratch, |output, scratch| {
+                T::encode(output, scratch, key.as_bytes())?;
+                F::encode_field(output, scratch, value)
+            })?;
         }
         Ok(())
     }
@@ -107,6 +110,71 @@ where
         let value = F::decode_field(input, scratch)?;
         self.extend(core::iter::once((key, value)));
         Ok(())
+    }
+}
+
+/// Where a length or other framing covers a whole TLV entry, tag and value
+/// together, rather than only the value: `Frame<L, TlvEntry, Steps, MIN,
+/// MAX>`, as `tlv(tag = T, entry = Frame<EbcdicLength<3>, TlvEntry>)`. The
+/// entry's value then takes the rest of the frame.
+pub struct TlvEntry;
+
+/// The framing of each TLV entry: `()` for none, or a [`Frame`] around
+/// [`TlvEntry`].
+#[doc(hidden)]
+pub trait TlvEntryFrame {
+    /// Decode one entry with `decode`, which must consume the frame's body.
+    fn decode<'de, R>(
+        input: &mut &'de [u8],
+        scratch: &mut &'de mut [u8],
+        decode: impl FnOnce(&mut &'de [u8], &mut &'de mut [u8]) -> Result<R, CompositeError>,
+    ) -> Result<R, CompositeError>;
+
+    /// Encode one entry with `encode`.
+    fn encode(
+        output: &mut &mut [u8],
+        scratch: &mut [u8],
+        encode: impl FnOnce(&mut &mut [u8], &mut [u8]) -> Result<(), CompositeError>,
+    ) -> Result<(), CompositeError>;
+}
+
+impl TlvEntryFrame for () {
+    #[inline(always)]
+    fn decode<'de, R>(
+        input: &mut &'de [u8],
+        scratch: &mut &'de mut [u8],
+        decode: impl FnOnce(&mut &'de [u8], &mut &'de mut [u8]) -> Result<R, CompositeError>,
+    ) -> Result<R, CompositeError> {
+        decode(input, scratch)
+    }
+
+    #[inline(always)]
+    fn encode(
+        output: &mut &mut [u8],
+        scratch: &mut [u8],
+        encode: impl FnOnce(&mut &mut [u8], &mut [u8]) -> Result<(), CompositeError>,
+    ) -> Result<(), CompositeError> {
+        encode(output, scratch)
+    }
+}
+
+impl<L: LengthSpec, Steps: Step, const MIN: usize, const MAX: usize> TlvEntryFrame for Frame<L, TlvEntry, Steps, MIN, MAX> {
+    #[inline(always)]
+    fn decode<'de, R>(
+        input: &mut &'de [u8],
+        scratch: &mut &'de mut [u8],
+        decode: impl FnOnce(&mut &'de [u8], &mut &'de mut [u8]) -> Result<R, CompositeError>,
+    ) -> Result<R, CompositeError> {
+        super::wrappers::decode_frame::<L, Steps, MIN, MAX, R>(input, scratch, decode)
+    }
+
+    #[inline(always)]
+    fn encode(
+        output: &mut &mut [u8],
+        scratch: &mut [u8],
+        encode: impl FnOnce(&mut &mut [u8], &mut [u8]) -> Result<(), CompositeError>,
+    ) -> Result<(), CompositeError> {
+        super::wrappers::encode_frame::<L, Steps, MIN, MAX>(output, scratch, encode)
     }
 }
 
@@ -135,7 +203,8 @@ impl<const BYTE: u8> TlvPadding for PaddingByte<BYTE> {
 /// any [`TlvExtras`] collection: what a `tlv` record with only an `extras`
 /// field reads, without declared tags. Each tag is written by the scalar
 /// format `T`, which must read a tag of a known width, and each value by `F`,
-/// which carries its own length; `P` is the [`TlvPadding`].
+/// which carries its own length; `P` is the [`TlvPadding`], and `E` frames
+/// each whole entry, as `Frame<L, TlvEntry>`, or `()` for none.
 ///
 /// BER-TLV with hex values, keeping every entry in order:
 ///
@@ -150,16 +219,18 @@ impl<const BYTE: u8> TlvPadding for PaddingByte<BYTE> {
 /// let entries: Vec<(String, String)> = finfmt::decode::<Emv, _>(b"\x9F\x02\x02\x12\x34\x00\x5A\x00", &mut scratch).unwrap();
 /// assert_eq!(entries, [("9F02".into(), "1234".into()), ("5A".into(), "".into())]);
 /// ```
-pub struct TlvList<T, F, P = NoPadding>(PhantomData<(T, F, P)>);
+pub struct TlvList<T, F, P = NoPadding, E = ()>(PhantomData<(T, F, P, E)>);
 
-impl<C: TlvExtras, T: ScalarFmt, F: FieldEncode<C::Value>, P> FieldEncode<C> for TlvList<T, F, P> {
+impl<C: TlvExtras, T: ScalarFmt, F: FieldEncode<C::Value>, P, E: TlvEntryFrame> FieldEncode<C> for TlvList<T, F, P, E> {
     #[inline(always)]
     fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &C) -> Result<(), CompositeError> {
-        value.encode_unknowns::<T, F>(output, scratch, &[])
+        value.encode_unknowns::<T, F, E>(output, scratch, &[])
     }
 }
 
-impl<'de, C: TlvExtras + Default, T: ScalarFmt, F: FieldDecode<'de, C::Value>, P: TlvPadding> FieldDecode<'de, C> for TlvList<T, F, P> {
+impl<'de, C: TlvExtras + Default, T: ScalarFmt, F: FieldDecode<'de, C::Value>, P: TlvPadding, E: TlvEntryFrame> FieldDecode<'de, C>
+    for TlvList<T, F, P, E>
+{
     // Entries are read until the input ends.
     const TAKES_REST: bool = true;
 
@@ -168,7 +239,9 @@ impl<'de, C: TlvExtras + Default, T: ScalarFmt, F: FieldDecode<'de, C::Value>, P
         let mut entries = C::default();
         skip_tlv_padding(input, P::BYTES);
         while !input.is_empty() {
-            decode_tlv_unknown::<T, F, C>(input, scratch, &mut entries)?;
+            E::decode(input, scratch, |input, scratch| {
+                decode_tlv_unknown::<T, F, C>(input, scratch, &mut entries)
+            })?;
             skip_tlv_padding(input, P::BYTES);
         }
         Ok(entries)
@@ -193,18 +266,13 @@ pub fn decode_tlv_unknown<'de, T: ScalarFmt, F: FieldDecode<'de, C::Value>, C: T
 /// Write a declared field's tag through `T`.
 #[doc(hidden)]
 #[inline(always)]
-pub fn encode_tlv_tag<T: ScalarFmt>(
-    output: &mut &mut [u8],
-    scratch: &mut [u8],
-    tag: &str,
-    field: &'static str,
-) -> Result<(), CompositeError> {
+pub fn encode_tlv_tag<T: ScalarFmt>(output: &mut &mut [u8], scratch: &mut [u8], tag: &str) -> Result<(), CompositeError> {
     let result = T::encode(output, scratch, tag.as_bytes());
     debug_assert!(
         !matches!(result, Err(Error::Invalid | Error::InvalidValueLength)),
         "a declared tag is not a valid value of the record's tag format"
     );
-    result.map_err(|error| wrap_composite_error(error, field))
+    Ok(result?)
 }
 
 /// A declared tag's wire bytes, encoded once per decode and matched against
@@ -363,6 +431,21 @@ mod tests {
         assert_eq!(decode::<Ber, Pairs>(wire, &mut [0; 11]), Err(Error::BufferOverflow));
         assert_eq!(encode::<Ber, _>(&pairs(&[("bad", "12")])), Err(Error::Invalid));
         assert_eq!(encode::<Ber, _>(&pairs(&[("9F02", "12fg")])), Err(Error::Invalid));
+    }
+
+    #[test]
+    fn lists_may_frame_whole_entries() {
+        type Framed = TlvList<
+            Field<crate::Numeric<2, 2>, crate::Fixed<2>>,
+            Field<crate::Ascii<0, 9>, crate::Rest>,
+            NoPadding,
+            Frame<crate::AsciiLength<3>, TlvEntry>,
+        >;
+        let entries = pairs(&[("14", "A"), ("14", "BC")]);
+        let wire = b"00314A00414BC";
+        assert_eq!(encode::<Framed, _>(&entries).as_deref(), Ok(&wire[..]));
+        assert_eq!(decode::<Framed, Pairs>(wire, &mut [0; 16]), Ok(entries));
+        assert_eq!(decode::<Framed, Pairs>(b"00514A", &mut [0; 16]), Err(Error::UnexpectedEof));
     }
 
     #[test]

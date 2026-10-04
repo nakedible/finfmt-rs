@@ -54,6 +54,14 @@
 ///   between and after entries; encoding never writes it, and no declared tag
 ///   may start with it, which debug builds assert.
 ///
+///   `#[wire(tlv(tag = T, entry = Frame<L, TlvEntry>))]` frames each whole
+///   entry, tag and value together, for a length written before the tag:
+///   `Frame<EbcdicLength<3>, TlvEntry>` for `LLL` + tag + value, with
+///   `Offset` if the length counts itself, and the frame's steps and bounds
+///   as usual. Each value then takes the rest of its entry, such as
+///   `Field<Ascii<0, 99>, Rest>`, and must use it up. `entry` comes before
+///   `padding`, which still applies between entries.
+///
 /// An `Option` field is recognized by its spelling: `Option<T>`, or a path
 /// such as `std::option::Option<T>`; a type alias for one is a required
 /// field.
@@ -367,8 +375,8 @@ macro_rules! __finfmt_wire_item {
     ($kept:tt [bitmap = $format:ty ,]; ; $vis:vis struct $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
         $crate::__finfmt_wire_fields! { ([bitmap $format] $kept $vis $name $lt $de [] [0]) []; $($body)* }
     };
-    ($kept:tt [tlv(tag = $tag:ty $(, padding = $padding:expr)? $(,)?) ,]; ; $vis:vis struct $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
-        $crate::__finfmt_wire_fields! { ([tlv ($tag) [$($padding)?]] $kept $vis $name $lt $de [] [0]) []; $($body)* }
+    ($kept:tt [tlv(tag = $tag:ty $(, entry = $entry:ty)? $(, padding = $padding:expr)? $(,)?) ,]; ; $vis:vis struct $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
+        $crate::__finfmt_wire_fields! { ([tlv ($tag) [$($padding)?] [$($entry)?]] $kept $vis $name $lt $de [] [0]) []; $($body)* }
     };
     ($kept:tt [$kind:ident ,]; ; $vis:vis enum $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
         $crate::__finfmt_wire_variants! { ($kind $kept $vis $name $lt $de []) []; $($body)* }
@@ -915,7 +923,7 @@ macro_rules! __finfmt_wire_emit {
             }
         };
     };
-    ([tlv ($tagfmt:ty) [$($padding:expr)?]] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
+    ([tlv ($tagfmt:ty) [$($padding:expr)?] [$($entry:ty)?]] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
         [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident $pos:tt ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]) => {
         $crate::__finfmt_wire_no_cfg! { $($kept)* $($($fkept)*)* }
         $($kept)*
@@ -936,10 +944,12 @@ macro_rules! __finfmt_wire_emit {
                 #[allow(unused_assignments, unused_mut, unused_variables)]
                 fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &Self) -> Result<(), $crate::CompositeError> {
                     let _ = (&output, &scratch, value);
+                    // Each entry's framing, if the record frames whole entries.
+                    type __FinfmtTlvEntry = $crate::__finfmt_wire_tlv!(@entry $($entry)?);
                     // Extras must not use a declared tag, even one whose field is absent.
                     #[allow(dead_code)]
                     const KNOWN_TAGS: &[&str] = &[$($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @known} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* }),*];
-                    $($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @encode value, output, scratch, KNOWN_TAGS, ($tagfmt);} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
+                    $($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @encode value, output, scratch, KNOWN_TAGS, ($tagfmt), (__FinfmtTlvEntry);} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
                     Ok(())
                 }
             }
@@ -966,13 +976,17 @@ macro_rules! __finfmt_wire_emit {
                     );
                     $crate::composite::skip_tlv_padding(input, PADDING);
                     while !input.is_empty() {
-                        let mut matched = false;
-                        $($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @match tags, $pos, input, scratch, matched;} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
-                        $($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @unknown input, scratch, matched, ($tagfmt);} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
-                        if !matched {
-                            $crate::__private::cold_path();
-                            return Err($crate::CompositeError::from($crate::Error::Invalid));
-                        }
+                        // With entry framing, the entry's tag and value must use up its frame.
+                        <$crate::__finfmt_wire_tlv!(@entry $($entry)?) as $crate::composite::TlvEntryFrame>::decode(input, scratch, |input, scratch| {
+                            let mut matched = false;
+                            $($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @match tags, $pos, input, scratch, matched;} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
+                            $($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @unknown input, scratch, matched, ($tagfmt);} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
+                            if !matched {
+                                $crate::__private::cold_path();
+                                return Err($crate::CompositeError::from($crate::Error::Invalid));
+                            }
+                            Ok(())
+                        })?;
                         $crate::composite::skip_tlv_padding(input, PADDING);
                     }
                     $($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @finish} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
@@ -1440,6 +1454,13 @@ macro_rules! __finfmt_wire_bitmap {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __finfmt_wire_tlv {
+    (@entry $entry:ty) => {
+        $entry
+    };
+    (@entry) => {
+        ()
+    };
+
     (@tag $kind:ident $field:ident ($fmt:ty) $bit:tt [$tag:expr] $($slots:tt)*) => {
         Some($tag)
     };
@@ -1472,20 +1493,24 @@ macro_rules! __finfmt_wire_tlv {
     };
     (@finish $($rest:tt)*) => {};
 
-    (@encode $value:ident, $output:ident, $scratch:ident, $known:ident, ($tagfmt:ty); req $field:ident ($fmt:ty) $bit:tt [$tag:expr] $($slots:tt)*) => {
-        $crate::composite::encode_tlv_tag::<$tagfmt>($output, $scratch, $tag, stringify!($field))?;
-        <$fmt as $crate::composite::FieldEncode<_>>::encode_field($output, $scratch, &$value.$field)
-            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
+    (@encode $value:ident, $output:ident, $scratch:ident, $known:ident, ($tagfmt:ty), ($entry:ty); req $field:ident ($fmt:ty) $bit:tt [$tag:expr] $($slots:tt)*) => {
+        <$entry as $crate::composite::TlvEntryFrame>::encode($output, $scratch, |output, scratch| {
+            $crate::composite::encode_tlv_tag::<$tagfmt>(output, scratch, $tag)?;
+            <$fmt as $crate::composite::FieldEncode<_>>::encode_field(output, scratch, &$value.$field)
+        })
+        .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
     };
-    (@encode $value:ident, $output:ident, $scratch:ident, $known:ident, ($tagfmt:ty); opt $field:ident ($fmt:ty) $bit:tt [$tag:expr] $($slots:tt)*) => {
+    (@encode $value:ident, $output:ident, $scratch:ident, $known:ident, ($tagfmt:ty), ($entry:ty); opt $field:ident ($fmt:ty) $bit:tt [$tag:expr] $($slots:tt)*) => {
         if let Some(inner) = $value.$field.as_ref() {
-            $crate::composite::encode_tlv_tag::<$tagfmt>($output, $scratch, $tag, stringify!($field))?;
-            <$fmt as $crate::composite::FieldEncode<_>>::encode_field($output, $scratch, inner)
-                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
+            <$entry as $crate::composite::TlvEntryFrame>::encode($output, $scratch, |output, scratch| {
+                $crate::composite::encode_tlv_tag::<$tagfmt>(output, scratch, $tag)?;
+                <$fmt as $crate::composite::FieldEncode<_>>::encode_field(output, scratch, inner)
+            })
+            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
         }
     };
-    (@encode $value:ident, $output:ident, $scratch:ident, $known:ident, ($tagfmt:ty); req $field:ident ($fmt:ty) $bit:tt [] [extras ($vfmt:ty)] $($slots:tt)*) => {
-        $crate::composite::TlvExtras::encode_unknowns::<$tagfmt, $vfmt>(&$value.$field, $output, $scratch, $known)
+    (@encode $value:ident, $output:ident, $scratch:ident, $known:ident, ($tagfmt:ty), ($entry:ty); req $field:ident ($fmt:ty) $bit:tt [] [extras ($vfmt:ty)] $($slots:tt)*) => {
+        $crate::composite::TlvExtras::encode_unknowns::<$tagfmt, $vfmt, $entry>(&$value.$field, $output, $scratch, $known)
             .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
     };
     (@encode $($rest:tt)*) => {};
@@ -2518,6 +2543,78 @@ mod tests {
             #[wire(tag = "XID", fmt = Bin2)]
             xid: Option<String>,
         }
+    }
+
+    type N2Tag = Field<Numeric<2, 2>, Fixed<2>>;
+    type RestText = Field<Ascii<0, 99>, crate::Rest>;
+    type Entry3 = crate::Frame<AsciiLength<3>, crate::TlvEntry>;
+
+    crate::wire_type! {
+        /// Entries framed whole: a length before the tag that counts tag and value.
+        #[derive(Debug, Clone, PartialEq, Default)]
+        #[wire(tlv(tag = N2Tag, entry = Entry3))]
+        struct EntryFramed {
+            #[wire(tag = "01", fmt = RestText)]
+            name: Option<String>,
+            #[wire(tag = "02")]
+            nested: Option<EntryFramedInner>,
+            #[wire(tag = "03", fmt = N2)]
+            code: Option<String>,
+            #[wire(extras, fmt = RestText)]
+            extras: Vec<(String, String)>,
+        }
+
+        #[derive(Debug, Clone, PartialEq)]
+        #[wire(tlv(tag = N2Tag, entry = Entry3))]
+        struct EntryFramedInner {
+            #[wire(tag = "10", fmt = RestText)]
+            a: String,
+        }
+
+        /// A length that counts itself, with padding between entries and a bound.
+        #[derive(Debug, Clone, PartialEq)]
+        #[wire(tlv(tag = N2Tag, entry = crate::Frame<crate::Offset<AsciiLength<2>, 2>, crate::TlvEntry, crate::Identity, 0, 6>, padding = b' '))]
+        struct SelfCounting {
+            #[wire(tag = "07", fmt = RestText)]
+            v: String,
+        }
+    }
+
+    #[test]
+    fn tlv_entries_may_be_framed_whole() {
+        let value = EntryFramed {
+            name: Some("AB".into()),
+            nested: Some(EntryFramedInner { a: "XY".into() }),
+            code: None,
+            extras: vec![("99".into(), "Z".into()), ("99".into(), "W".into())],
+        };
+        let wire = b"00401AB0090200410XY00399Z00399W";
+        assert_eq!(encode::<EntryFramed, _>(&value).as_deref(), Ok(&wire[..]));
+        let mut scratch = [0; 64];
+        assert_eq!(
+            crate::decode::<EntryFramed, EntryFramed>(b"00399Z0090200410XY00401AB00399W", &mut scratch),
+            Ok(value)
+        );
+        // A repeated known tag, a value that leaves part of its frame, a short frame.
+        for (wire, kind, path) in [
+            (&b"00401AB00401CD"[..], Error::Invalid, &[PathSegment::Field("name")][..]),
+            (b"00503123", Error::Invalid, &[][..]),
+            (b"00901AB", Error::UnexpectedEof, &[][..]),
+        ] {
+            let mut scratch = [0; 64];
+            let error = crate::decode::<EntryFramed, EntryFramed>(wire, &mut scratch).unwrap_err();
+            assert_eq!((error.kind, error.path()), (kind, path), "{wire:?}");
+        }
+
+        let value = SelfCounting { v: "ABC".into() };
+        assert_eq!(encode::<SelfCounting, _>(&value).as_deref(), Ok(&b"0707ABC"[..]));
+        let mut scratch = [0; 64];
+        assert_eq!(crate::decode::<SelfCounting, SelfCounting>(b" 0707ABC  ", &mut scratch), Ok(value));
+        let error = encode::<SelfCounting, _>(&SelfCounting { v: "ABCDE".into() }).unwrap_err();
+        assert_eq!(
+            (error.kind, error.path()),
+            (Error::InvalidValueLength, &[PathSegment::Field("v")][..])
+        );
     }
 
     #[test]

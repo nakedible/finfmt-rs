@@ -12,26 +12,37 @@ where
 {
     #[inline(always)]
     fn encode_field(output: &mut &mut [u8], scratch: &mut [u8], value: &T) -> Result<(), CompositeError> {
-        const {
-            assert!(MIN <= MAX, "a frame's MIN exceeds its MAX");
-            assert!(
-                !Steps::INPUT_IN_CHARS,
-                "a frame counts its body in bytes; a step counting characters, such as Ebcdic1142, cannot follow it"
-            );
-        };
-        let (body, scratch) = encode_staged(scratch, |out, workspace| Inner::encode_field(out, workspace, value))?;
-        if body.len() < MIN || body.len() > MAX {
-            cold_path();
-            return Err(Error::InvalidValueLength.into());
-        }
-        // The length comes from the value: one the prefix cannot state is the value's.
-        encode_length::<L, Steps>(output, scratch, body.len()).map_err(|error| match error {
-            Error::Invalid => Error::InvalidValueLength,
-            error => error,
-        })?;
-        encode_steps::<Steps>(output, scratch, body, body.len())?;
-        Ok(())
+        encode_frame::<L, Steps, MIN, MAX>(output, scratch, |out, workspace| Inner::encode_field(out, workspace, value))
     }
+}
+
+/// Stage a frame's body with `encode`, then write its length and the body
+/// through the steps.
+#[inline(always)]
+pub(super) fn encode_frame<L: LengthSpec, Steps: Step, const MIN: usize, const MAX: usize>(
+    output: &mut &mut [u8],
+    scratch: &mut [u8],
+    encode: impl FnOnce(&mut &mut [u8], &mut [u8]) -> Result<(), CompositeError>,
+) -> Result<(), CompositeError> {
+    const {
+        assert!(MIN <= MAX, "a frame's MIN exceeds its MAX");
+        assert!(
+            !Steps::INPUT_IN_CHARS,
+            "a frame counts its body in bytes; a step counting characters, such as Ebcdic1142, cannot follow it"
+        );
+    };
+    let (body, scratch) = encode_staged(scratch, encode)?;
+    if body.len() < MIN || body.len() > MAX {
+        cold_path();
+        return Err(Error::InvalidValueLength.into());
+    }
+    // The length comes from the value: one the prefix cannot state is the value's.
+    encode_length::<L, Steps>(output, scratch, body.len()).map_err(|error| match error {
+        Error::Invalid => Error::InvalidValueLength,
+        error => error,
+    })?;
+    encode_steps::<Steps>(output, scratch, body, body.len())?;
+    Ok(())
 }
 
 impl<'de, T, L, Inner, Steps, const MIN: usize, const MAX: usize> FieldDecode<'de, T> for Frame<L, Inner, Steps, MIN, MAX>
@@ -68,7 +79,7 @@ where
 /// Take a frame's body and decode all of it with `decode`. Input advances
 /// only on success.
 #[inline(always)]
-fn decode_frame<'de, L: LengthSpec, Steps: Step, const MIN: usize, const MAX: usize, T>(
+pub(super) fn decode_frame<'de, L: LengthSpec, Steps: Step, const MIN: usize, const MAX: usize, T>(
     input: &mut &'de [u8],
     scratch: &mut &'de mut [u8],
     decode: impl FnOnce(&mut &'de [u8], &mut &'de mut [u8]) -> Result<T, CompositeError>,

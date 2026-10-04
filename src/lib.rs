@@ -16,7 +16,7 @@ pub use bitmap::{Bitmap, BitmapFormat, BitmapLayout, decode_bitmap, encode_bitma
 pub use composite::SerdeScalar;
 pub use composite::{
     AbsentBytes, AbsentFmt, BoundedList, ContextDecode, Empty, FieldDecode, FieldEncode, FixedAreaList, FixedBytes, FixedValue, Frame,
-    NoPadding, NoTrailingFields, OptionAs, PaddingByte, ScalarDecode, ScalarEncode, Separator, TlvExtras, TlvList, TlvPadding,
+    NoPadding, NoTrailingFields, OptionAs, PaddingByte, ScalarDecode, ScalarEncode, Separator, TlvEntry, TlvExtras, TlvList, TlvPadding,
     TrailingField, TrailingLengthFrame, decode, encode,
 };
 pub use field::{
