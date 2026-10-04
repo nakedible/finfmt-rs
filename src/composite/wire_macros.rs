@@ -15,9 +15,12 @@
 ///   `None` at the end of the input, and only `Option` fields may follow it.
 /// - `#[wire(delimited = b'|')]`: fields separated by a byte. The last field
 ///   takes the rest of the bounded input and may contain the separator;
-///   earlier fields must not encode it, which debug builds assert. An `Option`
-///   field may be anywhere, and an empty segment decodes as `None`, even one
-///   encoded from a value that produced no bytes.
+///   earlier fields must not encode it, which debug builds assert. As in a
+///   concat record, an `Option` field may be left out at the end of the
+///   record, together with its separator: it decodes as `None` where the
+///   input runs out, and only `Option` fields may follow it. An empty segment
+///   is an empty value, not an absent one; spell "empty means absent" as
+///   `absent_bytes = b""`, which is matched against the whole segment.
 /// - `#[wire(bitmap = B)]`: a presence bitmap, then the fields it marks, in
 ///   field number order. `B` implements [`BitmapFormat`](crate::BitmapFormat),
 ///   naming the protocol's layout and word encoding once. Fields with a
@@ -855,6 +858,15 @@ macro_rules! __finfmt_wire_emit {
             $($($akept)* $avis $afield: $aty,)*
         }
 
+        const _: () = assert!(
+            $crate::composite::optional_fields_trail(&[$($crate::__finfmt_wire_args! { {__finfmt_wire_consts @optional} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* }),*]),
+            concat!(
+                "wire_type!: in the delimited record `",
+                stringify!($name),
+                "`, only fields that may be omitted (Option without an absent form) may follow one"
+            )
+        );
+
         const _: () = {
             // Generated constants for fixed and absent fields, and the format impls.
             $crate::__finfmt_wire_consts! { @all delimited $name [$($lt)?] [$({ $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*] }
@@ -867,9 +879,11 @@ macro_rules! __finfmt_wire_emit {
                     const SEPARATOR: u8 = $separator;
                     let count = <[&str]>::len(&[$(stringify!($field)),*]);
                     let mut position = 0;
+                    // An omitted `Option` ends the record: it and every later field are left out with their separators.
+                    let mut omitted = false;
                     $(
                         position += 1;
-                        $crate::__finfmt_wire_args! { {__finfmt_wire_delimited @encode value, output, scratch, SEPARATOR, position < count;} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* }
+                        $crate::__finfmt_wire_args! { {__finfmt_wire_delimited @encode value, output, scratch, SEPARATOR, position, count, omitted;} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* }
                     )*
                     Ok(())
                 }
@@ -889,9 +903,11 @@ macro_rules! __finfmt_wire_emit {
                     const SEPARATOR: u8 = $separator;
                     let count = <[&str]>::len(&[$(stringify!($field)),*]);
                     let mut position = 0;
+                    // Set once the input has run out: later `Option` fields are omitted.
+                    let mut ended = false;
                     $(
                         position += 1;
-                        $crate::__finfmt_wire_args! { {__finfmt_wire_delimited @decode input, scratch, SEPARATOR, position < count;} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* }
+                        $crate::__finfmt_wire_args! { {__finfmt_wire_delimited @decode input, scratch, SEPARATOR, position < count, ended;} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* }
                     )*
                     Ok($name {
                         $($field: <$ty as $crate::__private::FromLocal<_>>::from_local($field),)*
@@ -1364,56 +1380,66 @@ macro_rules! __finfmt_wire_concat {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __finfmt_wire_delimited {
-    (@encode $value:ident, $output:ident, $scratch:ident, $separator:ident, $more:expr; req $field:ident ($fmt:ty) $($slots:tt)*) => {
-        $crate::__finfmt_wire_delimited! { @value &$value.$field, $output, $scratch, $separator, $more; $field ($fmt) }
-        $crate::__finfmt_wire_delimited! { @next $output, $separator, $more }
+    (@encode $value:ident, $output:ident, $scratch:ident, $separator:ident, $position:ident, $count:ident, $omitted:ident; req $field:ident ($fmt:ty) $($slots:tt)*) => {
+        $crate::__finfmt_wire_delimited! { @value &$value.$field, $output, $scratch, $separator, $position, $count; $field ($fmt) }
     };
-    (@encode $value:ident, $output:ident, $scratch:ident, $separator:ident, $more:expr; opt $field:ident ($fmt:ty) $($slots:tt)*) => {
-        if let Some(inner) = $crate::__private::AsOption::as_option(&$value.$field) {
-            $crate::__finfmt_wire_delimited! { @value inner, $output, $scratch, $separator, $more; $field ($fmt) }
+    (@encode $value:ident, $output:ident, $scratch:ident, $separator:ident, $position:ident, $count:ident, $omitted:ident; opt $field:ident ($fmt:ty) $($slots:tt)*) => {
+        match ($omitted, $crate::__private::AsOption::as_option(&$value.$field)) {
+            (true, Some(_)) => {
+                $crate::__private::cold_path();
+                return Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)));
+            }
+            (false, Some(inner)) => {
+                $crate::__finfmt_wire_delimited! { @value inner, $output, $scratch, $separator, $position, $count; $field ($fmt) }
+            }
+            (false, None) => $omitted = true,
+            (true, None) => {}
         }
-        $crate::__finfmt_wire_delimited! { @next $output, $separator, $more }
     };
-    (@value $value:expr, $output:ident, $scratch:ident, $separator:ident, $more:expr; $field:ident ($fmt:ty)) => {
-        $crate::composite::encode_delimited_value::<_, $fmt>($output, $scratch, $value, if $more { Some($separator) } else { None })
-            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
-    };
-    (@next $output:ident, $separator:ident, $more:expr) => {
-        if $more {
+    // A separator before every field but the first; only the last may contain one.
+    (@value $value:expr, $output:ident, $scratch:ident, $separator:ident, $position:ident, $count:ident; $field:ident ($fmt:ty)) => {
+        if $position > 1 {
             $crate::composite::encode_delimiter($output, $separator)?;
         }
+        $crate::composite::encode_delimited_value::<_, $fmt>($output, $scratch, $value, if $position < $count { Some($separator) } else { None })
+            .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
     };
-    (@decode $input:ident, $scratch:ident, $separator:ident, $more:expr; req $field:ident ($fmt:ty) $bit:tt $tag:tt $extras:tt [$($select:tt)+] $items:tt) => {
-        let segment = $crate::composite::decode_delimited_field($input, $separator, $more)?;
+    (@decode $input:ident, $scratch:ident, $separator:ident, $more:expr, $ended:ident; req $field:ident ($fmt:ty) $bit:tt $tag:tt $extras:tt [$($select:tt)+] $items:tt) => {
+        let segment = $crate::__finfmt_wire_delimited! { @required $input, $separator, $more, $ended; $field };
         let $field = $crate::composite::decode_delimited_context::<_, str, $fmt>(segment, $scratch, $crate::__finfmt_wire_key!($($select)+))
             .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
     };
-    (@decode $input:ident, $scratch:ident, $separator:ident, $more:expr; opt $field:ident ($fmt:ty) $bit:tt $tag:tt $extras:tt [$($select:tt)+] $items:tt) => {
-        let segment = $crate::composite::decode_delimited_field($input, $separator, $more)?;
-        let $field = if segment.is_empty() {
-            None
-        } else {
-            Some(
+    (@decode $input:ident, $scratch:ident, $separator:ident, $more:expr, $ended:ident; opt $field:ident ($fmt:ty) $bit:tt $tag:tt $extras:tt [$($select:tt)+] $items:tt) => {
+        let $field = match $crate::composite::decode_delimited_field($input, $separator, $more, &mut $ended) {
+            None => None,
+            Some(segment) => Some(
                 $crate::composite::decode_delimited_context::<_, str, $fmt>(segment, $scratch, $crate::__finfmt_wire_key!($($select)+))
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
-            )
+            ),
         };
     };
-    (@decode $input:ident, $scratch:ident, $separator:ident, $more:expr; req $field:ident ($fmt:ty) $($slots:tt)*) => {
-        let segment = $crate::composite::decode_delimited_field($input, $separator, $more)?;
+    (@decode $input:ident, $scratch:ident, $separator:ident, $more:expr, $ended:ident; req $field:ident ($fmt:ty) $($slots:tt)*) => {
+        let segment = $crate::__finfmt_wire_delimited! { @required $input, $separator, $more, $ended; $field };
         let $field = $crate::composite::decode_delimited_value::<_, $fmt>(segment, $scratch)
             .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
     };
-    (@decode $input:ident, $scratch:ident, $separator:ident, $more:expr; opt $field:ident ($fmt:ty) $($slots:tt)*) => {
-        let segment = $crate::composite::decode_delimited_field($input, $separator, $more)?;
-        let $field = if segment.is_empty() {
-            None
-        } else {
-            Some(
+    (@decode $input:ident, $scratch:ident, $separator:ident, $more:expr, $ended:ident; opt $field:ident ($fmt:ty) $($slots:tt)*) => {
+        let $field = match $crate::composite::decode_delimited_field($input, $separator, $more, &mut $ended) {
+            None => None,
+            Some(segment) => Some(
                 $crate::composite::decode_delimited_value::<_, $fmt>(segment, $scratch)
                     .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?,
-            )
+            ),
         };
+    };
+    (@required $input:ident, $separator:ident, $more:expr, $ended:ident; $field:ident) => {
+        match $crate::composite::decode_delimited_field($input, $separator, $more, &mut $ended) {
+            Some(segment) => segment,
+            None => {
+                $crate::__private::cold_path();
+                return Err($crate::composite::wrap_composite_error($crate::Error::UnexpectedEof, stringify!($field)));
+            }
+        }
     };
 }
 
@@ -1690,9 +1716,11 @@ mod tests {
         struct Delimited<'a> {
             #[wire(fmt = Text)]
             first: &'a str,
-            #[wire(fmt = N2)]
+            /// An empty segment means absent.
+            #[wire(fmt = N2, absent_bytes = b"")]
             middle: Option<u64>,
             inner: Inner,
+            /// May be left out with its separator.
             #[wire(fmt = Text)]
             last: Option<String>,
         }
@@ -1700,7 +1728,11 @@ mod tests {
 
     #[test]
     fn delimited_records_roundtrip_and_reject_bad_segments() {
-        for (middle, last, wire) in [(None, None, &b"AB||07|"[..]), (Some(15), Some("X|Y"), b"AB|15|07|X|Y")] {
+        for (middle, last, wire) in [
+            (None, None, &b"AB||07"[..]),
+            (None, Some(""), b"AB||07|"),
+            (Some(15), Some("X|Y"), b"AB|15|07|X|Y"),
+        ] {
             let value = Delimited {
                 first: "AB",
                 middle,
@@ -1711,15 +1743,19 @@ mod tests {
             let mut scratch = [0; 64];
             assert_eq!(crate::decode::<Delimited, Delimited>(wire, &mut scratch), Ok(value));
         }
-        // A missing separator is the record's error; a bad segment is its field's.
-        for (wire, path) in [
-            (&b"AB|1"[..], &[][..]),
-            (b"AB|15|7X|", &[PathSegment::Field("inner"), PathSegment::Field("code")]),
-            (b"AB|15|07", &[]),
+        // A record that stops before a required field misses it; a bad segment is its field's.
+        for (wire, kind, path) in [
+            (&b"AB|15"[..], Error::UnexpectedEof, &[PathSegment::Field("inner")][..]),
+            (b"AB|1X|07", Error::Invalid, &[PathSegment::Field("middle")][..]),
+            (
+                b"AB|15|7X|",
+                Error::Invalid,
+                &[PathSegment::Field("inner"), PathSegment::Field("code")],
+            ),
         ] {
             let mut scratch = [0; 64];
             let error = crate::decode::<Delimited, Delimited>(wire, &mut scratch).unwrap_err();
-            assert_eq!((error.kind, error.path()), (Error::Invalid, path));
+            assert_eq!((error.kind, error.path()), (kind, path), "{wire:?}");
         }
         // Only the last field may contain the separator.
         let inside = std::panic::catch_unwind(|| {
@@ -2163,6 +2199,7 @@ mod tests {
         struct AbsentDelimited {
             #[wire(fmt = N2, absent_bytes = b"--")]
             first: Option<String>,
+            /// May be left out at the end.
             #[wire(fmt = N2)]
             second: Option<String>,
         }
@@ -2236,12 +2273,9 @@ mod tests {
 
         // In the other layouts the field is required by its container.
         let mut scratch = [0; 64];
+        assert_eq!(encode::<AbsentDelimited, _>(&AbsentDelimited::default()).as_deref(), Ok(&b"--"[..]));
         assert_eq!(
-            encode::<AbsentDelimited, _>(&AbsentDelimited::default()).as_deref(),
-            Ok(&b"--|"[..])
-        );
-        assert_eq!(
-            crate::decode::<AbsentDelimited, AbsentDelimited>(b"--|", &mut scratch),
+            crate::decode::<AbsentDelimited, AbsentDelimited>(b"--", &mut scratch),
             Ok(AbsentDelimited::default())
         );
         let wire = encode::<AbsentBitmap, _>(&AbsentBitmap::default()).unwrap();
@@ -2594,7 +2628,7 @@ mod tests {
         #[derive(Debug, Clone, PartialEq)]
         #[wire(delimited = b'|')]
         struct KeyedDelimited {
-            #[wire(fmt = N2)]
+            #[wire(fmt = N2, absent_bytes = b"")]
             kind: Option<String>,
             #[wire(select = kind_key(kind))]
             body: Option<Keyed>,
@@ -2879,7 +2913,8 @@ mod tests {
             Ok((Keyed::Long("1234".into()), None))
         );
 
-        // Delimited: an empty segment is an absent key or body.
+        // Delimited: an empty segment is an absent key, and a body left out
+        // at the end is absent.
         for (value, wire) in [
             (
                 KeyedDelimited {
@@ -2893,7 +2928,7 @@ mod tests {
                     kind: Some("01".into()),
                     body: None,
                 },
-                b"01|",
+                b"01",
             ),
         ] {
             assert_eq!(encode::<KeyedDelimited, _>(&value).as_deref(), Ok(wire));

@@ -101,7 +101,7 @@ where
                 let mut values = Vec::with_capacity(count.min(input.len()));
                 if let Some(separator) = Sep::BYTE {
                     for index in 0..count {
-                        let mut segment = decode_delimited_field(input, separator, index + 1 != count)?;
+                        let mut segment = decode_separated_item(input, separator, index + 1 != count)?;
                         let value = Item::decode_field(&mut segment, scratch).map_err(|error| error.with_index(index))?;
                         if !segment.is_empty() {
                             crate::utils::cold_path();

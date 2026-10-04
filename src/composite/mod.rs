@@ -144,7 +144,8 @@ fn match_prefix(input: &mut &[u8], prefix: &[u8]) -> bool {
 }
 
 /// An absent value encoded as the constant bytes of `P`, for example
-/// `AbsentBytes<Fill<0x40, 12>>` for twelve EBCDIC spaces.
+/// `AbsentBytes<Fill<0x40, 12>>` for twelve EBCDIC spaces. An empty `P`
+/// matches only an empty remainder, such as an empty delimited segment.
 pub struct AbsentBytes<P>(PhantomData<P>);
 
 impl<P: crate::ConstBytes> AbsentFmt for AbsentBytes<P> {
@@ -156,6 +157,11 @@ impl<P: crate::ConstBytes> AbsentFmt for AbsentBytes<P> {
 
     #[inline(always)]
     fn decode_absent(input: &mut &[u8], _scratch: &mut [u8]) -> Result<bool, Error> {
+        // An empty pattern stands for an empty field, such as an empty
+        // delimited segment, so it matches only where nothing is left.
+        if P::BYTES.is_empty() {
+            return Ok(input.is_empty());
+        }
         Ok(match_prefix(input, P::BYTES))
     }
 }
@@ -989,18 +995,22 @@ mod tests {
 
     #[test]
     fn test_delimited_field_boundaries() {
-        for (wire, required, expected, rest) in [
-            (b"".as_slice(), true, Err(Error::Invalid), b"".as_slice()),
-            (b"AB", true, Err(Error::Invalid), b"AB"),
-            (b"A|B", true, Ok(b"A".as_slice()), b"B"),
-            (b"|B", true, Ok(b""), b"B"),
-            (b"A|", true, Ok(b"A"), b""),
-            (b"A|B", false, Ok(b"A|B"), b""),
-            (b"", false, Ok(b""), b""),
+        // A segment runs to the separator; one without a separator is the
+        // record's last, and every field after it is omitted.
+        for (wire, more, expected, ended, rest) in [
+            (b"".as_slice(), true, Some(b"".as_slice()), true, b"".as_slice()),
+            (b"AB", true, Some(b"AB"), true, b""),
+            (b"A|B", true, Some(b"A"), false, b"B"),
+            (b"|B", true, Some(b""), false, b"B"),
+            (b"A|", true, Some(b"A"), false, b""),
+            (b"A|B", false, Some(b"A|B"), false, b""),
+            (b"", false, Some(b""), false, b""),
         ] {
             let mut input = wire;
-            assert_eq!(decode_delimited_field(&mut input, b'|', required), expected);
-            assert_eq!(input, rest);
+            let mut done = false;
+            assert_eq!(decode_delimited_field(&mut input, b'|', more, &mut done), expected);
+            assert_eq!((done, input), (ended, rest));
+            assert_eq!(decode_delimited_field(&mut input, b'|', more, &mut true), None);
         }
     }
 
@@ -1033,10 +1043,11 @@ mod tests {
         let result = std::panic::catch_unwind(|| DelimitedSlots::encode_field(&mut &mut [0u8; 32][..], &mut [0u8; 32], &separator_inside));
         assert_eq!(result.is_err(), cfg!(debug_assertions));
 
-        let mut invalid = b"ABCD\\X  ".as_slice();
+        // The record stops before its required third field.
+        let mut short = b"ABCD\\X  ".as_slice();
         assert_eq!(
-            error_kind(DelimitedSlots::decode_field(&mut invalid, &mut scratch.as_mut_slice())),
-            Err(Error::Invalid)
+            error_kind(DelimitedSlots::decode_field(&mut short, &mut scratch.as_mut_slice())),
+            Err(Error::UnexpectedEof)
         );
     }
 
@@ -2580,9 +2591,10 @@ pub fn encode_delimited_value<T: ?Sized, F: FieldEncode<T>>(
     })
 }
 
+/// A list item's segment: up to the separator, which must be there unless
+/// this is the last item.
 #[inline(always)]
-#[doc(hidden)]
-pub fn decode_delimited_field<'a>(input: &mut &'a [u8], separator: u8, expect_separator: bool) -> Result<&'a [u8], Error> {
+pub(crate) fn decode_separated_item<'a>(input: &mut &'a [u8], separator: u8, expect_separator: bool) -> Result<&'a [u8], Error> {
     if !expect_separator {
         return Ok(core::mem::take(input));
     }
@@ -2594,6 +2606,23 @@ pub fn decode_delimited_field<'a>(input: &mut &'a [u8], separator: u8, expect_se
     }
     *input = trial;
     Ok(segment)
+}
+
+/// The next field's segment: up to the separator, or the rest for the last
+/// field. `None` once the input has run out, which sets `ended`: the record
+/// stopped before this field.
+#[inline(always)]
+#[doc(hidden)]
+pub fn decode_delimited_field<'a>(input: &mut &'a [u8], separator: u8, expect_separator: bool, ended: &mut bool) -> Option<&'a [u8]> {
+    if *ended {
+        return None;
+    }
+    if !expect_separator {
+        return Some(core::mem::take(input));
+    }
+    let (segment, terminated) = take_delimited(input, separator);
+    *ended = !terminated;
+    Some(segment)
 }
 
 #[inline]
@@ -2685,15 +2714,15 @@ mod delimited_proptests {
     }
     type Format = Record;
     fn roundtrip(first: String, tail: Option<String>) {
-        let mut value = Record { first, tail };
+        let value = Record { first, tail };
         let mut output = [0; 130];
         let used = {
             let mut out = output.as_mut_slice();
             Format::encode_field(&mut out, &mut [], &value).unwrap();
             130 - out.len()
         };
+        // `None` leaves the segment out; `Some("")` writes it empty.
         let mut input = &output[..used];
-        value.tail = value.tail.filter(|text| !text.is_empty());
         assert_eq!(Format::decode_field(&mut input, &mut &mut [][..]).unwrap(), value);
         assert!(input.is_empty());
     }
