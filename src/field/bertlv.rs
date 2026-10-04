@@ -3,6 +3,7 @@
 use crate::primitive::bertlv::{ber_length_width, decode_ber_length, decode_ber_tag, encode_ber_length, parse_ber_tag_hex};
 use crate::primitive::bytes::copy_bytes;
 use crate::primitive::nibble::{UpperHexDigits, unpack_nibbles};
+use crate::utils::cold_path;
 use crate::{Error, LengthSpec, ScalarFmt};
 
 /// A BER tag, one to four bytes by the BER tag rules, as uppercase hex text
@@ -34,6 +35,11 @@ impl<const STRICT: bool> ScalarFmt for BerTag<STRICT> {
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<&'a [u8], Error> {
         let tag = decode_ber_tag::<STRICT>(input)?;
+        // The `00` end-of-contents identifier is not a data tag; encoding rejects it too.
+        if tag == [0] {
+            cold_path();
+            return Err(Error::Invalid);
+        }
         Ok(unpack_nibbles::<UpperHexDigits>(scratch, tag)?)
     }
 }
@@ -77,6 +83,9 @@ mod tests {
             assert_eq!(<BerTag>::decode(&mut &wire[..], &mut &mut scratch[..]), Ok(text.as_bytes()));
         }
         assert_eq!(<BerTag>::encode(&mut &mut [0; 4][..], &mut [], b"9F"), Err(Error::Invalid));
+        // The end-of-contents identifier is no data tag either way.
+        assert_eq!(<BerTag>::encode(&mut &mut [0; 4][..], &mut [], b"00"), Err(Error::Invalid));
+        assert_eq!(<BerTag>::decode(&mut &b"\x00\x01"[..], &mut &mut [0; 8][..]), Err(Error::Invalid));
         // A tag number padded with a leading zero group: accepted unless strict.
         let mut scratch = [0; 8];
         assert_eq!(
