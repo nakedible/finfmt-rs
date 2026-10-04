@@ -87,9 +87,15 @@
 ///   Uses [`FixedBytes`](crate::FixedBytes).
 ///
 ///   Fixed fields work in every layout: in a bitmap or TLV record they
-///   take a `bit` or `tag` like any field, and may be `Option<()>`. A
-///   mismatch is `Invalid` with the field's name in the error path. Mark them
-///   `#[serde(skip)]` when the struct is also serialized.
+///   take a `bit` or `tag` like any field. A constant the container may omit
+///   is a `bool` flag, `true` when present: a bitmap bit, a tag, a concat
+///   tail or a delimited segment. `Option<()>` is rejected, as serde writes
+///   both of its values as `null`. A mismatch is `Invalid` with the field's
+///   name in the error path. Mark required `()` fields `#[serde(skip)]` when
+///   the struct is also serialized.
+/// - `skip`: a field that is not on the wire at all, such as a value a codec
+///   assembles from raw fields after decoding. Encoding ignores it and
+///   decoding sets its `Default`; it takes no other argument.
 /// - `absent_bytes = [b' '; 12]`, `absent_value = "000000"` or
 ///   `absent = A`: on an `Option<T>` field whose bytes are always on the
 ///   wire, the encoding of `None`, through [`OptionAs`](crate::OptionAs).
@@ -325,6 +331,16 @@
 /// ```
 ///
 /// ```compile_fail
+/// finfmt::wire_type! {
+///     #[wire(concat)]
+///     struct Flag {
+///         #[wire(fixed_bytes = b"!")]
+///         end: Option<()>,
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
 /// type N2 = finfmt::Field<finfmt::Numeric<2, 2>, finfmt::Fixed<2>>;
 /// finfmt::wire_type! {
 ///     #[wire(concat)]
@@ -367,16 +383,16 @@ macro_rules! __finfmt_wire_item {
         $crate::__finfmt_wire_item! { [$($kept)* #[$($attr)*]] $wire; $(#[$($rest)*])*; $($item)* }
     };
     ($kept:tt [concat ,]; ; $vis:vis struct $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
-        $crate::__finfmt_wire_fields! { (concat $kept $vis $name $lt $de [] [0]) []; $($body)* }
+        $crate::__finfmt_wire_fields! { (concat $kept $vis $name $lt $de [] [0] [] []) []; $($body)* }
     };
     ($kept:tt [delimited = $separator:expr ,]; ; $vis:vis struct $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
-        $crate::__finfmt_wire_fields! { ([delimited $separator] $kept $vis $name $lt $de [] [0]) []; $($body)* }
+        $crate::__finfmt_wire_fields! { ([delimited $separator] $kept $vis $name $lt $de [] [0] [] []) []; $($body)* }
     };
     ($kept:tt [bitmap = $format:ty ,]; ; $vis:vis struct $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
-        $crate::__finfmt_wire_fields! { ([bitmap $format] $kept $vis $name $lt $de [] [0]) []; $($body)* }
+        $crate::__finfmt_wire_fields! { ([bitmap $format] $kept $vis $name $lt $de [] [0] [] []) []; $($body)* }
     };
     ($kept:tt [tlv(tag = $tag:ty $(, entry = $entry:ty)? $(, padding = $padding:expr)? $(,)?) ,]; ; $vis:vis struct $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
-        $crate::__finfmt_wire_fields! { ([tlv ($tag) [$($padding)?] [$($entry)?]] $kept $vis $name $lt $de [] [0]) []; $($body)* }
+        $crate::__finfmt_wire_fields! { ([tlv ($tag) [$($padding)?] [$($entry)?]] $kept $vis $name $lt $de [] [0] [] []) []; $($body)* }
     };
     ($kept:tt [$kind:ident ,]; ; $vis:vis enum $name:ident $lt:tt $de:tt { $($body:tt)* }) => {
         $crate::__finfmt_wire_variants! { ($kind $kept $vis $name $lt $de []) []; $($body)* }
@@ -404,40 +420,70 @@ macro_rules! __finfmt_wire_item {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __finfmt_wire_fields {
-    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*] [$($pos:tt)*]) [];) => {
-        $crate::__finfmt_wire_emit! { $layout $kept $vis $name $lt $de [$($done)*] }
+    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*] [$($pos:tt)*] [$($all:tt)*] [$($skipped:tt)*]) [];) => {
+        $crate::__finfmt_wire_emit! { $layout $kept $vis $name $lt $de [$($done)*] [$($all)*] [$($skipped)*] }
     };
-    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*] [$($pos:tt)*]) [$($fkept:tt)*];
+    // Not on the wire: kept in the struct, and decoded as its `Default`.
+    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt $done:tt $pos:tt [$($all:tt)*] [$($skipped:tt)*]) [$($fkept:tt)*];
+        $(#[doc = $doc:tt])* #[wire(skip)] $(#[$($attr:tt)*])* $fvis:vis $field:ident : $ty:ty $(, $($rest:tt)*)?) => {
+        $crate::__finfmt_wire_fields! {
+            ($layout $kept $vis $name $lt $de $done $pos
+                [$($all)* { [$($fkept)* $(#[doc = $doc])* $(#[$($attr)*])*] ($fvis) $field ($ty) }] [$($skipped)* $field]) [];
+            $($($rest)*)?
+        }
+    };
+    ($state:tt $fkept:tt; $(#[doc = $doc:tt])* #[wire($($args:tt)*)] $(#[$($attr:tt)*])* $fvis:vis $field:ident : $(::)? $(std::option::)? $(core::option::)? Option<()> $(, $($rest:tt)*)?) => {
+        compile_error!(concat!("wire_type!: `", stringify!($field), "` is an `Option<()>`; an optional constant is a `bool`"));
+    };
+    ($state:tt $fkept:tt; $(#[doc = $doc:tt])* $fvis:vis $field:ident : $(::)? $(std::option::)? $(core::option::)? Option<()> $(, $($rest:tt)*)?) => {
+        compile_error!(concat!("wire_type!: `", stringify!($field), "` is an `Option<()>`; an optional constant is a `bool`"));
+    };
+    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*] [$($pos:tt)*] [$($all:tt)*] $skipped:tt) [$($fkept:tt)*];
         $(#[doc = $doc:tt])* #[wire($($args:tt)*)] $(#[$($attr:tt)*])* $fvis:vis $field:ident : $(::)? $(std::option::)? $(core::option::)? Option<$inner:ty> $(, $($rest:tt)*)?) => {
         $crate::__finfmt_wire_fields! {
             ($layout $kept $vis $name $lt $de [$($done)* {
                 [$($fkept)* $(#[doc = $doc])* $(#[$($attr)*])*] ($fvis) $field ($($pos)*) (::core::option::Option<$inner>) opt ($inner) [$($args)*]
-            }] [$($pos)* + 1]) [];
+            }] [$($pos)* + 1]
+                [$($all)* { [$($fkept)* $(#[doc = $doc])* $(#[$($attr)*])*] ($fvis) $field (::core::option::Option<$inner>) }] $skipped) [];
             $($($rest)*)?
         }
     };
-    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*] [$($pos:tt)*]) [$($fkept:tt)*];
+    // A `bool` is a flag: an optional constant, present or not.
+    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*] [$($pos:tt)*] [$($all:tt)*] $skipped:tt) [$($fkept:tt)*];
+        $(#[doc = $doc:tt])* #[wire($($args:tt)*)] $(#[$($attr:tt)*])* $fvis:vis $field:ident : bool $(, $($rest:tt)*)?) => {
+        $crate::__finfmt_wire_fields! {
+            ($layout $kept $vis $name $lt $de [$($done)* {
+                [$($fkept)* $(#[doc = $doc])* $(#[$($attr)*])*] ($fvis) $field ($($pos)*) (bool) opt (()) [$($args)*]
+            }] [$($pos)* + 1]
+                [$($all)* { [$($fkept)* $(#[doc = $doc])* $(#[$($attr)*])*] ($fvis) $field (bool) }] $skipped) [];
+            $($($rest)*)?
+        }
+    };
+    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*] [$($pos:tt)*] [$($all:tt)*] $skipped:tt) [$($fkept:tt)*];
         $(#[doc = $doc:tt])* #[wire($($args:tt)*)] $(#[$($attr:tt)*])* $fvis:vis $field:ident : $ty:ty $(, $($rest:tt)*)?) => {
         $crate::__finfmt_wire_fields! {
             ($layout $kept $vis $name $lt $de [$($done)* {
                 [$($fkept)* $(#[doc = $doc])* $(#[$($attr)*])*] ($fvis) $field ($($pos)*) ($ty) req ($ty) [$($args)*]
-            }] [$($pos)* + 1]) [];
+            }] [$($pos)* + 1]
+                [$($all)* { [$($fkept)* $(#[doc = $doc])* $(#[$($attr)*])*] ($fvis) $field ($ty) }] $skipped) [];
             $($($rest)*)?
         }
     };
-    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*] [$($pos:tt)*]) [$($fkept:tt)*];
+    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*] [$($pos:tt)*] [$($all:tt)*] $skipped:tt) [$($fkept:tt)*];
         $(#[doc = $doc:tt])* $fvis:vis $field:ident : $(::)? $(std::option::)? $(core::option::)? Option<$inner:ty> $(, $($rest:tt)*)?) => {
         $crate::__finfmt_wire_fields! {
             ($layout $kept $vis $name $lt $de [$($done)* {
                 [$($fkept)* $(#[doc = $doc])*] ($fvis) $field ($($pos)*) (::core::option::Option<$inner>) opt ($inner) []
-            }] [$($pos)* + 1]) [];
+            }] [$($pos)* + 1]
+                [$($all)* { [$($fkept)* $(#[doc = $doc])*] ($fvis) $field (::core::option::Option<$inner>) }] $skipped) [];
             $($($rest)*)?
         }
     };
-    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*] [$($pos:tt)*]) [$($fkept:tt)*];
+    (($layout:tt $kept:tt $vis:vis $name:ident $lt:tt $de:tt [$($done:tt)*] [$($pos:tt)*] [$($all:tt)*] $skipped:tt) [$($fkept:tt)*];
         $(#[doc = $doc:tt])* $fvis:vis $field:ident : $ty:ty $(, $($rest:tt)*)?) => {
         $crate::__finfmt_wire_fields! {
-            ($layout $kept $vis $name $lt $de [$($done)* { [$($fkept)* $(#[doc = $doc])*] ($fvis) $field ($($pos)*) ($ty) req ($ty) [] }] [$($pos)* + 1]) [];
+            ($layout $kept $vis $name $lt $de [$($done)* { [$($fkept)* $(#[doc = $doc])*] ($fvis) $field ($($pos)*) ($ty) req ($ty) [] }] [$($pos)* + 1]
+                [$($all)* { [$($fkept)* $(#[doc = $doc])*] ($fvis) $field ($ty) }] $skipped) [];
             $($($rest)*)?
         }
     };
@@ -743,11 +789,12 @@ macro_rules! __finfmt_wire_variant {
 #[doc(hidden)]
 macro_rules! __finfmt_wire_emit {
     (concat [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
-        [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident $pos:tt ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]) => {
-        $crate::__finfmt_wire_no_cfg! { $($kept)* $($($fkept)*)* }
+        [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident $pos:tt ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]
+        [$({ [$($akept:tt)*] ($avis:vis) $afield:ident ($aty:ty) })*] [$($skipped:ident)*]) => {
+        $crate::__finfmt_wire_no_cfg! { $($kept)* $($($akept)*)* }
         $($kept)*
         $vis struct $name $(<$lt>)? {
-            $($($fkept)* $fvis $field: $ty,)*
+            $($($akept)* $avis $afield: $aty,)*
         }
 
         const _: () = assert!(
@@ -791,17 +838,21 @@ macro_rules! __finfmt_wire_emit {
                 ) -> Result<Self, $crate::CompositeError> {
                     let _ = (&input, &scratch);
                     $($crate::__finfmt_wire_args! { {__finfmt_wire_concat @decode input, scratch;} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
-                    Ok($name { $($field),* })
+                    Ok($name {
+                        $($field: <$ty as $crate::__private::FromLocal<_>>::from_local($field),)*
+                        $($skipped: ::core::default::Default::default(),)*
+                    })
                 }
             }
         };
     };
     ([delimited $separator:expr] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
-        [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident $pos:tt ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]) => {
-        $crate::__finfmt_wire_no_cfg! { $($kept)* $($($fkept)*)* }
+        [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident $pos:tt ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]
+        [$({ [$($akept:tt)*] ($avis:vis) $afield:ident ($aty:ty) })*] [$($skipped:ident)*]) => {
+        $crate::__finfmt_wire_no_cfg! { $($kept)* $($($akept)*)* }
         $($kept)*
         $vis struct $name $(<$lt>)? {
-            $($($fkept)* $fvis $field: $ty,)*
+            $($($akept)* $avis $afield: $aty,)*
         }
 
         const _: () = {
@@ -842,17 +893,21 @@ macro_rules! __finfmt_wire_emit {
                         position += 1;
                         $crate::__finfmt_wire_args! { {__finfmt_wire_delimited @decode input, scratch, SEPARATOR, position < count;} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* }
                     )*
-                    Ok($name { $($field),* })
+                    Ok($name {
+                        $($field: <$ty as $crate::__private::FromLocal<_>>::from_local($field),)*
+                        $($skipped: ::core::default::Default::default(),)*
+                    })
                 }
             }
         };
     };
     ([bitmap $format:ty] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
-        [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident $pos:tt ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]) => {
-        $crate::__finfmt_wire_no_cfg! { $($kept)* $($($fkept)*)* }
+        [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident $pos:tt ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]
+        [$({ [$($akept:tt)*] ($avis:vis) $afield:ident ($aty:ty) })*] [$($skipped:ident)*]) => {
+        $crate::__finfmt_wire_no_cfg! { $($kept)* $($($akept)*)* }
         $($kept)*
         $vis struct $name $(<$lt>)? {
-            $($($fkept)* $fvis $field: $ty,)*
+            $($($akept)* $avis $afield: $aty,)*
         }
 
         const _: () = if let Err(message) = $crate::composite::check_bitmap_fields(
@@ -918,17 +973,21 @@ macro_rules! __finfmt_wire_emit {
                         return Err($crate::Error::Invalid.into());
                     }
                     $($crate::__finfmt_wire_args! { {__finfmt_wire_bitmap @body_decode bitmap, input, scratch;} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
-                    Ok($name { $($field),* })
+                    Ok($name {
+                        $($field: <$ty as $crate::__private::FromLocal<_>>::from_local($field),)*
+                        $($skipped: ::core::default::Default::default(),)*
+                    })
                 }
             }
         };
     };
     ([tlv ($tagfmt:ty) [$($padding:expr)?] [$($entry:ty)?]] [$($kept:tt)*] $vis:vis $name:ident [$($lt:lifetime)?] [$de:lifetime $($unused:lifetime)?]
-        [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident $pos:tt ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]) => {
-        $crate::__finfmt_wire_no_cfg! { $($kept)* $($($fkept)*)* }
+        [$({ [$($fkept:tt)*] ($fvis:vis) $field:ident $pos:tt ($ty:ty) $kind:ident ($default:ty) [$($args:tt)*] })*]
+        [$({ [$($akept:tt)*] ($avis:vis) $afield:ident ($aty:ty) })*] [$($skipped:ident)*]) => {
+        $crate::__finfmt_wire_no_cfg! { $($kept)* $($($akept)*)* }
         $($kept)*
         $vis struct $name $(<$lt>)? {
-            $($($fkept)* $fvis $field: $ty,)*
+            $($($akept)* $avis $afield: $aty,)*
         }
 
         const _: () = if let Err(message) = $crate::composite::check_tlv_tags(&[$($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @tag} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* }),*]) {
@@ -990,7 +1049,10 @@ macro_rules! __finfmt_wire_emit {
                         $crate::composite::skip_tlv_padding(input, PADDING);
                     }
                     $($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @finish} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
-                    Ok($name { $($field),* })
+                    Ok($name {
+                        $($field: <$ty as $crate::__private::FromLocal<_>>::from_local($field),)*
+                        $($skipped: ::core::default::Default::default(),)*
+                    })
                 }
             }
         };
@@ -1256,7 +1318,7 @@ macro_rules! __finfmt_wire_concat {
             .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
     };
     (@encode $value:ident, $output:ident, $scratch:ident, $omitted:ident; opt $field:ident ($fmt:ty) $($slots:tt)*) => {
-        match ($omitted, $value.$field.as_ref()) {
+        match ($omitted, $crate::__private::AsOption::as_option(&$value.$field)) {
             (true, Some(_)) => {
                 $crate::__private::cold_path();
                 return Err($crate::composite::wrap_composite_error($crate::Error::Invalid, stringify!($field)));
@@ -1307,7 +1369,7 @@ macro_rules! __finfmt_wire_delimited {
         $crate::__finfmt_wire_delimited! { @next $output, $separator, $more }
     };
     (@encode $value:ident, $output:ident, $scratch:ident, $separator:ident, $more:expr; opt $field:ident ($fmt:ty) $($slots:tt)*) => {
-        if let Some(inner) = $value.$field.as_ref() {
+        if let Some(inner) = $crate::__private::AsOption::as_option(&$value.$field) {
             $crate::__finfmt_wire_delimited! { @value inner, $output, $scratch, $separator, $more; $field ($fmt) }
         }
         $crate::__finfmt_wire_delimited! { @next $output, $separator, $more }
@@ -1376,7 +1438,7 @@ macro_rules! __finfmt_wire_bitmap {
         $bitmap.set($bit, true);
     };
     (@set $bitmap:ident, $value:ident; opt $field:ident ($fmt:ty) [$bit:literal] $($slots:tt)*) => {
-        if $value.$field.is_some() {
+        if $crate::__private::AsOption::as_option(&$value.$field).is_some() {
             $bitmap.set($bit, true);
         }
     };
@@ -1387,7 +1449,7 @@ macro_rules! __finfmt_wire_bitmap {
             .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
     };
     (@body_encode $value:ident, $output:ident, $scratch:ident; opt $field:ident ($fmt:ty) [$bit:literal] $($slots:tt)*) => {
-        if let Some(inner) = $value.$field.as_ref() {
+        if let Some(inner) = $crate::__private::AsOption::as_option(&$value.$field) {
             <$fmt as $crate::composite::FieldEncode<_>>::encode_field($output, $scratch, inner)
                 .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
         }
@@ -1501,7 +1563,7 @@ macro_rules! __finfmt_wire_tlv {
         .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
     };
     (@encode $value:ident, $output:ident, $scratch:ident, $known:ident, ($tagfmt:ty), ($entry:ty); opt $field:ident ($fmt:ty) $bit:tt [$tag:expr] $($slots:tt)*) => {
-        if let Some(inner) = $value.$field.as_ref() {
+        if let Some(inner) = $crate::__private::AsOption::as_option(&$value.$field) {
             <$entry as $crate::composite::TlvEntryFrame>::encode($output, $scratch, |output, scratch| {
                 $crate::composite::encode_tlv_tag::<$tagfmt>(output, scratch, $tag)?;
                 <$fmt as $crate::composite::FieldEncode<_>>::encode_field(output, scratch, inner)
@@ -1812,7 +1874,7 @@ mod tests {
             #[wire(fixed_bytes = FILLER)]
             filler: (),
             #[wire(fixed_bytes = b"!")]
-            end: Option<()>,
+            end: bool,
         }
 
         #[derive(Debug, Default, PartialEq)]
@@ -1830,7 +1892,7 @@ mod tests {
             #[wire(fmt = N4, fixed_value = "0800")]
             mti: (),
             #[wire(bit = 70, fmt = N2, fixed_value = "01")]
-            network: Option<()>,
+            network: bool,
         }
 
         #[derive(Debug, Default, PartialEq)]
@@ -1844,11 +1906,71 @@ mod tests {
         }
     }
 
+    crate::wire_type! {
+        /// A flag and a value kept off the wire, in a TLV and a bitmap record.
+        #[derive(Debug, Clone, Default, PartialEq, Serialize)]
+        #[wire(tlv(tag = Tag2))]
+        struct Flagged {
+            #[wire(tag = "01", fmt = Ll, fixed_value = "Y")]
+            marker: bool,
+            #[wire(skip)]
+            joined: Option<String>,
+            #[wire(tag = "02", fmt = Ll)]
+            part: Option<String>,
+        }
+
+        #[derive(Debug, Clone, Default, PartialEq)]
+        #[wire(bitmap = HexBitmap)]
+        struct SkipBitmap {
+            #[wire(fmt = N4)]
+            mti: String,
+            #[wire(skip)]
+            note: String,
+            #[wire(bit = 2, fmt = N2)]
+            a: Option<String>,
+        }
+    }
+
+    #[test]
+    fn flags_and_skipped_fields() {
+        let value = Flagged {
+            marker: true,
+            joined: Some("kept off the wire".into()),
+            part: Some("AB".into()),
+        };
+        assert_eq!(encode::<Flagged, _>(&value).as_deref(), Ok(&b"0101Y0202AB"[..]));
+        let mut scratch = [0; 64];
+        let decoded = crate::decode::<Flagged, Flagged>(b"0202AB0101Y", &mut scratch).unwrap();
+        assert_eq!(decoded, Flagged { joined: None, ..value });
+        let unmarked = Flagged::default();
+        assert_eq!(encode::<Flagged, _>(&unmarked).as_deref(), Ok(&b""[..]));
+        assert_eq!(serde_json::to_value(&decoded).unwrap()["marker"], true);
+        assert_eq!(serde_json::to_value(&unmarked).unwrap()["marker"], false);
+        let mut scratch = [0; 64];
+        let error = crate::decode::<Flagged, Flagged>(b"0101N", &mut scratch).unwrap_err();
+        assert_eq!((error.kind, error.path()), (Error::Invalid, &[PathSegment::Field("marker")][..]));
+
+        let value = SkipBitmap {
+            mti: "0100".into(),
+            note: "ignored".into(),
+            a: Some("12".into()),
+        };
+        let wire = encode::<SkipBitmap, _>(&value).unwrap();
+        let mut scratch = [0; 64];
+        assert_eq!(
+            crate::decode::<SkipBitmap, SkipBitmap>(&wire, &mut scratch),
+            Ok(SkipBitmap {
+                note: String::new(),
+                ..value
+            })
+        );
+    }
+
     #[test]
     fn fixed_fields_write_and_check_constants() {
         let value = Constants {
             code: "42".into(),
-            end: Some(()),
+            end: true,
             ..Default::default()
         };
         assert_eq!(encode::<Constants, _>(&value).as_deref(), Ok(&b"H42  AB  ...!"[..]));
@@ -1880,14 +2002,14 @@ mod tests {
         let mut scratch = [0; 64];
         assert_eq!(crate::decode::<FixedDelimited, FixedDelimited>(b"D|42", &mut scratch), Ok(value));
 
-        for network in [None, Some(())] {
+        for network in [false, true] {
             let value = FixedBitmap {
                 network,
                 ..Default::default()
             };
             let wire = encode::<FixedBitmap, _>(&value).unwrap();
             assert!(wire.starts_with(b"0800"));
-            assert_eq!(wire.ends_with(b"01"), network.is_some());
+            assert_eq!(wire.ends_with(b"01"), network);
             let mut scratch = [0; 64];
             assert_eq!(crate::decode::<FixedBitmap, FixedBitmap>(&wire, &mut scratch), Ok(value));
         }
