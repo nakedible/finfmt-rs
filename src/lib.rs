@@ -11,7 +11,7 @@ mod scalarfmt;
 mod types;
 mod utils;
 
-pub use bitmap::{Bitmap, BitmapFormat, BitmapLayout, decode_bitmap, encode_bitmap};
+pub use bitmap::{Bitmap, BitmapFormat, BitmapLayout, BitsBitmap, FixedBitmap, IsoBitmap, decode_bitmap, encode_bitmap};
 #[cfg(feature = "serde")]
 pub use composite::SerdeScalar;
 pub use composite::{

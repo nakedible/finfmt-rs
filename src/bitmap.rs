@@ -10,6 +10,8 @@ use crate::{Error, Step};
 
 /// A bitmap's layout and the encoding of its words, named once per protocol
 /// and used as `#[wire(bitmap = …)]` by every record of that protocol.
+/// [`IsoBitmap`], [`BitsBitmap`] and [`FixedBitmap`] cover the usual layouts;
+/// implement it for anything else.
 ///
 /// ```
 /// use finfmt::bitmap::{BitmapFormat, BitmapLayout};
@@ -27,6 +29,36 @@ pub trait BitmapFormat {
     const LAYOUT: BitmapLayout;
     /// The step that encodes each word's bytes.
     type Word: Step;
+}
+
+/// An ISO 8583 bitmap of `MIN` to `MAX` 64-bit words, the second and third
+/// announced by fields 1 and 65, each word encoded by `W`:
+/// `IsoBitmap<1, 2>` for binary primary and secondary bitmaps,
+/// `IsoBitmap<1, 2, UnpackNibbles<UpperHexDigits>>` for the same as hex text.
+pub struct IsoBitmap<const MIN: u8, const MAX: u8, W = crate::Identity>(core::marker::PhantomData<W>);
+
+impl<const MIN: u8, const MAX: u8, W: Step> BitmapFormat for IsoBitmap<MIN, MAX, W> {
+    const LAYOUT: BitmapLayout = BitmapLayout::iso(MIN, MAX);
+    type Word = W;
+}
+
+/// A single word of `BITS` bits, fields 1 through `BITS`, with no
+/// continuation flags, each encoded by `W`: `BitsBitmap<16>` for two bytes of
+/// field or flag bits.
+pub struct BitsBitmap<const BITS: u8, W = crate::Identity>(core::marker::PhantomData<W>);
+
+impl<const BITS: u8, W: Step> BitmapFormat for BitsBitmap<BITS, W> {
+    const LAYOUT: BitmapLayout = BitmapLayout::bits(BITS);
+    type Word = W;
+}
+
+/// Exactly `WORDS` 64-bit words with no continuation flags, so bit 1 is an
+/// ordinary field, each encoded by `W`.
+pub struct FixedBitmap<const WORDS: u8, W = crate::Identity>(core::marker::PhantomData<W>);
+
+impl<const WORDS: u8, W: Step> BitmapFormat for FixedBitmap<WORDS, W> {
+    const LAYOUT: BitmapLayout = BitmapLayout::fixed(WORDS);
+    type Word = W;
 }
 
 /// Bitmap word counts and the flags that announce the second and third words.
@@ -269,6 +301,18 @@ mod tests {
 
     type BitmapBinaryWord = crate::Identity;
     type BitmapAsciiHexWord = crate::UnpackNibbles<crate::primitive::nibble::UpperHexDigits>;
+
+    #[test]
+    fn generic_descriptors_name_their_layouts() {
+        use crate::primitive::nibble::UpperHexDigits;
+        assert_eq!(<IsoBitmap<1, 2> as BitmapFormat>::LAYOUT, BitmapLayout::iso(1, 2));
+        assert_eq!(
+            <IsoBitmap<1, 3, crate::UnpackNibbles<UpperHexDigits>> as BitmapFormat>::LAYOUT,
+            BitmapLayout::iso(1, 3)
+        );
+        assert_eq!(<BitsBitmap<16> as BitmapFormat>::LAYOUT, BitmapLayout::bits(16));
+        assert_eq!(<FixedBitmap<1> as BitmapFormat>::LAYOUT, BitmapLayout::fixed(1));
+    }
 
     #[test]
     fn test_bitmap_bits_and_words() {
