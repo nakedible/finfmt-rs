@@ -35,13 +35,17 @@
 ///   accepts `00` bytes before, between and after entries; encoding never
 ///   writes them.
 /// - `#[wire(tlv(tag = T))]`: tagged entries of any other kind. Each entry is
-///   a tag written by `T`, a fixed-width scalar format such as
-///   `Field<Alphanum<2, 2>, Fixed<2>>` (or a binary byte shown as hex), then
-///   the value in its field's own format, which carries its own length, if
-///   any: `Field<Ascii<0, 99>, AsciiLength<2>>` for one tag, a three-digit
-///   length or none at all for another. Otherwise it behaves like `ber_tlv`:
-///   declaration order on encode, any order on decode, a repeated known tag
-///   is rejected, and unknown tags need an `extras` field.
+///   a tag written by the scalar format `T`, then the value in its field's
+///   own format, which carries its own length, if any:
+///   `Field<Ascii<0, 99>, AsciiLength<2>>` for one tag, a three-digit length
+///   or none at all for another. Decoding matches each declared tag's
+///   encoding as a prefix, in declaration order, so tags may differ in length
+///   (`Field<UpperAlphanum<1, 8>, Rest, Ebcdic037>` for `"AEVV"` and `"XID"`)
+///   and overlapping ones are ordered by the user. A binary tag uses a format
+///   that shows it as hex. Otherwise it behaves like `ber_tlv`: declaration
+///   order on encode, any order on decode, a repeated known tag is rejected,
+///   and unknown tags need an `extras` field, whose tag format `T` must then
+///   read a tag of a known width, such as `Field<Alphanum<2, 2>, Fixed<2>>`.
 ///
 /// An `Option` field is recognized by its spelling: `Option<T>`, or a path
 /// such as `std::option::Option<T>`; a type alias for one is a required
@@ -950,12 +954,12 @@ macro_rules! __finfmt_wire_emit {
                 ) -> Result<Self, $crate::CompositeError> {
                     let _ = (&input, &scratch);
                     $($crate::__finfmt_wire_args! { {__finfmt_wire_ber @init} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
+                    // Each declared tag's wire bytes, by field position; entries match them as prefixes.
+                    let tags = [$($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @wire_tag scratch, ($tagfmt);} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* }),*];
                     while !input.is_empty() {
-                        let mut tag = [0; $crate::composite::MAX_TLV_TAG];
-                        let tag = $crate::composite::decode_tlv_tag::<$tagfmt>(input, &mut **scratch, &mut tag)?;
                         let mut matched = false;
-                        $($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @match tag, input, scratch, matched;} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
-                        $($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @unknown tag, input, scratch, matched;} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
+                        $($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @match tags, $pos, input, scratch, matched;} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
+                        $($crate::__finfmt_wire_args! { {__finfmt_wire_tlv @unknown input, scratch, matched, ($tagfmt);} $kind $field $pos ($default); [] [] [] [] [] [] []; $($args)* })*
                         if !matched {
                             $crate::__private::cold_path();
                             return Err($crate::CompositeError::from($crate::Error::Invalid));
@@ -1600,8 +1604,15 @@ macro_rules! __finfmt_wire_tlv {
     };
     (@encode $($rest:tt)*) => {};
 
-    (@match $tag_value:ident, $input:ident, $scratch:ident, $matched:ident; $kind:ident $field:ident ($fmt:ty) $bit:tt [$tag:expr] $($slots:tt)*) => {
-        if !$matched && $tag_value == <str>::as_bytes($tag) {
+    (@wire_tag $scratch:ident, ($tagfmt:ty); $kind:ident $field:ident ($fmt:ty) $bit:tt [$tag:expr] $($slots:tt)*) => {
+        $crate::composite::TlvTag::encode::<$tagfmt>(&mut **$scratch, $tag)?
+    };
+    (@wire_tag $($rest:tt)*) => {
+        $crate::composite::TlvTag::NONE
+    };
+
+    (@match $tags:ident, $pos:tt, $input:ident, $scratch:ident, $matched:ident; $kind:ident $field:ident ($fmt:ty) $bit:tt [$tag:expr] $($slots:tt)*) => {
+        if !$matched && $tags[$pos].matches($input) {
             $matched = true;
             $crate::composite::decode_tlv_field($input, $scratch, &mut $field, stringify!($field), |input, scratch| {
                 <$fmt as $crate::composite::FieldDecode<'_, _>>::decode_field(input, scratch)
@@ -1610,9 +1621,12 @@ macro_rules! __finfmt_wire_tlv {
     };
     (@match $($rest:tt)*) => {};
 
-    (@unknown $tag_value:ident, $input:ident, $scratch:ident, $matched:ident; $kind:ident $field:ident ($fmt:ty) $bit:tt [] [extras ($vfmt:ty)] $($slots:tt)*) => {
+    (@unknown $input:ident, $scratch:ident, $matched:ident, ($tagfmt:ty); $kind:ident $field:ident ($fmt:ty) $bit:tt [] [extras ($vfmt:ty)] $($slots:tt)*) => {
         if !$matched {
-            $crate::composite::TlvExtras::decode_unknown::<$vfmt>(&mut $field, $tag_value, $input, $scratch)
+            let mut tag = [0; $crate::composite::MAX_TLV_TAG];
+            let tag = $crate::composite::decode_tlv_tag::<$tagfmt>($input, &mut **$scratch, &mut tag)
+                .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
+            $crate::composite::TlvExtras::decode_unknown::<$vfmt>(&mut $field, tag, $input, $scratch)
                 .map_err(|error| $crate::composite::wrap_composite_error(error, stringify!($field)))?;
             $matched = true;
         }
@@ -2618,6 +2632,68 @@ mod tests {
             #[wire(tag = "AA", fmt = Ll)]
             a: String,
         }
+    }
+
+    type LiteralTag = Field<crate::UpperAlphanum<1, 8>, crate::Rest, crate::Ebcdic037>;
+    type Bin2 = Field<crate::UpperHexEven<4, 4>, Fixed<2>, crate::PackNibbles<crate::primitive::nibble::UpperHexDigits>>;
+
+    crate::wire_type! {
+        #[derive(Debug, Clone, PartialEq)]
+        #[wire(concat)]
+        struct LiteralTagged {
+            #[wire(fmt = Field<Ascii<5, 5>, Fixed<5>, crate::Ebcdic037>, fixed_value = "AXASK")]
+            prefix: (),
+            #[wire(fmt = Field<Numeric<2, 2>, Fixed<2>, crate::Ebcdic037>)]
+            eci: String,
+            parts: LiteralParts,
+        }
+
+        /// Optional parts introduced by literals of different lengths.
+        #[derive(Debug, Clone, PartialEq)]
+        #[wire(tlv(tag = LiteralTag))]
+        struct LiteralParts {
+            #[wire(tag = "AEVV", fmt = Bin2)]
+            aevv: Option<String>,
+            #[wire(tag = "XID", fmt = Bin2)]
+            xid: Option<String>,
+        }
+    }
+
+    #[test]
+    fn tlv_tags_may_be_literals_of_different_lengths() {
+        const HEAD: &[u8] = b"\xC1\xE7\xC1\xE2\xD2\xF0\xF5"; // "AXASK" "05" in CP037
+        const AEVV: &[u8] = b"\xC1\xC5\xE5\xE5\x12\x34";
+        const XID: &[u8] = b"\xE7\xC9\xC4\x56\x78";
+        let parts = |aevv: Option<&str>, xid: Option<&str>| LiteralTagged {
+            prefix: (),
+            eci: "05".into(),
+            parts: LiteralParts {
+                aevv: aevv.map(Into::into),
+                xid: xid.map(Into::into),
+            },
+        };
+        for (value, wire) in [
+            (parts(Some("1234"), Some("5678")), [HEAD, AEVV, XID].concat()),
+            (parts(None, Some("5678")), [HEAD, XID].concat()),
+            (parts(None, None), HEAD.to_vec()),
+        ] {
+            assert_eq!(encode::<LiteralTagged, _>(&value), Ok(wire.clone()));
+            let mut scratch = [0; 64];
+            assert_eq!(crate::decode::<LiteralTagged, LiteralTagged>(&wire, &mut scratch), Ok(value));
+        }
+        let mut scratch = [0; 64];
+        assert_eq!(
+            crate::decode::<LiteralTagged, LiteralTagged>(&[HEAD, XID, AEVV].concat(), &mut scratch).map(|value| value.parts),
+            Ok(LiteralParts {
+                aevv: Some("1234".into()),
+                xid: Some("5678".into())
+            })
+        );
+        let mut scratch = [0; 64];
+        assert_eq!(
+            crate::decode::<LiteralTagged, LiteralTagged>(&[HEAD, b"\xC1\xC1"].concat(), &mut scratch).map_err(|error| error.kind),
+            Err(Error::Invalid)
+        );
     }
 
     #[test]

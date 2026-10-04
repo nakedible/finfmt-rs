@@ -271,7 +271,7 @@ mod tlv;
 pub use bertlv::decode_ber_tlv_collection_entry;
 pub use tlv::TlvExtras;
 #[doc(hidden)]
-pub use tlv::{MAX_TLV_TAG, decode_tlv_field, decode_tlv_tag, encode_tlv_tag};
+pub use tlv::{MAX_TLV_TAG, TlvTag, decode_tlv_field, decode_tlv_tag, encode_tlv_tag};
 #[cfg(feature = "serde")]
 mod bertlv_serde;
 mod repeated;

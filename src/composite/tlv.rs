@@ -98,8 +98,54 @@ pub fn encode_tlv_tag<T: ScalarFmt>(
     result.map_err(|error| wrap_composite_error(error, field))
 }
 
-/// Read the next entry's tag through `T` into `buf`. The tag is only
-/// compared, so its scratch is not kept.
+/// A declared tag's wire bytes, encoded once per decode and matched against
+/// each entry.
+#[doc(hidden)]
+#[derive(Clone, Copy)]
+pub struct TlvTag {
+    bytes: [u8; MAX_TLV_TAG],
+    len: usize,
+}
+
+impl TlvTag {
+    /// No tag: the place of an `extras` field, which matches nothing.
+    pub const NONE: Self = Self {
+        bytes: [0; MAX_TLV_TAG],
+        len: 0,
+    };
+
+    /// Encode a declared tag's text through `T`. Its scratch is not kept.
+    #[inline(always)]
+    pub fn encode<T: ScalarFmt>(scratch: &mut [u8], tag: &str) -> Result<Self, Error> {
+        let mut out = Self::NONE;
+        let mut cursor = out.bytes.as_mut_slice();
+        let available = cursor.len();
+        let result = T::encode(&mut cursor, scratch, tag.as_bytes());
+        debug_assert!(
+            result.is_ok(),
+            "a declared tag is not a valid value of the record's tag format, or is over 16 bytes"
+        );
+        result?;
+        out.len = available - cursor.len();
+        Ok(out)
+    }
+
+    /// Whether `input` starts with this tag; if so, advance past it.
+    #[inline(always)]
+    pub fn matches(&self, input: &mut &[u8]) -> bool {
+        let tag = self.bytes.get(..self.len).unwrap_or_default();
+        match input.strip_prefix(tag) {
+            Some(rest) if !tag.is_empty() => {
+                *input = rest;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Read the next entry's tag through `T` into `buf`, for an entry no declared
+/// tag matched. The tag is only kept as text, so its scratch is not kept.
 #[doc(hidden)]
 #[inline(always)]
 pub fn decode_tlv_tag<'b, T: ScalarFmt>(input: &mut &[u8], scratch: &mut [u8], buf: &'b mut [u8; MAX_TLV_TAG]) -> Result<&'b [u8], Error> {
