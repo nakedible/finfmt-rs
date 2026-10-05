@@ -60,7 +60,7 @@
 ///   `#[wire(tlv(tag = T, entry = Frame<L, TlvEntry>))]` frames each whole
 ///   entry, tag and value together, for a length written before the tag:
 ///   `Frame<EbcdicLength<3>, TlvEntry>` for `LLL` + tag + value, with
-///   `Offset` if the length counts itself, and the frame's steps and bounds
+///   `AddLen` if the length counts itself, and the frame's steps and bounds
 ///   as usual. Each value then takes the rest of its entry, such as
 ///   `Field<Ascii<0, 99>, Rest>`, and must use it up. `entry` comes before
 ///   `padding`, which still applies between entries.
@@ -2729,7 +2729,7 @@ mod tests {
 
         /// A length that counts itself, with padding between entries and a bound.
         #[derive(Debug, Clone, PartialEq)]
-        #[wire(tlv(tag = N2Tag, entry = crate::Frame<crate::Offset<AsciiLength<2>, 2>, crate::TlvEntry, crate::Identity, 0, 6>, padding = b' '))]
+        #[wire(tlv(tag = N2Tag, entry = crate::Frame<crate::AddLen<AsciiLength<2>, 2>, crate::TlvEntry, crate::Identity, 0, 6>, padding = b' '))]
         struct SelfCounting {
             #[wire(tag = "07", fmt = RestText)]
             v: String,

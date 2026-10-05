@@ -21,7 +21,7 @@ fn decimal_prefix_len(value: usize, width: usize) -> Result<usize, Error> {
 /// The length is a number of units of the framed data. A [`crate::Field`]
 /// counts at its [`crate::Count`] marker, or its wire bytes without one; a
 /// [`crate::composite::BoundedList`] counts items. The spec holds the number's
-/// codec and its arithmetic ([`Offset`], [`Per`]), the same for every consumer.
+/// codec and its arithmetic ([`AddLen`], [`MulLen`], [`DivLen`]), the same for every consumer.
 pub trait LengthSpec {
     /// The framing states a length. Only [`Rest`] does not: it takes whatever
     /// input the enclosing format supplies.
@@ -148,10 +148,10 @@ impl<const N: usize> LengthSpec for BlankableEbcdicLength<N> {
 
 /// A length whose prefix `L` states it plus `K`, for lengths that also count
 /// bytes or items outside what they frame: the prefix itself, a header before
-/// it, or a header item. An IBM RDW is `Offset<Length<FixedBinaryBe<2>>, 2>`
+/// it, or a header item. An IBM RDW is `AddLen<Length<FixedBinaryBe<2>>, 2>`
 /// framing its two reserved bytes and the record. A stated value below `K` is
 /// `Invalid`.
-pub struct Offset<L, const K: usize>(PhantomData<L>);
+pub struct AddLen<L, const K: usize>(PhantomData<L>);
 
 #[inline(always)]
 fn add_offset<const K: usize>(len: usize) -> Result<usize, Error> {
@@ -161,7 +161,7 @@ fn add_offset<const K: usize>(len: usize) -> Result<usize, Error> {
     })
 }
 
-impl<L: LengthSpec, const K: usize> LengthSpec for Offset<L, K> {
+impl<L: LengthSpec, const K: usize> LengthSpec for AddLen<L, K> {
     const STATES_LEN: bool = L::STATES_LEN;
 
     #[inline(always)]
@@ -186,16 +186,59 @@ impl<L: LengthSpec, const K: usize> LengthSpec for Offset<L, K> {
     }
 }
 
-/// A length whose prefix `L` counts groups of `D` units: binary data carried
-/// as hex text, counted in bytes, is `Per<L, 2>` over the hex digits. Encoding
+/// A length whose prefix `L` states it times `M`: a [`crate::FixedAreaList`]
+/// whose prefix counts the used extent in bytes rather than slots is
+/// `MulLen<L, WIDTH>`, with the area's own slot width. A stated value that is
+/// not a multiple of `M` is `Invalid`; encoding a length whose product
+/// overflows is `InvalidValueLength`.
+pub struct MulLen<L, const M: usize>(PhantomData<L>);
+
+#[inline(always)]
+fn product<const M: usize>(len: usize) -> Result<usize, Error> {
+    const { assert!(M != 0, "a MulLen length needs a nonzero multiplier") };
+    len.checked_mul(M).ok_or_else(|| {
+        cold_path();
+        Error::InvalidValueLength
+    })
+}
+
+impl<L: LengthSpec, const M: usize> LengthSpec for MulLen<L, M> {
+    const STATES_LEN: bool = L::STATES_LEN;
+
+    #[inline(always)]
+    fn encoded_len(len: usize) -> Result<usize, Error> {
+        L::encoded_len(product::<M>(len)?)
+    }
+
+    #[inline(always)]
+    fn encode(output: &mut &mut [u8], scratch: &mut [u8], len: usize) -> Result<(), Error> {
+        L::encode(output, scratch, product::<M>(len)?)
+    }
+
+    #[inline(always)]
+    fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Option<usize>, Error> {
+        const { assert!(M != 0, "a MulLen length needs a nonzero multiplier") };
+        let Some(stated) = L::decode(input, scratch)? else {
+            return Ok(None);
+        };
+        if !stated.is_multiple_of(M) {
+            cold_path();
+            return Err(Error::Invalid);
+        }
+        Ok(Some(stated / M))
+    }
+}
+
+/// A length whose prefix `L` states it divided by `D`: binary data carried
+/// as hex text, counted in bytes, is `DivLen<L, 2>` over the hex digits. Encoding
 /// a length that is not a multiple of `D` is `InvalidValueLength`; in a field
 /// or a list it is a composition mistake, which they assert in debug builds. A
 /// stated count whose length overflows is `Invalid`.
-pub struct Per<L, const D: usize>(PhantomData<L>);
+pub struct DivLen<L, const D: usize>(PhantomData<L>);
 
 #[inline(always)]
 fn groups<const D: usize>(len: usize) -> Result<usize, Error> {
-    const { assert!(D != 0, "a Per length needs a nonzero group size") };
+    const { assert!(D != 0, "a DivLen length needs a nonzero divisor") };
     if !len.is_multiple_of(D) {
         cold_path();
         return Err(Error::InvalidValueLength);
@@ -203,7 +246,7 @@ fn groups<const D: usize>(len: usize) -> Result<usize, Error> {
     Ok(len / D)
 }
 
-impl<L: LengthSpec, const D: usize> LengthSpec for Per<L, D> {
+impl<L: LengthSpec, const D: usize> LengthSpec for DivLen<L, D> {
     const STATES_LEN: bool = L::STATES_LEN;
 
     #[inline(always)]
@@ -218,7 +261,7 @@ impl<L: LengthSpec, const D: usize> LengthSpec for Per<L, D> {
 
     #[inline(always)]
     fn decode<'a>(input: &mut &'a [u8], scratch: &mut &'a mut [u8]) -> Result<Option<usize>, Error> {
-        const { assert!(D != 0, "a Per length needs a nonzero group size") };
+        const { assert!(D != 0, "a DivLen length needs a nonzero divisor") };
         let Some(groups) = L::decode(input, scratch)? else {
             return Ok(None);
         };
@@ -255,7 +298,8 @@ impl LengthSpec for Rest {
 #[cfg(test)]
 mod tests {
     use super::{
-        AsciiLength, BlankableEbcdicLength, EbcdicLength, Fixed, Length, LengthSpec, Offset, Per, Rest, encode_ascii_decimal_fixed,
+        AddLen, AsciiLength, BlankableEbcdicLength, DivLen, EbcdicLength, Fixed, Length, LengthSpec, MulLen, Rest,
+        encode_ascii_decimal_fixed,
     };
     use crate::field::{Ascii, Field, FixedBinaryBe};
     use crate::{Error, ScalarFmt};
@@ -277,20 +321,20 @@ mod tests {
     }
 
     #[test]
-    fn offset_prefixes_count_what_lies_outside_the_payload() {
+    fn added_lengths_count_what_lies_outside_the_payload() {
         // An IBM RDW: a 2-byte length counting itself and two reserved bytes.
-        type Rdw = Offset<Length<FixedBinaryBe<2>>, 2>;
+        type Rdw = AddLen<Length<FixedBinaryBe<2>>, 2>;
         assert_eq!(encode_length::<Rdw>(10).unwrap(), [0x00, 0x0C]);
         assert_eq!(decode_length::<Rdw>(&[0x00, 0x0C]), Ok(Some(10)));
         for wire in [&[0x00, 0x01][..], &[0x00, 0x00]] {
             assert_eq!(decode_length::<Rdw>(wire), Err(Error::Invalid));
         }
         // A count that includes a header item.
-        type Items = Offset<AsciiLength<5>, 1>;
+        type Items = AddLen<AsciiLength<5>, 1>;
         assert_eq!(encode_length::<Items>(2).unwrap(), b"00003");
         assert_eq!(decode_length::<Items>(b"00003"), Ok(Some(2)));
         assert_eq!(decode_length::<Items>(b"00000"), Err(Error::Invalid));
-        assert_eq!(decode_length::<Offset<Rest, 4>>(b""), Ok(None));
+        assert_eq!(decode_length::<AddLen<Rest, 4>>(b""), Ok(None));
 
         type Record = Field<crate::Binary<0, 20>, Rdw>;
         let mut output = [0; 8];
@@ -300,23 +344,31 @@ mod tests {
     }
 
     #[test]
-    fn per_prefixes_count_groups() {
-        type Bytes = Per<AsciiLength<2>, 2>;
+    fn scaled_prefixes() {
+        type Bytes = DivLen<AsciiLength<2>, 2>;
         assert_eq!(encode_length::<Bytes>(8).unwrap(), b"04");
         assert_eq!(decode_length::<Bytes>(b"04"), Ok(Some(8)));
         assert_eq!(
-            decode_length::<Per<Length<FixedBinaryBe<8>>, 2>>(&u64::MAX.to_be_bytes()),
+            decode_length::<DivLen<Length<FixedBinaryBe<8>>, 2>>(&u64::MAX.to_be_bytes()),
             Err(Error::Invalid)
         );
-        assert_eq!(decode_length::<Per<Rest, 2>>(b""), Ok(None));
-        // Inside `Per`, the offset is in groups; outside, in the counted units.
-        type Groups = Per<Offset<AsciiLength<2>, 1>, 2>;
+        assert_eq!(decode_length::<DivLen<Rest, 2>>(b""), Ok(None));
+        // Inside `DivLen`, the addend is in groups; outside, in the counted units.
+        type Groups = DivLen<AddLen<AsciiLength<2>, 1>, 2>;
         assert_eq!(encode_length::<Groups>(8).unwrap(), b"05");
         assert_eq!(decode_length::<Groups>(b"05"), Ok(Some(8)));
-        type Units = Offset<Per<AsciiLength<2>, 2>, 2>;
+        type Units = AddLen<DivLen<AsciiLength<2>, 2>, 2>;
         assert_eq!(encode_length::<Units>(8).unwrap(), b"05");
         assert_eq!(decode_length::<Units>(b"05"), Ok(Some(8)));
         assert_eq!(encode_length::<Bytes>(3), Err(Error::InvalidValueLength));
+        // Two slots of five bytes, stated in bytes.
+        type SlotBytes = MulLen<AsciiLength<3>, 5>;
+        assert_eq!(encode_length::<SlotBytes>(2).unwrap(), b"010");
+        assert_eq!(decode_length::<SlotBytes>(b"010"), Ok(Some(2)));
+        assert_eq!(decode_length::<SlotBytes>(b"011"), Err(Error::Invalid));
+        assert_eq!(encode_length::<SlotBytes>(200), Err(Error::Invalid));
+        assert_eq!(encode_length::<MulLen<Rest, 5>>(usize::MAX), Err(Error::InvalidValueLength));
+        assert_eq!(decode_length::<MulLen<Rest, 5>>(b""), Ok(None));
     }
 
     #[test]

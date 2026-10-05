@@ -81,7 +81,7 @@ formats. It converts one byte representation to another and reports the
 resulting length.
 
 `LengthSpec` describes how a length is stated: a prefix codec, a fixed length,
-or nothing (`Rest`), plus arithmetic wrappers (`Offset`, `Per`). What the
+or nothing (`Rest`), plus arithmetic wrappers (`AddLen`, `DivLen`). What the
 length counts is the consumer's choice, never the check's units: a field
 counts its rendered data at its step chain's `Count` marker, or its wire bytes
 without one, and a list counts its items. Encoding computes the count by

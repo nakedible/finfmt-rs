@@ -31,7 +31,7 @@ pub use codepage::{AsciiSubset, Charset};
 pub use constant::{ConstBytes, Fill};
 pub use format::Field;
 pub(crate) use format::{decode_framed, encode_length, encode_steps};
-pub use length::{AsciiLength, BlankableEbcdicLength, EbcdicLength, Fixed, Length, LengthSpec, Offset, Per, Rest};
+pub use length::{AddLen, AsciiLength, BlankableEbcdicLength, DivLen, EbcdicLength, Fixed, Length, LengthSpec, MulLen, Rest};
 pub use nibble::{PackNibbles, PackNibblesLeft, PackNibblesRight, UnpackNibbles};
 pub use numeric::{
     FixedBinaryBe, FixedComp3, FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedAscii, FixedSignedZonedEbcdic,

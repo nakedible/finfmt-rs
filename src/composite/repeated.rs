@@ -318,6 +318,10 @@ mod tests {
             error(Area::decode_field(&mut &b"2AB\xff\xff  "[..], &mut &mut [][..])),
             "[1]: invalid data"
         );
+        // The prefix counts the used extent in bytes, two per slot.
+        type ByteArea = FixedAreaList<crate::MulLen<AsciiLength<1>, 2>, Two, AbsentBytes<crate::Fill<b' ', 2>>, 2, 3>;
+        roundtrip::<ByteArea>(&["AB", "CD"], b"4ABCD  ");
+        assert_eq!(decode::<ByteArea>(b"3ABCD  "), Err(Error::Invalid));
     }
 
     #[test]

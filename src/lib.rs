@@ -20,12 +20,12 @@ pub use composite::{
     TrailingField, TrailingLengthFrame, decode, encode,
 };
 pub use field::{
-    Alpha, Alphanum, Ascii, AsciiLength, AsciiPrintable, AsciiSubset, AsciiSubsetBytes, Bcd, BcdBytes, Bcdz, BerLength, BerTag, Binary,
-    BlankableEbcdicLength, Charset, CharsetText, Check, ConstBytes, Count, DecodeCheck, EbcdicLength, EbcdicPrintable, Field, Fill, Fixed,
-    FixedBinaryBe, FixedComp3, FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedAscii, FixedSignedZonedEbcdic, Hex,
-    HexEven, Identity, ImpliedDecimal, Length, LengthSpec, LowerHex, LowerHexEven, MinusPrefix, Numeric, Offset, PackNibbles,
-    PackNibblesLeft, PackNibblesRight, PadLeft, PadLeftEven, PadRight, PadRightEven, Per, Rest, SignPrefix, SignSuffix, Step, StrictBerTag,
-    Track2, Truncate, UnpackNibbles, UpperAlpha, UpperAlphanum, UpperAsciiPrintable, UpperHex, UpperHexEven,
+    AddLen, Alpha, Alphanum, Ascii, AsciiLength, AsciiPrintable, AsciiSubset, AsciiSubsetBytes, Bcd, BcdBytes, Bcdz, BerLength, BerTag,
+    Binary, BlankableEbcdicLength, Charset, CharsetText, Check, ConstBytes, Count, DecodeCheck, DivLen, EbcdicLength, EbcdicPrintable,
+    Field, Fill, Fixed, FixedBinaryBe, FixedComp3, FixedNibbleInt, FixedSignedBinaryBe, FixedSignedComp3, FixedSignedZonedAscii,
+    FixedSignedZonedEbcdic, Hex, HexEven, Identity, ImpliedDecimal, Length, LengthSpec, LowerHex, LowerHexEven, MinusPrefix, MulLen,
+    Numeric, PackNibbles, PackNibblesLeft, PackNibblesRight, PadLeft, PadLeftEven, PadRight, PadRightEven, Rest, SignPrefix, SignSuffix,
+    Step, StrictBerTag, Track2, Truncate, UnpackNibbles, UpperAlpha, UpperAlphanum, UpperAsciiPrintable, UpperHex, UpperHexEven,
 };
 pub use primitive::codepage::{CodePage, Cp037, Cp273, Cp500, Cp850, Cp1047, Cp1140, Cp1141, Cp1142, Iso646Fi, Latin1};
 pub use scalarfmt::ScalarFmt;

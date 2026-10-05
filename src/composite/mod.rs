@@ -1403,9 +1403,9 @@ mod tests {
         // The length counts at the marker, or the wire without one.
         roundtrip::<Frame<AsciiLength<2>, Text, UnpackNibbles<UpperHexDigits>>>("AB", b"044142");
         roundtrip::<Frame<AsciiLength<2>, Text, crate::chain!(Count, UnpackNibbles<UpperHexDigits>)>>("AB", b"024142");
-        roundtrip::<Frame<crate::Per<AsciiLength<2>, 2>, Text, UnpackNibbles<UpperHexDigits>>>("AB", b"024142");
+        roundtrip::<Frame<crate::DivLen<AsciiLength<2>, 2>, Text, UnpackNibbles<UpperHexDigits>>>("AB", b"024142");
         assert_eq!(
-            encode::<Frame<crate::Per<AsciiLength<2>, 2>, Text>>("ABC"),
+            encode::<Frame<crate::DivLen<AsciiLength<2>, 2>, Text>>("ABC"),
             Err(Error::InvalidValueLength)
         );
         // Bounds are on the body before the steps.
