@@ -6,8 +6,13 @@ pub trait ConstBytes {
     const BYTES: &'static [u8];
 }
 
-/// `N` copies of `BYTE`, such as `Fill<0x40, 12>` for twelve EBCDIC spaces.
-pub struct Fill<const BYTE: u8, const N: usize>;
+/// `N + M` copies of `BYTE`, such as `Fill<0x40, 12>` for twelve EBCDIC
+/// spaces. As an [`AbsentFmt`](crate::AbsentFmt) it is a blank or zero-filled
+/// field; `M` lets a generic alias add two widths, which stable Rust cannot do
+/// in a type: a length prefix of `L` digits and a slot of `P` bytes, all blank
+/// when absent, is `Fill<0x40, L, P>`. As [`ConstBytes`] it carries `N` bytes
+/// and `M` is 0.
+pub struct Fill<const BYTE: u8, const N: usize, const M: usize = 0>;
 
 impl<const BYTE: u8, const N: usize> Fill<BYTE, N> {
     const ARRAY: [u8; N] = [BYTE; N];

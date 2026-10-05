@@ -15,9 +15,9 @@ pub use bitmap::{Bitmap, BitmapFormat, BitmapLayout, BitsBitmap, FixedBitmap, Is
 #[cfg(feature = "serde")]
 pub use composite::SerdeScalar;
 pub use composite::{
-    AbsentBytes, AbsentFmt, BoundedList, ContextDecode, Empty, FieldDecode, FieldEncode, FixedAreaList, FixedBytes, FixedValue, Frame,
-    NoPadding, NoTrailingFields, OptionAs, PaddingByte, ScalarDecode, ScalarEncode, Separator, TlvEntry, TlvExtras, TlvList, TlvPadding,
-    TrailingField, TrailingLengthFrame, decode, encode,
+    AbsentBytes, AbsentFmt, AbsentValue, BoundedList, ContextDecode, Empty, FieldDecode, FieldEncode, FixedAreaList, FixedBytes,
+    FixedValue, Frame, NoPadding, NoTrailingFields, OptionAs, PaddingByte, ScalarDecode, ScalarEncode, Separator, TlvEntry, TlvExtras,
+    TlvList, TlvPadding, TrailingField, TrailingLengthFrame, decode, encode,
 };
 pub use field::{
     AddLen, Alpha, Alphanum, Ascii, AsciiLength, AsciiPrintable, AsciiSubset, AsciiSubsetBytes, Bcd, BcdBytes, Bcdz, BerLength, BerTag,
@@ -35,7 +35,7 @@ pub use types::{CompositeError, Error, PathSegment};
 pub mod __private {
     use core::marker::PhantomData;
 
-    use crate::{CompositeError, Error};
+    use crate::CompositeError;
 
     /// A field the container may omit, seen as an `Option`: an `Option<T>`
     /// itself, or a `bool` flag, an optional constant that is either present
@@ -92,21 +92,6 @@ pub mod __private {
 
     impl<R: FieldBytes<I> + ?Sized, const I: usize> crate::ConstBytes for RecordBytes<R, I> {
         const BYTES: &'static [u8] = R::BYTES;
-    }
-
-    /// The absent encoding of a record's field at position `I`.
-    pub trait FieldAbsent<const I: usize> {
-        fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error>;
-    }
-
-    /// [`FieldAbsent`] as an [`crate::AbsentFmt`] type.
-    pub struct RecordAbsent<R: ?Sized, const I: usize>(PhantomData<fn() -> *const R>);
-
-    impl<R: FieldAbsent<I> + ?Sized, const I: usize> crate::AbsentFmt for RecordAbsent<R, I> {
-        #[inline(always)]
-        fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
-            R::encode_absent(output, scratch)
-        }
     }
 
     /// A byte pattern spelled as a byte string, an array, or a constant of

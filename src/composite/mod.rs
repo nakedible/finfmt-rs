@@ -13,7 +13,7 @@
 
 use core::marker::PhantomData;
 
-use crate::primitive::bytes::{copy_bytes, take_delimited};
+use crate::primitive::bytes::{copy_bytes, reserve_bytes, take_delimited};
 use crate::utils::split_scratch;
 use crate::{CompositeError, Error, ScalarFmt};
 
@@ -163,6 +163,65 @@ impl<P: crate::ConstBytes> AbsentFmt for AbsentBytes<P> {
             return Ok(input.is_empty());
         }
         Ok(match_prefix(input, P::BYTES))
+    }
+}
+
+impl<const BYTE: u8, const N: usize, const M: usize> AbsentFmt for crate::Fill<BYTE, N, M> {
+    #[inline(always)]
+    fn encode_absent(output: &mut &mut [u8], _scratch: &mut [u8]) -> Result<(), Error> {
+        reserve_bytes(output, N + M)?.fill(BYTE);
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn decode_absent(input: &mut &[u8], _scratch: &mut [u8]) -> Result<bool, Error> {
+        // As for an empty pattern, no width matches only where nothing is left.
+        if N + M == 0 {
+            return Ok(input.is_empty());
+        }
+        match input.split_at_checked(N + M) {
+            Some((fill, rest)) if fill.iter().all(|&byte| byte == BYTE) => {
+                *input = rest;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+}
+
+/// As an absent form, `Empty` is no bytes at all, matching only an empty
+/// remainder, such as an empty delimited segment.
+impl AbsentFmt for Empty {
+    #[inline(always)]
+    fn encode_absent(_output: &mut &mut [u8], _scratch: &mut [u8]) -> Result<(), Error> {
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn decode_absent(input: &mut &[u8], _scratch: &mut [u8]) -> Result<bool, Error> {
+        Ok(input.is_empty())
+    }
+}
+
+/// An absent value encoded as the constant value text of `V` through the
+/// scalar format `F`: `AbsentValue<Un<4>, Fill<b'0', 4>>` is four zeros in
+/// whatever character set `Un` writes. The pattern follows the format, so a
+/// generic alias needs no width: `"00"` and blanks for an empty length-prefixed
+/// slot is `AbsentValue<Slot<L, P>, Fill<b' ', 0>>`. Decoding compares the
+/// input with the encoded value, so a present value that encodes the same way
+/// reads back as absent. A value `F` rejects is a composition mistake,
+/// asserted in debug builds.
+pub struct AbsentValue<F, V>(PhantomData<(F, V)>);
+
+impl<F: ScalarFmt, V: crate::ConstBytes> AbsentFmt for AbsentValue<F, V> {
+    #[inline(always)]
+    fn encode_absent(output: &mut &mut [u8], scratch: &mut [u8]) -> Result<(), Error> {
+        let encoded = F::encode(output, scratch, V::BYTES);
+        debug_assert!(
+            !matches!(encoded, Err(Error::Invalid | Error::InvalidValueLength)),
+            "AbsentValue: the format rejects its absent value"
+        );
+        encoded
     }
 }
 
@@ -420,9 +479,9 @@ mod tests {
         struct TrailingLengthData {
             #[wire(fmt = A2)]
             base: String,
-            #[wire(fmt = A3, absent_bytes = b"   ")]
+            #[wire(fmt = OptionAs<A3, crate::Fill<b' ', 3>>, required)]
             tail1: Option<String>,
-            #[wire(fmt = A3, absent_bytes = b"   ")]
+            #[wire(fmt = OptionAs<A3, crate::Fill<b' ', 3>>, required)]
             tail2: Option<String>,
         }
 
@@ -1093,6 +1152,50 @@ mod tests {
             delimited
         );
         assert!(input.is_empty());
+    }
+
+    #[test]
+    fn absent_forms_fill_value_and_empty() {
+        fn absent<A: AbsentFmt>() -> Vec<u8> {
+            let mut output = [0u8; 16];
+            let mut cursor = &mut output[..];
+            A::encode_absent(&mut cursor, &mut [0; 16]).unwrap();
+            let used = 16 - cursor.len();
+            output[..used].to_vec()
+        }
+        fn matches<A: AbsentFmt>(input: &[u8]) -> (bool, usize) {
+            let mut rest = input;
+            let matched = A::decode_absent(&mut rest, &mut [0; 16]).unwrap();
+            (matched, input.len() - rest.len())
+        }
+        // A fill of N + M bytes, as a generic alias adds two widths.
+        assert_eq!(absent::<crate::Fill<b' ', 2, 3>>(), b"     ");
+        assert_eq!(matches::<crate::Fill<b' ', 2, 3>>(b"     X"), (true, 5));
+        assert_eq!(matches::<crate::Fill<b' ', 2, 3>>(b"    X"), (false, 0));
+        assert_eq!(matches::<crate::Fill<b' ', 2, 3>>(b"    "), (false, 0));
+        assert_eq!(
+            crate::Fill::<0, 1, 1>::encode_absent(&mut &mut [0u8; 1][..], &mut []),
+            Err(Error::BufferOverflow)
+        );
+        // No width, like an empty pattern or `Empty`, matches only an empty remainder.
+        for (input, matched) in [(&b""[..], true), (b"X", false)] {
+            assert_eq!(matches::<crate::Fill<b' ', 0>>(input), (matched, 0));
+            assert_eq!(matches::<Empty>(input), (matched, 0));
+        }
+        assert!(absent::<Empty>().is_empty());
+        // A value encoded through the format: "" in a length-prefixed slot.
+        type Slot = Field<Ascii<0, 3>, AsciiLength<2>, crate::chain!(Count, crate::PadRight<3>)>;
+        type EmptySlot = AbsentValue<Slot, crate::Fill<b' ', 0>>;
+        assert_eq!(absent::<EmptySlot>(), b"00   ");
+        assert_eq!(matches::<EmptySlot>(b"00   "), (true, 5));
+        assert_eq!(matches::<EmptySlot>(b"     "), (false, 0));
+        type OptSlot = OptionAs<Slot, EmptySlot>;
+        for (value, wire) in [(None, &b"00   "[..]), (Some("AB".to_owned()), b"02AB ")] {
+            let mut output = [0u8; 8];
+            let used = super::encode::<OptSlot, Option<String>>(&mut output, &mut [0; 8], &value).unwrap();
+            assert_eq!(&output[..used], wire);
+            assert_eq!(super::decode::<OptSlot, Option<String>>(wire, &mut [0; 64]), Ok(value));
+        }
     }
 
     #[test]
