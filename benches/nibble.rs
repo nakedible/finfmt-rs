@@ -30,11 +30,11 @@ fn bench_pack(suite: &mut Suite) {
                 black_box(buf)
             })
         });
-        group.bench("pack_expanded_nibbles_hex_upper", |b| {
+        group.bench("pack_nibbles_checked_hex_upper", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 8];
                 let mut out = &mut buf[..];
-                let _ = pack_expanded_nibbles_hex_upper(&mut out, black_box(HEX_8));
+                let _ = pack_nibbles_checked_hex_upper(&mut out, black_box(HEX_8));
                 black_box(buf)
             })
         });
@@ -71,6 +71,68 @@ fn bench_unpack(suite: &mut Suite) {
     });
 }
 
+fn bench_odd(suite: &mut Suite) {
+    suite.group("odd", |group| {
+        quick(group);
+        group.bench("pack_nibbles_bcdz_left_odd", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 4];
+                let _ = pack_nibbles_bcdz_left(&mut buf.as_mut_slice(), black_box(b"1234567"));
+                black_box(buf)
+            })
+        });
+        group.bench("unpack_padded_nibbles_bcdz_left_odd", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 7];
+                let _ = unpack_padded_nibbles_bcdz_left(&mut buf.as_mut_slice(), black_box(b"\x12\x34\x56\x7F"), black_box(7));
+                black_box(buf)
+            })
+        });
+        group.bench("pack_nibbles_bcdz_right_odd", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 4];
+                let _ = pack_nibbles_bcdz_right(&mut buf.as_mut_slice(), black_box(b"1234567"));
+                black_box(buf)
+            })
+        });
+        group.bench("unpack_padded_nibbles_bcdz_right_odd", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 7];
+                let _ = unpack_padded_nibbles_bcdz_right(&mut buf.as_mut_slice(), black_box(b"\x01\x23\x45\x67"), black_box(7));
+                black_box(buf)
+            })
+        });
+        group.bench("pack_nibbles_bcdz_left_15", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 8];
+                let _ = pack_nibbles_bcdz_left_15(&mut buf.as_mut_slice(), black_box(b"123456789012345"));
+                black_box(buf)
+            })
+        });
+        group.bench("unpack_padded_nibbles_bcdz_left_15", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 15];
+                let _ = unpack_padded_nibbles_bcdz_left_15(&mut buf.as_mut_slice(), black_box(b"\x12\x34\x56\x78\x90\x12\x34\x5F"));
+                black_box(buf)
+            })
+        });
+        group.bench("pack_nibbles_bcdz_right_15", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 8];
+                let _ = pack_nibbles_bcdz_right_15(&mut buf.as_mut_slice(), black_box(b"123456789012345"));
+                black_box(buf)
+            })
+        });
+        group.bench("unpack_padded_nibbles_bcdz_right_15", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 15];
+                let _ = unpack_padded_nibbles_bcdz_right_15(&mut buf.as_mut_slice(), black_box(b"\x01\x23\x45\x67\x89\x01\x23\x45"));
+                black_box(buf)
+            })
+        });
+    });
+}
+
 fn bench_validate(suite: &mut Suite) {
     suite.group("validate", |group| {
         quick(group);
@@ -80,4 +142,4 @@ fn bench_validate(suite: &mut Suite) {
     });
 }
 
-zenbench::main!(bench_pack, bench_unpack, bench_validate);
+zenbench::main!(bench_pack, bench_unpack, bench_validate, bench_odd);

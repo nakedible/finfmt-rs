@@ -33,15 +33,42 @@ chaining primitive operations with length, padding, validation, charset, nibble,
 and numeric adapters. This layer should not invent new byte algorithms; it
 should choose and compose primitives.
 
-`src/composite/` contains composite formats. `CompositeFmt<T>` maps Rust values
-to and from fields, lists, delimited records, bitmaps, BER-TLV sets, variants,
-ordered unions, and absent/filler wrappers. Composite code may route data
+`src/composite/` contains the field dispatch traits and composite formats:
+fields, lists, frames, the record and enum code behind `wire_type!`, and
+absent and fixed-value wrappers. Composite code may route data
 between scalar formats and primitives, but byte-level conversion still belongs
 in `primitive`.
+
+Records are described by `#[wire(...)]` attributes on ordinary structs inside
+`wire_type!`, which makes each one its own format. The macro reads only those
+attributes and emits new items, so a derive could replace it without changing
+them. Every record states its layout.
+
+`src/bitmap.rs` frames presence bitmaps: word layouts and flags, with each
+word's representation a `Step`. It is the public home of `Bitmap`, whose bit
+storage is a crate-internal primitive.
 
 `src/asm/` and `benches/` are verification aids. Primitives are normally
 `#[inline(always)]`, so `asm` wrappers provide `#[inline(never)]` call sites for
 assembly inspection and benchmark checkpoints.
+
+## Naming
+
+Names use natural English word order, following the standard library
+(`fmt::UpperHex`, `from_be_bytes`, `split_at_mut_checked`):
+
+- Types put the noun that says what the item is last: `UpperHex`,
+  `AsciiLength`, `BlankableEbcdicLength`, `SignPrefix`.
+- Functions are verb plus object in natural order: `encode_packed_decimal_fixed`,
+  `unpack_padded_nibbles`, `validate_track2_chars`.
+- A qualifier that selects a behaviour variant of an existing item goes at the
+  end: `pack_nibbles_checked`, `translate_bytes_inplace`, `PadLeftEven`,
+  `HexEven`, `encode_packed_decimal_signed_fixed`.
+
+Modules group related functions, and rustdoc search and editor completion
+match fuzzily, so names do not repeat a family prefix to sort together. Rename
+an item only when it breaks this rule, not for taste; the rule was chosen over
+family-first ordering deliberately and should not be reversed name by name.
 
 ## Core Traits
 
@@ -53,11 +80,36 @@ encoding.
 formats. It converts one byte representation to another and reports the
 resulting length.
 
-`LengthSpec` describes how a field length is encoded or inferred: fixed, rest,
-wire-length prefixed, semantic-length prefixed, and related wrappers.
+`LengthSpec` describes how a length is stated: a prefix codec, a fixed length,
+or nothing (`Rest`), plus arithmetic wrappers (`AddLen`, `DivLen`). What the
+length counts is the consumer's choice, never the check's units: a field
+counts its rendered data at its step chain's `Count` marker, or its wire bytes
+without one, and a list counts its items. Encoding computes the count by
+arithmetic up to the marker (`Step::counted_len`); decoding derives the wire
+length from the count by arithmetic after it (`Step::counted_wire_len`), and
+the steps after the marker get their exact lengths, so padding there is split
+off exactly rather than by content.
 
-`CompositeFmt<T>` is the composite contract. It encodes and decodes complete Rust
-values using caller-provided output and scratch buffers.
+`Frame<L, Inner, Steps, MIN, MAX>` puts a group of fields or a list behind a
+length and through a step chain, counted as a field counts. It has no check:
+the inner fields check their own content and must produce bytes the steps
+accept. Its length comes from the value, so a body outside `MIN..=MAX`, or one
+`L` cannot state, is `InvalidValueLength`, where a field whose check admits a
+length its framing cannot hold is a composition mistake asserted in debug
+builds. `MIN` and `MAX` bound the body before the steps, for limits a
+specification states beyond what the inner format and `L` imply.
+
+`FieldEncode<T>` and `FieldDecode<'de, T>` are the format contract: a format
+encodes values of type `T`, and decodes values of type `T` that may borrow
+input or scratch for `'de`. Scalar and composite formats implement the same
+pair, so composites take their inner formats through it and nest alike. Every
+`ScalarFmt` is a format for the value types implementing `ScalarEncode` /
+`ScalarDecode<'de>`: the crate provides strings, `&str` and integers
+(`CompactString` behind the `compact_str` feature), and users implement them
+for their own types. The value's type selects the `ScalarFmt` method (text or
+typed number), so an integer field on a binary format needs no text round trip.
+A value that should use its serde mapping on the wire is spelled out per field
+with `SerdeScalar<F>`.
 
 ## Buffers
 
@@ -75,9 +127,20 @@ when transformation is needed. The wire-format machinery itself should not
 allocate; destination Rust types may allocate if their own representation
 requires it.
 
-Length-prefixed formats rely on `encoded_len` to write the length before the
-value. Supported scalar transformations should have deterministic output length
-for a given semantic input.
+Workspace never shares a region with bytes bound for output. Encoding only
+appends to output; the one exception is a step chain transforming a field's
+own fixed extent in place. A format that must know an encoding before writing
+what precedes it, such as a length, stages it with `encode_staged`: the
+encoding goes into the first half of scratch and its workspace is the second
+half, and the staged bytes are copied out by the count the encoding advanced.
+A length bug can then at worst ship stale staged bytes, never live workspace.
+Nested staging halves scratch again, so scratch needs about `2^depth` times the
+largest staged encoding.
+
+A field writes its length before its value from the logical length its check
+returns, by step and length-spec arithmetic, so scalar transformations must
+have a deterministic output length for a given input length. A frame stages
+its body to learn its length.
 
 ## Top-Level Buffer Strategy
 
@@ -87,9 +150,16 @@ space is reported as `BufferOverflow`.
 
 A higher-level convenience API should usually avoid exact buffer sizing. The
 normal path should pick output and scratch buffers that fit almost all messages
-for the specific protocol. Examples such as 2 KiB + 2 KiB or 4 KiB + 4 KiB are
-often already larger than real financial messages, but the right defaults are
-protocol-specific.
+for the specific protocol. For messages under 1 KiB, 2 KiB of output and 8 KiB
+of scratch fit three levels of staging, such as a message length around a
+length-prefixed field around a token list. Flat formats fit in 4 KiB of
+scratch. The right defaults are still protocol-specific.
+
+Buffers belong to a worker thread and are reused, not allocated per message or
+per connection. Clear both after each message with a plain fill, which costs
+tens of nanoseconds for 8 KiB; `zeroize`'s byte-wise volatile writes cost
+about 2 µs there, so keep them for when a buffer is dropped. The output needs
+clearing too: a shorter message leaves the end of the previous one behind it.
 
 If the normal path returns `BufferOverflow`, the convenience layer should retry
 the whole conversion from the original input or value using a larger maximum
@@ -116,8 +186,13 @@ For invalid inputs that violate those assumptions, a primitive may return
 - panic in release builds,
 - read or write outside the provided slices,
 - mutate unrelated memory or unrelated cursors,
-- rely on undefined behavior,
-- silently lose structural data, such as truncating a bitmap outside its layout.
+- rely on undefined behavior.
+
+Bitmap representability is one such caller-side invariant: populated fields
+must fit the layout and decoded word width, and semantic presence bits must not
+be word flags. Violating these encoding preconditions
+may discard fields in release builds; malformed wire input is still checked on
+decode.
 
 Debug builds should assert assumed invariants where practical. These assertions
 are there to catch incorrect format composition and incorrect primitive usage
@@ -133,6 +208,23 @@ preconditions. If a check exists only to catch incorrect composition or misuse o
 a prevalidated primitive, prefer `debug_assert!`. Optimized primitive code should
 be allowed to assume those preconditions when doing so removes branches or other
 overhead from the hot path.
+
+### Input types
+
+Validation comes before processing, so a validator is where a caller's value
+enters the primitive layer. A validator's input type follows from what its input
+can be:
+
+- always text (a semantic value): `&str`, without UTF-8 checks;
+- always encoded bytes (wire bytes, packed BCD, EBCDIC, bytes produced partway
+  through a transform): `&[u8]`, so that passing a string is a compile error;
+- either, with the same implementation: `impl AsRef<[u8]>`, so callers can pass
+  `&str`, `String`, `CompactString` or bytes without converting;
+- either, where text can skip work because it is already valid UTF-8: two
+  functions, one taking `&str` and one taking `&[u8]`.
+
+Processing primitives take `&[u8]` input, `&mut &[u8]` input cursors and
+`&mut &mut [u8]` output cursors; their input usually comes from an earlier step.
 
 ## Validation
 
@@ -151,17 +243,44 @@ Validation functions are still primitives. They are the explicit tools for
 checking byte classes, character-set representability, ranges, decimal shapes,
 and fixed/even lengths where a format boundary requires that check.
 
+Character codecs come in two deliberate kinds. A permissive byte map, such as
+CP037, converts ASCII exactly and replaces anything else with SUB in both
+directions, much like a lossy UTF-8 conversion; it never fails, and a field that
+must be strict pairs it with a check. A strict codec, such as CP1142, converts
+between UTF-8 text and the full code page and rejects unrepresentable text or
+invalid UTF-8. Both keep ASCII on a fast path, since most traffic is ASCII.
+
+### Text and number values
+
+A format treats its value either as text or as a number.
+
+- Text formats (a check plus steps, including BCD nibble packing) return every
+  character on decode, so identifiers such as `000123` keep their leading
+  zeros. Their width is counted in characters.
+- Number formats (packed decimal, zoned decimal, implied decimal, and every
+  typed-integer path) decode to the canonical number: no leading zeros, and
+  zero is positive. When encoding they accept any spelling of a number that
+  fits, so only significant digits count toward their width.
+
 ## Errors
 
 `Error` is the scalar and primitive error type:
 
 - `UnexpectedEof`: input ended before enough wire bytes were available.
 - `BufferOverflow`: output or scratch space was too small.
-- `InvalidValueLength`: semantic value length did not satisfy the format.
+- `InvalidValueLength`: when encoding, the supplied value is too long or too
+  short for the field, so adding or removing characters or bytes would fix it.
+  It points at the configuration or value to correct, or at a format that
+  should truncate. It comes from the value's own length check. A length
+  prefix or padded area too small for what the check accepts is a miswritten
+  field, caught by debug assertions. Decoding never returns it: a decoded
+  value of the wrong length means the incoming message was encoded wrong,
+  which is `Invalid`. A typed number that does not fit is `Invalid` too, since
+  it has no characters to remove.
 - `Invalid`: input data was malformed or rejected by the format.
 - `Internal`: format composition or library invariant was inconsistent.
 
-`StructError` wraps `Error` with a short field path for composite formats.
+`CompositeError` wraps `Error` with a short field path for composite formats.
 Composite decoders should reject unknown or duplicate structural data unless a
 format explicitly provides an extras/list path for preserving it.
 
@@ -172,14 +291,19 @@ success.
 
 ## Serde Boundary
 
-Serde support is intentionally isolated in files with `_serde` in the name where
-possible. It exists for Rust/JSON ergonomics and for special generic adapter
-cases such as BER-TLV list/map decoding.
+Serde is an optional feature, on by default, and its support is isolated in
+files with `_serde` in the name, plus the optional `extras` helpers. It serves
+Rust/JSON ergonomics and the explicit `SerdeScalar<F>` field adapter. Nothing
+else requires it: field dispatch uses the value traits, TLV lists and extras
+use plain collection traits, and the crate builds without serde.
 
 The general structural wire-format path is not serde-based. Serde concepts such
 as flattening and optional field handling do not map cleanly to bitmap-driven,
 delimiter-driven, fixed-layout, or variant wire formats. Those are represented
-by explicit `CompositeFmt` implementations and macros.
+by explicit field formats and `wire_type!` attributes. Serde attributes on a
+value type describe its JSON form; they reach the wire only through an explicit
+`SerdeScalar<F>`, and never for enums: the adapter rejects them, because an
+enum's wire mapping is its own `ScalarEncode`/`ScalarDecode` implementation.
 
 ## Composite Semantics
 
@@ -188,27 +312,31 @@ decide which fields are present. If a field is absent, the corresponding Rust
 field must be represented by the composite format shape, usually as an optional
 field or through a defined absent, optional, or union representation.
 
-Pattern-based absence must be explicit. A format may define bytes that mean an
-optional value is absent, for example a blank-filled fixed area, an impossible
-length prefix, or a structured pattern matching a legacy initialized area. The
-present-side format should normally be unable to encode those bytes. If
-`Some(value)` and `None` encode identically, the mapping is lossy and should be
-a deliberate domain decision, not a generic default-derived rule.
+Pattern-based absence must be explicit. A value whose bytes are always on the
+wire can still be absent: a blank-filled fixed area, a zero date, COBOL
+low-values. `OptionAs<Inner, Absent>` maps `Option<T>` onto such a field: the
+`Absent` encoding (an `AbsentFmt`, such as `AbsentBytes<Fill<b' ', 8>>`) is
+wire bytes, matched before `Inner` sees the input, because `Inner` often cannot
+represent them; anything else decodes through `Inner`, whose errors are
+returned rather than read as absence. Usually the present-side format cannot
+encode the absent bytes. When it can, as with a zero amount, `Some(value)` and
+`None` encode identically and the value reads back as absent: that is the
+format's definition, not a generic rule.
 
 BER-TLV named-field formats reject duplicate known tags. Unknown tags are
 rejected by default. Formats with an extras path preserve unknown tags as
 uppercase hex strings, and list-style BER-TLV formats preserve order and
 duplicates.
 
-Repeated and delimited formats decode each item through its own `CompositeFmt` or
-`ScalarFmt` and reject trailing bytes inside an item unless that item format
-explicitly consumes them.
+Repeated and delimited formats decode each item through its own format and
+reject trailing bytes inside an item unless that item format explicitly
+consumes them.
 
 Union and literal matching paths are allowed to decode speculatively. They must
 snapshot input cursors before trial decoding and only advance the input for the
-successful path. Union decode tries arms in order. `Invalid`,
-`InvalidValueLength`, and `UnexpectedEof` mean "try the next arm";
-`BufferOverflow` and `Internal` are fatal. Scratch is arena space for borrowed
+successful path. Union decode tries arms in order. `Invalid` and
+`UnexpectedEof` mean "try the next arm"; `BufferOverflow` and `Internal` are
+fatal. Decoding never returns `InvalidValueLength`. Scratch is arena space for borrowed
 decode, so speculative failure may consume scratch before a later union arm
 succeeds. Owned union decode can retry each arm with the original scratch slice.
 

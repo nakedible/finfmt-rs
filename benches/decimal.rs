@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use finfmt::asm::decimal::*;
-use finfmt::primitive::decimal::MAX_DECIMAL_LEN;
+use finfmt::primitive::decimal::MAX_INTEGER_TEXT_LEN;
 use zenbench::prelude::*;
 
 fn quick(group: &mut BenchGroup) {
@@ -13,14 +13,14 @@ fn bench_format(suite: &mut Suite) {
         quick(group);
         group.bench("format_u64_to_buf", |b| {
             b.iter(|| {
-                let mut buf = [0u8; MAX_DECIMAL_LEN];
+                let mut buf = [0u8; MAX_INTEGER_TEXT_LEN];
                 let _ = format_u64_to_buf(&mut buf, black_box(1_234_567_890u64));
                 black_box(buf)
             })
         });
         group.bench("format_i64_to_buf", |b| {
             b.iter(|| {
-                let mut buf = [0u8; MAX_DECIMAL_LEN];
+                let mut buf = [0u8; MAX_INTEGER_TEXT_LEN];
                 let _ = format_i64_to_buf(&mut buf, black_box(-1_234_567_890i64));
                 black_box(buf)
             })
@@ -88,19 +88,19 @@ fn bench_sign(suite: &mut Suite) {
 fn bench_implied(suite: &mut Suite) {
     suite.group("implied", |group| {
         quick(group);
-        group.bench("encode_decimal_implied_scale2_signed", |b| {
+        group.bench("encode_implied_decimal_scale2_signed", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 16];
                 let mut out = &mut buf[..];
-                let _ = encode_decimal_implied_scale2_signed(&mut out, black_box(b"-123.45"));
+                let _ = encode_implied_decimal_scale2_signed(&mut out, black_box(b"-123.45"));
                 black_box(buf)
             })
         });
-        group.bench("decode_decimal_implied_scale2", |b| {
+        group.bench("decode_implied_decimal_scale2", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 16];
                 let mut out = &mut buf[..];
-                let _ = decode_decimal_implied_scale2(&mut out, black_box(b"12345"));
+                let _ = decode_implied_decimal_scale2(&mut out, black_box(b"12345"));
                 black_box(buf)
             })
         });
@@ -110,6 +110,12 @@ fn bench_implied(suite: &mut Suite) {
 fn bench_overpunch_packed_sign(suite: &mut Suite) {
     suite.group("overpunch_packed_sign", |group| {
         quick(group);
+        group.bench("encode_ascii_overpunch_digit_for", |b| {
+            b.iter(|| black_box(encode_ascii_overpunch_digit_for(black_box(true), black_box(7))))
+        });
+        group.bench("decode_ascii_overpunch_digit_byte", |b| {
+            b.iter(|| black_box(decode_ascii_overpunch_digit_byte(black_box(b'P'))))
+        });
         group.bench("encode_overpunch_digit_for", |b| {
             b.iter(|| black_box(encode_overpunch_digit_for(black_box(true), black_box(7))))
         });
@@ -134,18 +140,39 @@ fn bench_overpunch_packed_sign(suite: &mut Suite) {
 fn bench_fixed_ascii(suite: &mut Suite) {
     suite.group("fixed_ascii", |group| {
         quick(group);
-        group.bench("encode_decimal_ascii_fixed_2", |b| {
+        group.bench("encode_ascii_decimal_fixed_3", |b| {
             b.iter(|| {
-                let mut buf = [0u8; 2];
-                let mut out = &mut buf[..];
-                let _ = encode_decimal_ascii_fixed_2(&mut out, black_box(42));
+                let mut buf = [0u8; 3];
+                let _ = encode_ascii_decimal_fixed_3(&mut buf.as_mut_slice(), black_box(123));
                 black_box(buf)
             })
         });
-        group.bench("decode_decimal_ascii_fixed_2", |b| {
+        group.bench("encode_ascii_ll_field", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 34];
+                let _ = encode_ascii_ll_field(&mut buf.as_mut_slice(), black_box(&[b'7'; 32]));
+                black_box(buf)
+            })
+        });
+        group.bench("encode_ascii_lll_field", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 131];
+                let _ = encode_ascii_lll_field(&mut buf.as_mut_slice(), black_box(&[b'7'; 128]));
+                black_box(buf)
+            })
+        });
+        group.bench("encode_ascii_decimal_fixed_2", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 2];
+                let mut out = &mut buf[..];
+                let _ = encode_ascii_decimal_fixed_2(&mut out, black_box(42));
+                black_box(buf)
+            })
+        });
+        group.bench("decode_ascii_decimal_fixed_2", |b| {
             b.iter(|| {
                 let mut input = black_box(&b"42"[..]);
-                black_box(decode_decimal_ascii_fixed_2(&mut input))
+                black_box(decode_ascii_decimal_fixed_2(&mut input))
             })
         });
     });
@@ -154,32 +181,39 @@ fn bench_fixed_ascii(suite: &mut Suite) {
 fn bench_fixed_ebcdic(suite: &mut Suite) {
     suite.group("fixed_ebcdic", |group| {
         quick(group);
-        group.bench("encode_decimal_ebcdic_fixed_2", |b| {
+        group.bench("encode_ebcdic_decimal_fixed_3", |b| {
             b.iter(|| {
-                let mut buf = [0u8; 2];
-                let mut out = &mut buf[..];
-                let _ = encode_decimal_ebcdic_fixed_2(&mut out, black_box(42));
+                let mut buf = [0u8; 3];
+                let _ = encode_ebcdic_decimal_fixed_3(&mut buf.as_mut_slice(), black_box(123));
                 black_box(buf)
             })
         });
-        group.bench("encode_decimal_ebcdic_blankable_fixed_2", |b| {
+        group.bench("encode_ebcdic_decimal_fixed_2", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 2];
                 let mut out = &mut buf[..];
-                let _ = encode_decimal_ebcdic_blankable_fixed_2(&mut out, black_box(0));
+                let _ = encode_ebcdic_decimal_fixed_2(&mut out, black_box(42));
                 black_box(buf)
             })
         });
-        group.bench("decode_decimal_ebcdic_fixed_2", |b| {
+        group.bench("encode_ebcdic_decimal_blank_zero_fixed_2", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 2];
+                let mut out = &mut buf[..];
+                let _ = encode_ebcdic_decimal_blank_zero_fixed_2(&mut out, black_box(0));
+                black_box(buf)
+            })
+        });
+        group.bench("decode_ebcdic_decimal_fixed_2", |b| {
             b.iter(|| {
                 let mut input = black_box(&[0xF4u8, 0xF2][..]);
-                black_box(decode_decimal_ebcdic_fixed_2(&mut input))
+                black_box(decode_ebcdic_decimal_fixed_2(&mut input))
             })
         });
-        group.bench("decode_decimal_ebcdic_blankable_fixed_2", |b| {
+        group.bench("decode_ebcdic_decimal_blank_zero_fixed_2", |b| {
             b.iter(|| {
                 let mut input = black_box(&[0x40u8, 0x40][..]);
-                black_box(decode_decimal_ebcdic_blankable_fixed_2(&mut input))
+                black_box(decode_ebcdic_decimal_blank_zero_fixed_2(&mut input))
             })
         });
     });
@@ -188,20 +222,37 @@ fn bench_fixed_ebcdic(suite: &mut Suite) {
 fn bench_signed_zoned(suite: &mut Suite) {
     suite.group("signed_zoned", |group| {
         quick(group);
-        group.bench("encode_decimal_ebcdic_signed_fixed_8", |b| {
+        group.bench("encode_zoned_decimal_signed_fixed_8", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 8];
                 let mut out = &mut buf[..];
-                let _ = encode_decimal_ebcdic_signed_fixed_8(&mut out, black_box(b"-1234567"));
+                let _ = encode_zoned_decimal_signed_fixed_8(&mut out, black_box(b"-1234567"));
                 black_box(buf)
             })
         });
-        group.bench("decode_decimal_ebcdic_signed_fixed_8", |b| {
+        group.bench("encode_ascii_zoned_decimal_signed_fixed_8", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 8];
+                let mut out = &mut buf[..];
+                let _ = encode_ascii_zoned_decimal_signed_fixed_8(&mut out, black_box(b"-1234567"));
+                black_box(buf)
+            })
+        });
+        group.bench("decode_ascii_zoned_decimal_signed_fixed_8", |b| {
+            b.iter(|| {
+                let mut input = black_box(&b"0123456P"[..]);
+                let mut buf = [0u8; 16];
+                let mut out = &mut buf[..];
+                let _ = decode_ascii_zoned_decimal_signed_fixed_8(&mut input, &mut out);
+                black_box(buf)
+            })
+        });
+        group.bench("decode_zoned_decimal_signed_fixed_8", |b| {
             b.iter(|| {
                 let mut input = black_box(&[0xF0u8, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xD7][..]);
                 let mut buf = [0u8; 16];
                 let mut out = &mut buf[..];
-                let _ = decode_decimal_ebcdic_signed_fixed_8(&mut input, &mut out);
+                let _ = decode_zoned_decimal_signed_fixed_8(&mut input, &mut out);
                 black_box(buf)
             })
         });
@@ -211,44 +262,71 @@ fn bench_signed_zoned(suite: &mut Suite) {
 fn bench_packed(suite: &mut Suite) {
     suite.group("packed", |group| {
         quick(group);
-        group.bench("encode_decimal_packed_fixed_8", |b| {
+        group.bench("encode_packed_decimal_fixed_8", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 8];
                 let mut out = &mut buf[..];
-                let _ = encode_decimal_packed_fixed_8(&mut out, black_box(b"1234567890123"));
+                let _ = encode_packed_decimal_fixed_8(&mut out, black_box(b"1234567890123"));
                 black_box(buf)
             })
         });
-        group.bench("encode_decimal_packed_signed_fixed_8", |b| {
+        group.bench("encode_packed_decimal_fixed_8_even", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 8];
                 let mut out = &mut buf[..];
-                let _ = encode_decimal_packed_signed_fixed_8(&mut out, black_box(b"-1234567890123"));
+                let _ = encode_packed_decimal_fixed_8(&mut out, black_box(b"123456789012"));
                 black_box(buf)
             })
         });
-        group.bench("decode_decimal_packed_fixed_8", |b| {
+        group.bench("encode_packed_decimal_signed_fixed_8", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 8];
+                let mut out = &mut buf[..];
+                let _ = encode_packed_decimal_signed_fixed_8(&mut out, black_box(b"-1234567890123"));
+                black_box(buf)
+            })
+        });
+        group.bench("decode_packed_decimal_fixed_8", |b| {
             b.iter(|| {
                 let mut input = black_box(&[0x12u8, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x5F][..]);
                 let mut buf = [0u8; 16];
                 let mut out = &mut buf[..];
-                let _ = decode_decimal_packed_fixed_8(&mut input, &mut out);
+                let _ = decode_packed_decimal_fixed_8(&mut input, &mut out);
                 black_box(buf)
             })
         });
-        group.bench("decode_decimal_packed_signed_fixed_8", |b| {
+        group.bench("decode_packed_decimal_signed_fixed_8", |b| {
             b.iter(|| {
                 let mut input = black_box(&[0x12u8, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x5D][..]);
                 let mut buf = [0u8; 16];
                 let mut out = &mut buf[..];
-                let _ = decode_decimal_packed_signed_fixed_8(&mut input, &mut out);
+                let _ = decode_packed_decimal_signed_fixed_8(&mut input, &mut out);
                 black_box(buf)
             })
         });
     });
 }
 
+fn bench_signed_and_implied(suite: &mut Suite) {
+    suite.group("signed_and_implied", |group| {
+        quick(group);
+        group.bench("split_signed_input_runtime", |b| {
+            b.iter(|| black_box(split_signed_input_runtime(black_box(b"-1234567"))))
+        });
+        group.bench("parse_signed_decimal_19", |b| {
+            b.iter(|| black_box(parse_signed_decimal_19(black_box(b"-1234567"))))
+        });
+        group.bench("parse_unsigned_decimal_19", |b| {
+            b.iter(|| black_box(parse_unsigned_decimal_19(black_box(b"0001234567"))))
+        });
+        group.bench("encoded_implied_decimal_len_scale2_signed", |b| {
+            b.iter(|| black_box(encoded_implied_decimal_len_scale2_signed(black_box(b"-123.45"))))
+        });
+    });
+}
+
 zenbench::main!(
+    bench_signed_and_implied,
     bench_format,
     bench_parse,
     bench_sign,

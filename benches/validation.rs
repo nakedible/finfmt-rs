@@ -22,7 +22,6 @@ const BCD_BYTES: &[u8] = b"\x12\x34\x56\x78";
 const BINARY: &[u8] = b"\x00\xFF\x42\x99";
 const ISO_8859_1_STR: &str = "héllo";
 const EBCDIC_PRINT: &[u8] = &[0xC8, 0x85, 0x93, 0x93, 0x96];
-const SIGNED_DECIMAL: &[u8] = b"-1234567";
 
 fn bench_class_predicates(suite: &mut Suite) {
     suite.group("class_predicates", |group| {
@@ -60,20 +59,20 @@ fn bench_hex(suite: &mut Suite) {
         group.bench("validate_hex_1_99", |b| {
             b.iter(|| black_box(validate_hex_1_99(black_box(HEX_MIXED))))
         });
-        group.bench("validate_hex_upper_1_99", |b| {
-            b.iter(|| black_box(validate_hex_upper_1_99(black_box(HEX_UPPER))))
+        group.bench("validate_upper_hex_1_99", |b| {
+            b.iter(|| black_box(validate_upper_hex_1_99(black_box(HEX_UPPER))))
         });
-        group.bench("validate_hex_lower_1_99", |b| {
-            b.iter(|| black_box(validate_hex_lower_1_99(black_box(HEX_LOWER))))
+        group.bench("validate_lower_hex_1_99", |b| {
+            b.iter(|| black_box(validate_lower_hex_1_99(black_box(HEX_LOWER))))
         });
         group.bench("validate_hex_even_2_98", |b| {
             b.iter(|| black_box(validate_hex_even_2_98(black_box(HEX_MIXED))))
         });
-        group.bench("validate_hex_upper_even_2_98", |b| {
-            b.iter(|| black_box(validate_hex_upper_even_2_98(black_box(HEX_UPPER))))
+        group.bench("validate_upper_hex_even_2_98", |b| {
+            b.iter(|| black_box(validate_upper_hex_even_2_98(black_box(HEX_UPPER))))
         });
-        group.bench("validate_hex_lower_even_2_98", |b| {
-            b.iter(|| black_box(validate_hex_lower_even_2_98(black_box(HEX_LOWER))))
+        group.bench("validate_lower_hex_even_2_98", |b| {
+            b.iter(|| black_box(validate_lower_hex_even_2_98(black_box(HEX_LOWER))))
         });
     });
 }
@@ -82,20 +81,29 @@ fn bench_specialty(suite: &mut Suite) {
     suite.group("specialty", |group| {
         quick(group);
         group.bench("validate_bcdz_1_99", |b| b.iter(|| black_box(validate_bcdz_1_99(black_box(BCDZ)))));
-        group.bench("validate_track2_1_37", |b| {
-            b.iter(|| black_box(validate_track2_1_37(black_box(TRACK2))))
+        group.bench("validate_bytes_track2_d_1_37", |b| {
+            b.iter(|| black_box(validate_bytes_track2_d_1_37(black_box(TRACK2))))
+        });
+        group.bench("validate_track2_chars_1_37", |b| {
+            b.iter(|| black_box(validate_track2_chars_1_37(black_box(TRACK2))))
         });
         group.bench("validate_bcd_bytes_1_10", |b| {
             b.iter(|| black_box(validate_bcd_bytes_1_10(black_box(BCD_BYTES))))
         });
-        group.bench("validate_binary_1_99", |b| {
-            b.iter(|| black_box(validate_binary_1_99(black_box(BINARY))))
+        group.bench("validate_byte_length_1_99", |b| {
+            b.iter(|| black_box(validate_byte_length_1_99(black_box(BINARY))))
         });
-        group.bench("validate_iso8859_1_str_1_99", |b| {
-            b.iter(|| black_box(validate_iso8859_1_str_1_99(black_box(ISO_8859_1_STR))))
+        group.bench("validate_latin1_text_1_99", |b| {
+            b.iter(|| black_box(validate_latin1_text_1_99(black_box(ISO_8859_1_STR))))
         });
-        group.bench("validate_ebcdic_1142_text_1_99", |b| {
-            b.iter(|| black_box(validate_ebcdic_1142_text_1_99(black_box(EBCDIC_PRINT))))
+        group.bench("validate_1142_text_ascii", |b| {
+            b.iter(|| black_box(validate_1142_text_1_99(black_box(core::str::from_utf8(ASCII_PRINT).unwrap()))))
+        });
+        group.bench("validate_1142_text_mixed", |b| {
+            b.iter(|| black_box(validate_1142_text_1_99(black_box("ABCÆØÅ€"))))
+        });
+        group.bench("validate_037_ascii_subset_1_99", |b| {
+            b.iter(|| black_box(validate_037_ascii_subset_1_99(black_box(EBCDIC_PRINT))))
         });
         group.bench("validate_ebcdic_printable_1_99", |b| {
             b.iter(|| black_box(validate_ebcdic_printable_1_99(black_box(EBCDIC_PRINT))))
@@ -103,19 +111,4 @@ fn bench_specialty(suite: &mut Suite) {
     });
 }
 
-fn bench_signed_and_implied(suite: &mut Suite) {
-    suite.group("signed_and_implied", |group| {
-        quick(group);
-        group.bench("split_signed_input_runtime", |b| {
-            b.iter(|| black_box(split_signed_input_runtime(black_box(SIGNED_DECIMAL))))
-        });
-        group.bench("parse_signed_decimal_19", |b| {
-            b.iter(|| black_box(parse_signed_decimal_19(black_box(SIGNED_DECIMAL))))
-        });
-        group.bench("validate_decimal_implied_scale2_signed", |b| {
-            b.iter(|| black_box(validate_decimal_implied_scale2_signed(black_box(b"-123.45"))))
-        });
-    });
-}
-
-zenbench::main!(bench_class_predicates, bench_hex, bench_specialty, bench_signed_and_implied);
+zenbench::main!(bench_class_predicates, bench_hex, bench_specialty);

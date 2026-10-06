@@ -14,41 +14,68 @@ const TLV_ENTRY: &[u8] = b"\x9F\x02\x06\xAB\xCD\xEF\x12\x34\x56";
 fn bench_bertlv(suite: &mut Suite) {
     suite.group("bertlv", |group| {
         quick(group);
-        group.bench("encode_bertag_runtime", |b| {
+        group.bench("encode_ber_tag_runtime", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 8];
                 let mut out = &mut buf[..];
-                let _ = encode_bertag_runtime(&mut out, black_box(TAG_2BYTE));
+                let _ = encode_ber_tag_runtime(&mut out, black_box(TAG_2BYTE));
                 black_box(buf)
             })
         });
-        group.bench("decode_bertag_runtime", |b| {
+        group.bench("decode_ber_tag_runtime", |b| {
             b.iter(|| {
                 let mut input = black_box(TAG_2BYTE);
-                black_box(decode_bertag_runtime(&mut input))
+                black_box(decode_ber_tag_runtime(&mut input))
             })
         });
-        group.bench("encode_berlen_runtime", |b| {
+        group.bench("decode_ber_tag_lenient_runtime", |b| {
+            b.iter(|| {
+                let mut input = black_box(TAG_2BYTE);
+                black_box(decode_ber_tag_lenient_runtime(&mut input))
+            })
+        });
+        group.bench("parse_ber_tag_hex_lenient_runtime", |b| {
+            b.iter(|| black_box(parse_ber_tag_hex_lenient_runtime(black_box("9F02"))))
+        });
+        group.bench("encode_ber_length_runtime", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 4];
                 let mut out = &mut buf[..];
-                let _ = encode_berlen_runtime(&mut out, black_box(0x100));
+                let _ = encode_ber_length_runtime(&mut out, black_box(0x100));
                 black_box(buf)
             })
         });
-        group.bench("decode_berlen_runtime", |b| {
+        group.bench("decode_ber_length_runtime", |b| {
             b.iter(|| {
                 let mut input = black_box(LEN_LONG2);
-                black_box(decode_berlen_runtime(&mut input))
+                black_box(decode_ber_length_runtime(&mut input))
             })
         });
-        group.bench("encoded_berlen_runtime", |b| {
-            b.iter(|| black_box(encoded_berlen_runtime(black_box(0x100))))
+        group.bench("ber_length_width_runtime", |b| {
+            b.iter(|| black_box(ber_length_width_runtime(black_box(0x100))))
         });
-        group.bench("parse_hex_tag_runtime", |b| {
-            b.iter(|| black_box(parse_hex_tag_runtime(black_box("9F02"))))
+        group.bench("parse_ber_tag_hex_runtime", |b| {
+            b.iter(|| black_box(parse_ber_tag_hex_runtime(black_box("9F02"))))
         });
-        group.bench("tag_eq_hex_9f02", |b| b.iter(|| black_box(tag_eq_hex_9f02(black_box(TAG_2BYTE)))));
+        group.bench("format_ber_tag_hex_runtime", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 8];
+                black_box(format_ber_tag_hex_runtime(&mut buf, black_box(TAG_2BYTE)).len())
+            })
+        });
+        group.bench("encode_ber_tlv_head_9f02", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 8];
+                let _ = encode_ber_tlv_head_9f02(&mut buf.as_mut_slice(), black_box(6));
+                black_box(buf)
+            })
+        });
+        group.bench("pack_ber_tag_hex_9f02", |b| {
+            b.iter(|| {
+                let mut buf = [0u8; 4];
+                black_box(pack_ber_tag_hex_9f02(&mut buf).len())
+            })
+        });
         group.bench("decode_ber_tlv_entry_runtime", |b| {
             b.iter(|| {
                 let mut input = black_box(TLV_ENTRY);

@@ -1,18 +1,42 @@
-use std::ops::RangeBounds;
+//! Content validators. Functions taking `minlen` and `maxlen` require
+//! `minlen <= maxlen`; debug builds assert this caller invariant.
+//! With valid bounds, content errors take precedence over length errors.
 
 #[cfg(all(not(debug_assertions), feature = "no-panic"))]
 use no_panic::no_panic;
 
 use crate::Error;
-use crate::primitive::ebcdic::encode_ebcdic_1142_char;
+use crate::primitive::codepage::{CodePage, Tables, encode_char, is_ascii_subset_byte};
 use crate::utils::cold_path;
 
+/// Validate that every byte satisfies `predicate` and that the byte count is
+/// within `minlen..=maxlen`, returning the byte count. Content errors return
+/// `Invalid` and take precedence over length errors (`InvalidValueLength`).
+///
+/// This is the building block of the byte-class validators, and the simplest
+/// way to write a custom [`Check`](crate::Check):
+///
+/// ```
+/// use finfmt::primitive::validation::validate_bytes;
+/// use finfmt::{Check, Error};
+///
+/// /// Track 2 characters, accepting `D` as well as `=` as the separator.
+/// pub struct Track2D<const MIN: usize, const MAX: usize>;
+/// impl<const MIN: usize, const MAX: usize> Check for Track2D<MIN, MAX> {
+///     fn validate(input: &[u8]) -> Result<usize, Error> {
+///         validate_bytes(input, MIN, MAX, |b| matches!(b, b'0'..=b'9' | b'=' | b'D'))
+///     }
+/// }
+///
+/// assert_eq!(Track2D::<1, 37>::validate(b"4000D2512"), Ok(9));
+/// assert_eq!(Track2D::<1, 37>::validate(b"4000X"), Err(Error::Invalid));
+/// ```
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-fn validate_bytes(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize, pred: impl Fn(&u8) -> bool) -> Result<usize, Error> {
+pub fn validate_bytes(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize, predicate: impl Fn(&u8) -> bool) -> Result<usize, Error> {
     debug_assert!(minlen <= maxlen, "minlen must be <= maxlen");
     let input = input.as_ref();
-    if !input.iter().all(pred) {
+    if !input.iter().all(predicate) {
         cold_path();
         return Err(Error::Invalid);
     }
@@ -43,118 +67,19 @@ fn validate_chars(input: &str, minlen: usize, maxlen: usize, pred: impl Fn(char)
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 fn validate_even_bytes(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize, pred: impl Fn(&u8) -> bool) -> Result<usize, Error> {
-    let input = input.as_ref();
-    if !input.len().is_multiple_of(2) {
+    let len = validate_bytes(input, minlen, maxlen, pred)?;
+    if !len.is_multiple_of(2) {
         cold_path();
         return Err(Error::InvalidValueLength);
     }
-    validate_bytes(input, minlen, maxlen, pred)
+    Ok(len)
 }
 
+/// Validate ASCII decimal digits, returning their byte count.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn validate_numeric(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, u8::is_ascii_digit)
-}
-
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn split_signed_input(input: &[u8]) -> Result<(bool, &[u8]), Error> {
-    let Some((&first, rest)) = input.split_first() else {
-        cold_path();
-        return Err(Error::Invalid);
-    };
-    let (negative, digits) = match first {
-        b'-' => (true, rest),
-        b'+' => {
-            cold_path();
-            return Err(Error::Invalid);
-        }
-        _ => (false, input),
-    };
-    if digits.is_empty() {
-        cold_path();
-        return Err(Error::Invalid);
-    }
-    Ok((negative, digits))
-}
-
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn parse_signed_decimal(input: &[u8], max_digits: usize) -> Result<(bool, &[u8]), Error> {
-    let (negative, digits) = split_signed_input(input)?;
-    validate_numeric(digits, 1, max_digits)?;
-    Ok((negative, digits))
-}
-
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub(crate) fn parse_scaled_decimal(input: &[u8], scale: usize, signed: bool) -> Result<(bool, usize, usize, usize, Option<usize>), Error> {
-    let Some((&first, rest)) = input.split_first() else {
-        cold_path();
-        return Err(Error::Invalid);
-    };
-    let (negative, input) = match first {
-        b'-' if signed => (true, rest),
-        b'-' => {
-            cold_path();
-            return Err(Error::Invalid);
-        }
-        b'+' => {
-            cold_path();
-            return Err(Error::Invalid);
-        }
-        _ => (false, input),
-    };
-    let mut int_digits = 0usize;
-    let mut frac_digits = 0usize;
-    let mut seen_dot = false;
-    let mut first_nonzero = None;
-    let mut digit_index = 0usize;
-    for &byte in input {
-        match byte {
-            b'0'..=b'9' => {
-                if byte != b'0' && first_nonzero.is_none() {
-                    first_nonzero = Some(digit_index);
-                }
-                if seen_dot {
-                    frac_digits += 1;
-                } else {
-                    int_digits += 1;
-                }
-                digit_index += 1;
-            }
-            b'.' if !seen_dot => seen_dot = true,
-            _ => {
-                cold_path();
-                return Err(Error::Invalid);
-            }
-        }
-    }
-    if int_digits == 0 || (seen_dot && frac_digits == 0) || frac_digits > scale {
-        cold_path();
-        return Err(Error::Invalid);
-    }
-    let total_digits = int_digits.checked_add(scale).ok_or_else(|| {
-        cold_path();
-        Error::Invalid
-    })?;
-    Ok((negative, int_digits, frac_digits, total_digits, first_nonzero))
-}
-
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_decimal_implied(input: &[u8], scale: usize, max_digits: usize, signed: bool) -> Result<usize, Error> {
-    let (negative, _int_digits, _frac_digits, total_digits, first_nonzero) = parse_scaled_decimal(input, scale, signed)?;
-    let digits_len = match first_nonzero {
-        Some(first_nonzero) => total_digits - first_nonzero,
-        None => 1,
-    };
-    if digits_len > max_digits {
-        cold_path();
-        return Err(Error::InvalidValueLength);
-    }
-    Ok(digits_len + usize::from(negative && first_nonzero.is_some()))
 }
 
 #[inline(always)]
@@ -207,13 +132,13 @@ pub fn validate_hex(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Re
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_hex_upper(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_upper_hex(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, |b| matches!(b, b'0'..=b'9' | b'A'..=b'F'))
 }
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_hex_lower(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_lower_hex(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, |b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
@@ -225,51 +150,54 @@ pub fn validate_hex_even(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) 
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_hex_upper_even(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_upper_hex_even(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_even_bytes(input, minlen, maxlen, |b| matches!(b, b'0'..=b'9' | b'A'..=b'F'))
 }
 
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_hex_lower_even(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_lower_hex_even(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_even_bytes(input, minlen, maxlen, |b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+/// Validate expanded BCD-Z bytes (`0` through `?`), returning the byte count.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn validate_bcdz(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, |b| matches!(b, b'0'..=b'?'))
 }
 
+/// Validate ASCII digits and `=` only, returning the byte count.
+/// This checks the character set, not Track 2 separator placement or structure.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_track2(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_track2_chars(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, |b| matches!(b, b'0'..=b'9' | b'='))
 }
 
+/// Validate packed decimal bytes, where both nibbles of every byte are 0-9,
+/// returning the byte count.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn validate_bcd_bytes(input: &[u8], minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, |b| (b >> 4) <= 9 && (b & 0x0F) <= 9)
 }
 
+/// Validate the semantic byte length without restricting byte values.
+/// Out-of-range lengths return `InvalidValueLength`.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_binary(input: &[u8], minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_byte_length(input: impl AsRef<[u8]>, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, |_| true)
 }
 
+/// Validate text representable in code page `P`, returning its Unicode
+/// character count. Unrepresentable characters return `Invalid`.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_iso8859_1_str(input: &str, minlen: usize, maxlen: usize) -> Result<usize, Error> {
-    validate_chars(input, minlen, maxlen, |c| (c as u32) <= 0xFF)
-}
-
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_ebcdic_1142_text(input: &[u8], minlen: usize, maxlen: usize) -> Result<usize, Error> {
+pub fn validate_page_text<P: CodePage>(input: &str, minlen: usize, maxlen: usize) -> Result<usize, Error> {
     debug_assert!(minlen <= maxlen, "minlen must be <= maxlen");
-    if input.is_ascii() {
+    if P::ASCII_COMPLETE && input.is_ascii() {
         let len = input.len();
         if len < minlen || len > maxlen {
             cold_path();
@@ -277,44 +205,32 @@ pub fn validate_ebcdic_1142_text(input: &[u8], minlen: usize, maxlen: usize) -> 
         }
         return Ok(len);
     }
-    let text = core::str::from_utf8(input).map_err(|_| {
-        cold_path();
-        Error::Invalid
-    })?;
-    let mut count = 0usize;
-    for ch in text.chars() {
-        if encode_ebcdic_1142_char(ch).is_none() {
-            cold_path();
-            return Err(Error::Invalid);
-        }
-        count += 1;
-    }
-    if count < minlen || count > maxlen {
-        cold_path();
-        return Err(Error::InvalidValueLength);
-    }
-    Ok(count)
+    validate_chars(input, minlen, maxlen, |ch| encode_char::<P>(ch).is_some())
 }
 
+/// Validate code page `P` wire bytes representing ASCII characters, including
+/// controls, and return their byte count. Use before the lossy ASCII subset
+/// decoding when unsupported characters must be rejected instead of replaced
+/// with SUB.
+#[inline(always)]
+#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
+pub fn validate_ascii_subset<P: CodePage>(input: &[u8], minlen: usize, maxlen: usize) -> Result<usize, Error> {
+    validate_bytes(input, minlen, maxlen, |&byte| is_ascii_subset_byte::<P>(byte))
+}
+
+/// Validate the EBCDIC byte range 0x40..=0xFE, returning the byte count. For
+/// CP037 and IBM1142 this is the non-control repertoire, including space,
+/// non-breaking space and soft hyphen; it does not imply ASCII representability.
 #[inline(always)]
 #[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
 pub fn validate_ebcdic_printable(input: &[u8], minlen: usize, maxlen: usize) -> Result<usize, Error> {
     validate_bytes(input, minlen, maxlen, |b| (0x40..=0xFE).contains(b))
 }
 
-#[inline(always)]
-#[cfg_attr(all(not(debug_assertions), feature = "no-panic"), no_panic)]
-pub fn validate_range<T: Ord>(input: T, range: impl RangeBounds<T>) -> Result<(), Error> {
-    if !range.contains(&input) {
-        cold_path();
-        return Err(Error::Invalid);
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::primitive::codepage::{Cp037, Cp1142, Iso646Fi, Latin1};
 
     // Helper: validate with unbounded length
     fn vb<T: AsRef<[u8]>>(input: T, pred: impl Fn(&u8) -> bool) -> Result<usize, Error> {
@@ -361,26 +277,6 @@ mod tests {
         for s in ["12a", " 12", "1.2", "-1", "1 2"] {
             assert_eq!(validate_numeric(s, 0, 99), Err(Error::Invalid));
         }
-    }
-
-    #[test]
-    fn test_validate_signed_decimal_and_implied() {
-        assert_eq!(split_signed_input(b"12"), Ok((false, &b"12"[..])));
-        assert_eq!(split_signed_input(b"-12"), Ok((true, &b"12"[..])));
-        assert_eq!(split_signed_input(b"+12"), Err(Error::Invalid));
-        assert_eq!(split_signed_input(b"-"), Err(Error::Invalid));
-
-        assert_eq!(parse_signed_decimal(b"12", 2), Ok((false, &b"12"[..])));
-        assert_eq!(parse_signed_decimal(b"-12", 2), Ok((true, &b"12"[..])));
-        assert_eq!(parse_signed_decimal(b"-123", 2), Err(Error::InvalidValueLength));
-        assert_eq!(parse_signed_decimal(b"+12", 2), Err(Error::Invalid));
-
-        assert_eq!(validate_decimal_implied(b"123.45", 2, 5, false), Ok(5));
-        assert_eq!(validate_decimal_implied(b"-0.05", 2, 5, true), Ok(2));
-        assert_eq!(validate_decimal_implied(b"1234.56", 2, 5, false), Err(Error::InvalidValueLength));
-        assert_eq!(validate_decimal_implied(b".5", 2, 5, false), Err(Error::Invalid));
-        assert_eq!(validate_decimal_implied(b"1.", 2, 5, false), Err(Error::Invalid));
-        assert_eq!(validate_decimal_implied(b"+1", 2, 5, true), Err(Error::Invalid));
     }
 
     #[test]
@@ -452,15 +348,15 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_hex_upper() {
-        assert_eq!(validate_hex_upper("0123456789ABCDEF", 0, 99), Ok(16));
-        assert_eq!(validate_hex_upper("abcdef", 0, 99), Err(Error::Invalid));
+    fn test_validate_upper_hex() {
+        assert_eq!(validate_upper_hex("0123456789ABCDEF", 0, 99), Ok(16));
+        assert_eq!(validate_upper_hex("abcdef", 0, 99), Err(Error::Invalid));
     }
 
     #[test]
-    fn test_validate_hex_lower() {
-        assert_eq!(validate_hex_lower("0123456789abcdef", 0, 99), Ok(16));
-        assert_eq!(validate_hex_lower("ABCDEF", 0, 99), Err(Error::Invalid));
+    fn test_validate_lower_hex() {
+        assert_eq!(validate_lower_hex("0123456789abcdef", 0, 99), Ok(16));
+        assert_eq!(validate_lower_hex("ABCDEF", 0, 99), Err(Error::Invalid));
     }
 
     #[test]
@@ -473,17 +369,17 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_hex_upper_even() {
-        assert_eq!(validate_hex_upper_even("0123ABCD", 0, 99), Ok(8));
-        assert_eq!(validate_hex_upper_even("012", 0, 99), Err(Error::InvalidValueLength));
-        assert_eq!(validate_hex_upper_even("0123abcd", 0, 99), Err(Error::Invalid));
+    fn test_validate_upper_hex_even() {
+        assert_eq!(validate_upper_hex_even("0123ABCD", 0, 99), Ok(8));
+        assert_eq!(validate_upper_hex_even("012", 0, 99), Err(Error::InvalidValueLength));
+        assert_eq!(validate_upper_hex_even("0123abcd", 0, 99), Err(Error::Invalid));
     }
 
     #[test]
-    fn test_validate_hex_lower_even() {
-        assert_eq!(validate_hex_lower_even("0123abcd", 0, 99), Ok(8));
-        assert_eq!(validate_hex_lower_even("012", 0, 99), Err(Error::InvalidValueLength));
-        assert_eq!(validate_hex_lower_even("0123ABCD", 0, 99), Err(Error::Invalid));
+    fn test_validate_lower_hex_even() {
+        assert_eq!(validate_lower_hex_even("0123abcd", 0, 99), Ok(8));
+        assert_eq!(validate_lower_hex_even("012", 0, 99), Err(Error::InvalidValueLength));
+        assert_eq!(validate_lower_hex_even("0123ABCD", 0, 99), Err(Error::Invalid));
     }
 
     #[test]
@@ -496,11 +392,11 @@ mod tests {
 
     #[test]
     fn test_validate_track2() {
-        assert_eq!(validate_track2("1234567890=", 0, 99), Ok(11));
-        assert_eq!(validate_track2("", 0, 99), Ok(0));
-        assert_eq!(validate_track2("1234D", 0, 99), Err(Error::Invalid));
-        assert_eq!(validate_track2("12?", 0, 99), Err(Error::Invalid));
-        assert_eq!(validate_track2("123", 4, 5), Err(Error::InvalidValueLength));
+        assert_eq!(validate_track2_chars("1234567890=", 0, 99), Ok(11));
+        assert_eq!(validate_track2_chars("", 0, 99), Ok(0));
+        assert_eq!(validate_track2_chars("1234D", 0, 99), Err(Error::Invalid));
+        assert_eq!(validate_track2_chars("12?", 0, 99), Err(Error::Invalid));
+        assert_eq!(validate_track2_chars("123", 4, 5), Err(Error::InvalidValueLength));
     }
 
     #[test]
@@ -519,38 +415,60 @@ mod tests {
 
     #[test]
     fn test_validate_binary() {
-        assert_eq!(validate_binary(b"\x00\xFF\x80\x7F", 0, 99), Ok(4)); // all bytes valid
-        assert_eq!(validate_binary(b"", 0, 99), Ok(0));
-        assert_eq!(validate_binary(b"hello", 10, 20), Err(Error::InvalidValueLength));
+        assert_eq!(validate_byte_length(b"\x00\xFF\x80\x7F", 0, 99), Ok(4)); // all bytes valid
+        assert_eq!(validate_byte_length(b"", 0, 99), Ok(0));
+        assert_eq!(validate_byte_length(b"hello", 10, 20), Err(Error::InvalidValueLength));
     }
 
     #[test]
-    fn test_validate_iso8859_1_str() {
-        assert_eq!(validate_iso8859_1_str("hello", 0, 99), Ok(5));
-        assert_eq!(validate_iso8859_1_str("héllo", 0, 99), Ok(5)); // é is Latin-1
-        assert_eq!(validate_iso8859_1_str("ÿ", 0, 99), Ok(1)); // U+00FF, max Latin-1
-        assert_eq!(validate_iso8859_1_str("hello", 10, 20), Err(Error::InvalidValueLength));
-        assert_eq!(validate_iso8859_1_str("Ā", 0, 99), Err(Error::Invalid)); // U+0100
-        assert_eq!(validate_iso8859_1_str("こんにちは", 0, 99), Err(Error::Invalid));
+    fn test_validate_latin1_text() {
+        assert_eq!(validate_page_text::<Latin1>("hello", 0, 99), Ok(5));
+        assert_eq!(validate_page_text::<Latin1>("héllo", 0, 99), Ok(5)); // é is Latin-1
+        assert_eq!(validate_page_text::<Latin1>("ÿ", 0, 99), Ok(1)); // U+00FF, max Latin-1
+        assert_eq!(validate_page_text::<Latin1>("hello", 10, 20), Err(Error::InvalidValueLength));
+        assert_eq!(validate_page_text::<Latin1>("Ā", 0, 99), Err(Error::Invalid)); // U+0100
+        assert_eq!(validate_page_text::<Latin1>("こんにちは", 0, 99), Err(Error::Invalid));
     }
 
     #[test]
-    fn test_validate_ebcdic_1142_text() {
-        assert_eq!(validate_ebcdic_1142_text("ABC".as_bytes(), 0, 99), Ok(3));
-        assert_eq!(validate_ebcdic_1142_text("ABCÆØÅæøå€".as_bytes(), 0, 99), Ok(10));
-        assert_eq!(
-            validate_ebcdic_1142_text("ABCÆØÅæøå€".as_bytes(), 0, 9),
-            Err(Error::InvalidValueLength)
-        );
-        assert_eq!(validate_ebcdic_1142_text("emoji: 😀".as_bytes(), 0, 99), Err(Error::Invalid));
-        assert_eq!(validate_ebcdic_1142_text(&[0xFF], 0, 99), Err(Error::Invalid));
+    fn test_validate_page_text() {
+        assert_eq!(validate_page_text::<Cp1142>("ABC", 0, 99), Ok(3));
+        assert_eq!(validate_page_text::<Cp1142>("ABCÆØÅæøå€", 0, 99), Ok(10));
+        assert_eq!(validate_page_text::<Cp1142>("ABCÆØÅæøå€", 0, 9), Err(Error::InvalidValueLength));
+        assert_eq!(validate_page_text::<Cp1142>("emoji: 😀", 0, 99), Err(Error::Invalid));
+        // Without every ASCII character, ASCII text is checked per character.
+        assert_eq!(validate_page_text::<Iso646Fi>("AÄ", 0, 99), Ok(2));
+        assert_eq!(validate_page_text::<Iso646Fi>("A$", 0, 99), Err(Error::Invalid));
     }
 
     #[test]
     fn test_validate_binary_alias_for_iso8859_1_bytes() {
-        assert_eq!(validate_binary(b"\x00\x7F\x80\xFF", 0, 99), Ok(4));
-        assert_eq!(validate_binary(b"", 0, 99), Ok(0));
-        assert_eq!(validate_binary(b"hello", 10, 20), Err(Error::InvalidValueLength));
+        assert_eq!(validate_byte_length(b"\x00\x7F\x80\xFF", 0, 99), Ok(4));
+        assert_eq!(validate_byte_length(b"", 0, 99), Ok(0));
+        assert_eq!(validate_byte_length(b"hello", 10, 20), Err(Error::InvalidValueLength));
+    }
+
+    #[test]
+    fn test_validate_ascii_subset() {
+        for byte in 0..=u8::MAX {
+            let expected = if Cp037::ASCII_TO_PAGE[..128].contains(&byte) {
+                Ok(1)
+            } else {
+                Err(Error::Invalid)
+            };
+            assert_eq!(validate_ascii_subset::<Cp037>(&[byte], 1, 1), expected, "wire byte {byte:02X}");
+        }
+        assert_eq!(validate_ascii_subset::<Cp037>(&[0xC1, 0xF1, 0x40], 3, 3), Ok(3));
+        assert_eq!(validate_ascii_subset::<Cp037>(b"\0\x3F", 2, 2), Ok(2));
+        assert_eq!(validate_ascii_subset::<Cp037>(b"", 0, 0), Ok(0));
+        assert_eq!(validate_ascii_subset::<Cp037>(b"", 1, 1), Err(Error::InvalidValueLength));
+        assert_eq!(validate_ascii_subset::<Cp037>(&[0xC1], 2, 2), Err(Error::InvalidValueLength));
+        assert_eq!(validate_ascii_subset::<Cp037>(&[0xC1], 0, 0), Err(Error::InvalidValueLength));
+        for input in [[0x4A, 0xC1], [0xC1, 0x4A]] {
+            for (min, max) in [(0, 0), (2, 2), (3, 3)] {
+                assert_eq!(validate_ascii_subset::<Cp037>(&input, min, max), Err(Error::Invalid));
+            }
+        }
     }
 
     #[test]
@@ -566,23 +484,48 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_range() {
-        // Exclusive range
-        assert_eq!(validate_range(5, 1..10), Ok(()));
-        assert_eq!(validate_range(1, 1..10), Ok(())); // start inclusive
-        assert_eq!(validate_range(9, 1..10), Ok(())); // end exclusive
-        assert_eq!(validate_range(10, 1..10), Err(Error::Invalid));
-        assert_eq!(validate_range(0, 1..10), Err(Error::Invalid));
-        // Inclusive range
-        assert_eq!(validate_range(10, 1..=10), Ok(()));
-        assert_eq!(validate_range(11, 1..=10), Err(Error::Invalid));
-        // Open ranges
-        assert_eq!(validate_range(5, ..10), Ok(()));
-        assert_eq!(validate_range(5, 5..), Ok(()));
-        assert_eq!(validate_range(4, 5..), Err(Error::Invalid));
-        // Char ranges
-        assert_eq!(validate_range('c', 'a'..'{'), Ok(()));
-        assert_eq!(validate_range('{', 'a'..'{'), Err(Error::Invalid));
+    fn test_even_hex_content_precedes_length() {
+        assert_eq!(validate_upper_hex_even("a", 0, 10), Err(Error::Invalid));
+        assert_eq!(validate_lower_hex_even("A", 0, 10), Err(Error::Invalid));
+        type Validator = fn(&[u8], usize, usize) -> Result<usize, Error>;
+        let validators: [Validator; 3] = [
+            |s, min, max| validate_hex_even(s, min, max),
+            |s, min, max| validate_upper_hex_even(s, min, max),
+            |s, min, max| validate_lower_hex_even(s, min, max),
+        ];
+        for validate in validators {
+            for bad in [b"G".as_slice(), b"0G1", b"GG", b"\xFF"] {
+                for (min, max) in [(0, 0), (0, 10), (10, 10)] {
+                    assert_eq!(validate(bad, min, max), Err(Error::Invalid));
+                }
+            }
+            for valid_odd in [b"0".as_slice(), b"001"] {
+                assert_eq!(validate(valid_odd, 0, 10), Err(Error::InvalidValueLength));
+            }
+            assert_eq!(validate(b"01", 2, 2), Ok(2));
+            assert_eq!(validate(b"01", 3, 4), Err(Error::InvalidValueLength));
+            assert_eq!(validate(b"01", 0, 1), Err(Error::InvalidValueLength));
+            assert_eq!(validate(b"", 0, 0), Ok(0));
+        }
+    }
+
+    #[test]
+    fn test_input_representations_and_length_units() {
+        assert_eq!(validate_byte_length("é", 2, 2), Ok(2));
+        assert_eq!(validate_byte_length("é".as_bytes(), 2, 2), Ok(2));
+        assert_eq!(validate_page_text::<Latin1>("é", 1, 1), Ok(1));
+        assert_eq!(validate_page_text::<Latin1>("Ā", 10, 10), Err(Error::Invalid));
+        assert_eq!(validate_bcd_bytes(b"\x12", 1, 1), Ok(1));
+        assert_eq!(validate_ebcdic_printable(b"\x41\xCA", 2, 2), Ok(2));
+        assert_eq!(validate_page_text::<Cp1142>("A€", 2, 2), Ok(2));
+        for invalid in ["¤", "😀"] {
+            for (min, max) in [(0, 0), (0, 10), (10, 10)] {
+                assert_eq!(validate_page_text::<Cp1142>(invalid, min, max), Err(Error::Invalid));
+            }
+        }
+        assert_eq!(validate_page_text::<Cp1142>("A€", 0, 1), Err(Error::InvalidValueLength));
+        assert_eq!(validate_page_text::<Cp1142>("A€", 3, 3), Err(Error::InvalidValueLength));
+        assert_eq!(validate_page_text::<Cp1142>("", 0, 0), Ok(0));
     }
 }
 
@@ -591,6 +534,7 @@ mod proptests {
     use proptest::prelude::*;
 
     use super::*;
+    use crate::primitive::codepage::{Cp037, Latin1};
 
     proptest! {
         // Character class validation: arbitrary inputs, validate expected result
@@ -635,12 +579,12 @@ mod proptests {
         // Hex case sensitivity: ensures lowercase rejected when uppercase expected and vice versa
         #[test]
         fn hex_upper_rejects_lowercase(s in "[0-9A-F]*[a-f]+[0-9A-F]*") {
-            prop_assert!(validate_hex_upper(&s, 0, usize::MAX).is_err());
+            prop_assert!(validate_upper_hex(&s, 0, usize::MAX).is_err());
         }
 
         #[test]
         fn hex_lower_rejects_uppercase(s in "[0-9a-f]*[A-F]+[0-9a-f]*") {
-            prop_assert!(validate_hex_lower(&s, 0, usize::MAX).is_err());
+            prop_assert!(validate_lower_hex(&s, 0, usize::MAX).is_err());
         }
 
         // Hex even: odd length always fails regardless of chars
@@ -670,21 +614,34 @@ mod proptests {
         #[test]
         fn track2_validation(v in proptest::collection::vec(any::<u8>(), 0..50)) {
             let valid = v.iter().all(|&b| b.is_ascii_digit() || b == b'=');
-            let result = validate_track2(&v, 0, usize::MAX);
+            let result = validate_track2_chars(&v, 0, usize::MAX);
             prop_assert_eq!(result.is_ok(), valid);
         }
 
         // Binary accepts everything
         #[test]
         fn binary_accepts_all(v in proptest::collection::vec(any::<u8>(), 0..100)) {
-            prop_assert_eq!(validate_binary(&v, 0, usize::MAX), Ok(v.len()));
+            prop_assert_eq!(validate_byte_length(&v, 0, usize::MAX), Ok(v.len()));
         }
 
-        // ISO-8859-1 str: char count vs byte count
+        // Latin-1 text: char count vs byte count
         #[test]
-        fn iso8859_1_char_counting(v in proptest::collection::vec(0u8..=255, 0..100)) {
+        fn latin1_char_counting(v in proptest::collection::vec(0u8..=255, 0..100)) {
             let s: String = v.iter().map(|&b| b as char).collect();
-            prop_assert_eq!(validate_iso8859_1_str(&s, 0, usize::MAX), Ok(s.chars().count()));
+            prop_assert_eq!(validate_page_text::<Latin1>(&s, 0, usize::MAX), Ok(s.chars().count()));
+        }
+
+        #[test]
+        fn ascii_subset_validation(v in prop::collection::vec(any::<u8>(), 0..100), min in 0usize..=100, extra in 0usize..=100) {
+            let max = min + extra;
+            let expected = if !v.iter().all(|b| Cp037::ASCII_TO_PAGE[..128].contains(b)) {
+                Err(Error::Invalid)
+            } else if !(min..=max).contains(&v.len()) {
+                Err(Error::InvalidValueLength)
+            } else {
+                Ok(v.len())
+            };
+            prop_assert_eq!(validate_ascii_subset::<Cp037>(&v, min, max), expected);
         }
 
         // EBCDIC printable range: 0x40-0xFE
@@ -695,12 +652,16 @@ mod proptests {
             prop_assert_eq!(result.is_ok(), valid);
         }
 
-        // Range validation with arbitrary bounds
         #[test]
-        fn range_validation(val in any::<i32>(), lo in any::<i32>(), hi in any::<i32>()) {
-            prop_assume!(lo <= hi);
-            let expected = val >= lo && val < hi;
-            prop_assert_eq!(validate_range(val, lo..hi).is_ok(), expected);
+        fn even_hex_errors_match_content_and_length(input in prop::collection::vec(any::<u8>(), 0..64), lo in 0usize..64, hi in 0usize..64) {
+            let (min, max) = (lo.min(hi), lo.max(hi));
+            let expected = if !input.iter().all(u8::is_ascii_hexdigit) {
+                Err(Error::Invalid)
+            } else if input.len() < min || input.len() > max || !input.len().is_multiple_of(2) {
+                Err(Error::InvalidValueLength)
+            } else { Ok(input.len()) };
+            prop_assert_eq!(validate_hex_even(&input, min, max), expected);
         }
+
     }
 }

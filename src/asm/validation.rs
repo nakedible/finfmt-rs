@@ -1,11 +1,10 @@
-use crate::Error;
 use crate::primitive::validation::{
-    parse_signed_decimal, split_signed_input, validate_alpha, validate_alphanum, validate_ascii, validate_ascii_printable,
-    validate_bcd_bytes, validate_bcdz, validate_binary, validate_decimal_implied, validate_ebcdic_1142_text, validate_ebcdic_printable,
-    validate_hex, validate_hex_even, validate_hex_lower, validate_hex_lower_even, validate_hex_upper, validate_hex_upper_even,
-    validate_iso8859_1_str, validate_numeric, validate_track2, validate_upper_alpha, validate_upper_alphanum,
-    validate_upper_ascii_printable,
+    validate_alpha, validate_alphanum, validate_ascii, validate_ascii_printable, validate_ascii_subset, validate_bcd_bytes, validate_bcdz,
+    validate_byte_length, validate_bytes, validate_ebcdic_printable, validate_hex, validate_hex_even, validate_lower_hex,
+    validate_lower_hex_even, validate_numeric, validate_page_text, validate_track2_chars, validate_upper_alpha, validate_upper_alphanum,
+    validate_upper_ascii_printable, validate_upper_hex, validate_upper_hex_even,
 };
+use crate::{Cp037, Cp1142, Error, Latin1};
 
 #[inline(never)]
 pub fn validate_numeric_1_19(input: &[u8]) -> Result<usize, Error> {
@@ -53,13 +52,13 @@ pub fn validate_hex_1_99(input: &[u8]) -> Result<usize, Error> {
 }
 
 #[inline(never)]
-pub fn validate_hex_upper_1_99(input: &[u8]) -> Result<usize, Error> {
-    validate_hex_upper(input, 1, 99)
+pub fn validate_upper_hex_1_99(input: &[u8]) -> Result<usize, Error> {
+    validate_upper_hex(input, 1, 99)
 }
 
 #[inline(never)]
-pub fn validate_hex_lower_1_99(input: &[u8]) -> Result<usize, Error> {
-    validate_hex_lower(input, 1, 99)
+pub fn validate_lower_hex_1_99(input: &[u8]) -> Result<usize, Error> {
+    validate_lower_hex(input, 1, 99)
 }
 
 #[inline(never)]
@@ -68,13 +67,13 @@ pub fn validate_hex_even_2_98(input: &[u8]) -> Result<usize, Error> {
 }
 
 #[inline(never)]
-pub fn validate_hex_upper_even_2_98(input: &[u8]) -> Result<usize, Error> {
-    validate_hex_upper_even(input, 2, 98)
+pub fn validate_upper_hex_even_2_98(input: &[u8]) -> Result<usize, Error> {
+    validate_upper_hex_even(input, 2, 98)
 }
 
 #[inline(never)]
-pub fn validate_hex_lower_even_2_98(input: &[u8]) -> Result<usize, Error> {
-    validate_hex_lower_even(input, 2, 98)
+pub fn validate_lower_hex_even_2_98(input: &[u8]) -> Result<usize, Error> {
+    validate_lower_hex_even(input, 2, 98)
 }
 
 #[inline(never)]
@@ -83,8 +82,8 @@ pub fn validate_bcdz_1_99(input: &[u8]) -> Result<usize, Error> {
 }
 
 #[inline(never)]
-pub fn validate_track2_1_37(input: &[u8]) -> Result<usize, Error> {
-    validate_track2(input, 1, 37)
+pub fn validate_track2_chars_1_37(input: &[u8]) -> Result<usize, Error> {
+    validate_track2_chars(input, 1, 37)
 }
 
 #[inline(never)]
@@ -93,18 +92,23 @@ pub fn validate_bcd_bytes_1_10(input: &[u8]) -> Result<usize, Error> {
 }
 
 #[inline(never)]
-pub fn validate_binary_1_99(input: &[u8]) -> Result<usize, Error> {
-    validate_binary(input, 1, 99)
+pub fn validate_byte_length_1_99(input: &[u8]) -> Result<usize, Error> {
+    validate_byte_length(input, 1, 99)
 }
 
 #[inline(never)]
-pub fn validate_iso8859_1_str_1_99(input: &str) -> Result<usize, Error> {
-    validate_iso8859_1_str(input, 1, 99)
+pub fn validate_latin1_text_1_99(input: &str) -> Result<usize, Error> {
+    validate_page_text::<Latin1>(input, 1, 99)
 }
 
 #[inline(never)]
-pub fn validate_ebcdic_1142_text_1_99(input: &[u8]) -> Result<usize, Error> {
-    validate_ebcdic_1142_text(input, 1, 99)
+pub fn validate_1142_text_1_99(input: &str) -> Result<usize, Error> {
+    validate_page_text::<Cp1142>(input, 1, 99)
+}
+
+#[inline(never)]
+pub fn validate_037_ascii_subset_1_99(input: &[u8]) -> Result<usize, Error> {
+    validate_ascii_subset::<Cp037>(input, 1, 99)
 }
 
 #[inline(never)]
@@ -113,16 +117,6 @@ pub fn validate_ebcdic_printable_1_99(input: &[u8]) -> Result<usize, Error> {
 }
 
 #[inline(never)]
-pub fn split_signed_input_runtime(input: &[u8]) -> Result<(bool, &[u8]), Error> {
-    split_signed_input(input)
-}
-
-#[inline(never)]
-pub fn parse_signed_decimal_19(input: &[u8]) -> Result<(bool, &[u8]), Error> {
-    parse_signed_decimal(input, 19)
-}
-
-#[inline(never)]
-pub fn validate_decimal_implied_scale2_signed(input: &[u8]) -> Result<usize, Error> {
-    validate_decimal_implied(input, 2, 12, true)
+pub fn validate_bytes_track2_d_1_37(input: &[u8]) -> Result<usize, Error> {
+    validate_bytes(input, 1, 37, |b| matches!(b, b'0'..=b'9' | b'=' | b'D'))
 }
